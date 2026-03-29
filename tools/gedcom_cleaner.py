@@ -509,12 +509,32 @@ def clean_name_placeholder(raw: str) -> tuple[str, None]:
 
 
 # ---------------------------------------------------------------------------
+# Cleaner: place_placeholder
+# ---------------------------------------------------------------------------
+
+# Matches place values that are entirely placeholder characters (_, ?, commas) plus whitespace
+_PLACE_PLACEHOLDER_RE = re.compile(r"^[_?,\s]+$")
+
+
+def clean_place_placeholder(raw: str) -> tuple[str, None]:
+    """
+    Returns ("", None) if the place is a placeholder (all underscores, question marks,
+    or comma-separated empty segments like '___, ___, ___').
+    Returns (raw, None) otherwise — no change.
+    """
+    if _PLACE_PLACEHOLDER_RE.match(raw):
+        return "", None
+    return raw, None
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
 CLEANERS = {
     "dd_mmm_yyyy": clean_date_dd_mmm_yyyy,
     "name_placeholder": clean_name_placeholder,
+    "place_placeholder": clean_place_placeholder,
 }
 
 
@@ -577,7 +597,7 @@ PRESETS: dict[str, dict[str, list[str]]] = {
         "transform": ["fid_fsftid", "latr_even"],
     },
     "srd_index_cleanup": {
-        "clean": ["dd_mmm_yyyy", "name_placeholder"],
+        "clean": ["dd_mmm_yyyy", "name_placeholder", "place_placeholder"],
         "strip": [],
         "transform": [],
     },
@@ -693,6 +713,25 @@ def process_file(
                         print(label)
                         current_label = label
                     print(f"  [name_placeholder] {raw!r} -> (cleared)")
+                element.set_value("")
+
+    if "place_placeholder" in cleaners:
+        s = stats["place_placeholder"]
+        current_label = None
+        for element in parser.get_element_list():
+            if element.get_tag() != gedcom.tags.GEDCOM_TAG_PLACE:
+                continue
+            raw = element.get_value()
+            s.processed += 1
+            cleaned, _ = clean_place_placeholder(raw)
+            if cleaned == "" and raw != "":
+                s.fixed += 1
+                if verbose:
+                    label = _record_label(element)
+                    if label != current_label:
+                        print(label)
+                        current_label = label
+                    print(f"  [place_placeholder] {raw!r} -> (cleared)")
                 element.set_value("")
 
     for name in strippers:
