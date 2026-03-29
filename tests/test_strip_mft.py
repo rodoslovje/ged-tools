@@ -11,6 +11,11 @@ _SAMPLE = textwrap.dedent("""\
     1 ADDR 123 Main St
     2 LATI N46.0
     2 LONG E14.5
+    1 DEAT Y
+    2 ADDR Some Place
+    3 MAP
+    4 LATI N45.618392002777782
+    4 LONG E15.236669038888888
     0 @T1@ _STE
     1 _NKY SourceTemplate_ImmigrationRecord_PhysicalCopy
     1 _STF @TF1@
@@ -50,7 +55,7 @@ def test_strip_addr_longlati():
     out = _write_tmp("")
     try:
         _, strip_stats, _ = process_file(inp, out, cleaners=[], strippers=["addr_longlati"], transformers=[], warn=False)
-        assert strip_stats["addr_longlati"].removed == 2
+        assert strip_stats["addr_longlati"].removed == 3  # 2 direct + 1 MAP block
 
         content = open(out, encoding="utf-8-sig").read()
         assert "2 LATI" not in content

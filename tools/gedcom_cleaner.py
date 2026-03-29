@@ -29,27 +29,27 @@ import gedcom.tags
 
 # Maps GEDCOM CHAR tag values to Python codec names
 _GEDCOM_CHAR_MAP = {
-    "UTF-8":        "utf-8",
-    "UNICODE":      "utf-16",
-    "UTF-16":       "utf-16",
-    "ASCII":        "ascii",
-    "ANSI":         "windows-1252",
+    "UTF-8": "utf-8",
+    "UNICODE": "utf-16",
+    "UTF-16": "utf-16",
+    "ASCII": "ascii",
+    "ANSI": "windows-1252",
     "WINDOWS-1250": "windows-1250",
     "WINDOWS-1251": "windows-1251",
     "WINDOWS-1252": "windows-1252",
-    "CP1250":       "windows-1250",
-    "CP1251":       "windows-1251",
-    "CP1252":       "windows-1252",
-    "IBM":          "cp437",
-    "IBM-PC":       "cp437",
-    "IBMPC":        "cp437",
-    "OEM":          "cp437",
-    "MACOS":        "mac_roman",
-    "MAC":          "mac_roman",
-    "ISO-8859-1":   "iso-8859-1",
-    "LATIN1":       "iso-8859-1",
-    "LATIN-1":      "iso-8859-1",
-    "ISO8859-1":    "iso-8859-1",
+    "CP1250": "windows-1250",
+    "CP1251": "windows-1251",
+    "CP1252": "windows-1252",
+    "IBM": "cp437",
+    "IBM-PC": "cp437",
+    "IBMPC": "cp437",
+    "OEM": "cp437",
+    "MACOS": "mac_roman",
+    "MAC": "mac_roman",
+    "ISO-8859-1": "iso-8859-1",
+    "LATIN1": "iso-8859-1",
+    "LATIN-1": "iso-8859-1",
+    "ISO8859-1": "iso-8859-1",
 }
 
 
@@ -153,48 +153,65 @@ def _update_char_tag(parser: Parser) -> None:
 # ---------------------------------------------------------------------------
 
 MONTHS_LONG = {
-    "january": "JAN", "february": "FEB", "march": "MAR",
-    "april": "APR", "may": "MAY", "june": "JUN",
-    "july": "JUL", "august": "AUG", "september": "SEP",
-    "october": "OCT", "november": "NOV", "december": "DEC",
+    "january": "JAN",
+    "february": "FEB",
+    "march": "MAR",
+    "april": "APR",
+    "may": "MAY",
+    "june": "JUN",
+    "july": "JUL",
+    "august": "AUG",
+    "september": "SEP",
+    "october": "OCT",
+    "november": "NOV",
+    "december": "DEC",
 }
 
 MONTHS_SHORT = {
-    "jan": "JAN", "feb": "FEB", "mar": "MAR", "apr": "APR",
-    "may": "MAY", "jun": "JUN", "jul": "JUL", "aug": "AUG",
-    "sep": "SEP", "oct": "OCT", "nov": "NOV", "dec": "DEC",
+    "jan": "JAN",
+    "feb": "FEB",
+    "mar": "MAR",
+    "apr": "APR",
+    "may": "MAY",
+    "jun": "JUN",
+    "jul": "JUL",
+    "aug": "AUG",
+    "sep": "SEP",
+    "oct": "OCT",
+    "nov": "NOV",
+    "dec": "DEC",
     # common alternates
     "sept": "SEP",
 }
 
 # Map all known prefix variants to their canonical GEDCOM form
 PREFIX_MAP = {
-    "about":  "ABT",
-    "abt.":   "ABT",
-    "abt":    "ABT",
-    "~":      "ABT",
-    "<":      "BEF",
-    ">":      "AFT",
+    "about": "ABT",
+    "abt.": "ABT",
+    "abt": "ABT",
+    "~": "ABT",
+    "<": "BEF",
+    ">": "AFT",
     "before": "BEF",
-    "bef.":   "BEF",
-    "bef":    "BEF",
-    "after":  "AFT",
-    "aft.":   "AFT",
-    "aft":    "AFT",
-    "circa":  "CAL",
-    "cal.":   "CAL",
-    "cal":    "CAL",
-    "cca.":   "ABT",
-    "cca":    "ABT",
-    "okoli":  "ABT",
-    "est.":   "EST",
-    "est":    "EST",
+    "bef.": "BEF",
+    "bef": "BEF",
+    "after": "AFT",
+    "aft.": "AFT",
+    "aft": "AFT",
+    "circa": "ABT",
+    "cal.": "CAL",
+    "cal": "CAL",
+    "cca.": "ABT",
+    "cca": "ABT",
+    "okoli": "ABT",
+    "est.": "EST",
+    "est": "EST",
 }
 
 # Regex pieces
-_DAY   = r"(?P<day>\d{1,2})"
+_DAY = r"(?P<day>\d{1,2})"
 _MONTH = r"(?P<month>[A-Za-z]+\.?)"
-_YEAR  = r"(?P<year>\d{3,4})"
+_YEAR = r"(?P<year>\d{3,4})"
 
 # Full date patterns (most specific first)
 DATE_PATTERNS = [
@@ -203,21 +220,15 @@ DATE_PATTERNS = [
     # MMM DD YYYY  (e.g. "Jan 15 1900")
     re.compile(rf"^{_MONTH}\s+{_DAY}[,\s]+{_YEAR}$"),
     # YYYY-MM-DD  (ISO)
-    re.compile(
-        r"^(?P<year>\d{4})-(?P<monthnum>\d{1,2})-(?P<day>\d{1,2})$"
-    ),
+    re.compile(r"^(?P<year>\d{4})-(?P<monthnum>\d{1,2})-(?P<day>\d{1,2})$"),
     # DD.MM.YYYY  or  DD/MM/YYYY  (numeric month, no spaces)
-    re.compile(
-        r"^(?P<day>\d{1,2})[./](?P<monthnum>\d{1,2})[./](?P<year>\d{3,4})$"
-    ),
+    re.compile(r"^(?P<day>\d{1,2})[./](?P<monthnum>\d{1,2})[./](?P<year>\d{3,4})$"),
     # DD.MM. YYYY or DD.MM YYYY (numeric month, optional final dot, space before year)
     re.compile(
         r"^(?P<day>\d{1,2})[./]\s*(?P<monthnum>\d{1,2})\.?\s+(?P<year>\d{3,4})$"
     ),
     # .MM.YYYY  (unknown day, numeric month — leading dot placeholder)
-    re.compile(
-        r"^\.\s*(?P<monthnum>\d{1,2})\.\s*(?P<year>\d{3,4})$"
-    ),
+    re.compile(r"^\.\s*(?P<monthnum>\d{1,2})\.\s*(?P<year>\d{3,4})$"),
     # MMM YYYY  (no day)
     re.compile(rf"^{_MONTH}\s+{_YEAR}$"),
     # MMM.YYYY  (no day, dot separator)
@@ -238,8 +249,20 @@ def _normalize_month_name(token: str) -> str | None:
 
 
 def _monthnum_to_abbr(num: str) -> str | None:
-    abbrs = ["JAN","FEB","MAR","APR","MAY","JUN",
-             "JUL","AUG","SEP","OCT","NOV","DEC"]
+    abbrs = [
+        "JAN",
+        "FEB",
+        "MAR",
+        "APR",
+        "MAY",
+        "JUN",
+        "JUL",
+        "AUG",
+        "SEP",
+        "OCT",
+        "NOV",
+        "DEC",
+    ]
     n = int(num)
     if 1 <= n <= 12:
         return abbrs[n - 1]
@@ -260,8 +283,8 @@ def _parse_date_value(value: str) -> tuple[str | None, str | None]:
             continue
         gd = m.groupdict()
 
-        year  = gd.get("year")
-        day   = gd.get("day")
+        year = gd.get("year")
+        day = gd.get("day")
         month = None
 
         if "monthnum" in gd and gd["monthnum"]:
@@ -275,7 +298,7 @@ def _parse_date_value(value: str) -> tuple[str | None, str | None]:
 
         parts = []
         if day:
-            parts.append(str(int(day)))   # strip leading zero
+            parts.append(str(int(day)))  # strip leading zero
         if month:
             parts.append(month)
         if year:
@@ -360,7 +383,6 @@ def _parse_range(value: str) -> tuple[str | None, str | None, bool]:
 
     # YYYY-YYYY  (plain year range, e.g. "1856-1881") — left as-is, handled below
 
-
     return None, None, False
 
 
@@ -395,12 +417,10 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     prefix_canon = None
     for variant, canon in PREFIX_MAP.items():
         # match whole word / token at start, case-insensitive
-        pattern = re.compile(
-            r"^" + re.escape(variant) + r"(?=\s|\d|$)", re.IGNORECASE
-        )
+        pattern = re.compile(r"^" + re.escape(variant) + r"(?=\s|\d|$)", re.IGNORECASE)
         if pattern.match(v):
             prefix_canon = canon
-            v = v[len(variant):].strip()
+            v = v[len(variant) :].strip()
             break
 
     if not v:
@@ -437,7 +457,7 @@ def clean_name_placeholder(raw: str) -> tuple[str, None]:
 # ---------------------------------------------------------------------------
 
 CLEANERS = {
-    "dd_mmm_yyyy":      clean_date_dd_mmm_yyyy,
+    "dd_mmm_yyyy": clean_date_dd_mmm_yyyy,
     "name_placeholder": clean_name_placeholder,
 }
 
@@ -446,16 +466,21 @@ CLEANERS = {
 # Strippers
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class StripSpec:
     tags: set[str]
-    parent_tag: str | None = None  # None = level-0 records; str = children of that parent tag
+    parent_tag: str | None = (
+        None  # None = level-0 records; str = children of that parent tag
+    )
 
 
 STRIPPERS: dict[str, StripSpec] = {
-    "ste":            StripSpec(tags={"_STE"}),            # MacFamilyTree source-template entries (level-0)
-    "stf":            StripSpec(tags={"_STF"}),            # MacFamilyTree source-template fields (level-0)
-    "addr_longlati":  StripSpec(tags={"LATI", "LONG"}, parent_tag="ADDR"),  # coords on ADDR unsupported by webtrees
+    "ste": StripSpec(tags={"_STE"}),  # MacFamilyTree source-template entries (level-0)
+    "stf": StripSpec(tags={"_STF"}),  # MacFamilyTree source-template fields (level-0)
+    "addr_longlati": StripSpec(
+        tags={"LATI", "LONG", "MAP"}, parent_tag="ADDR"
+    ),  # coords on ADDR unsupported by webtrees (direct or via MAP)
 }
 
 
@@ -463,11 +488,15 @@ STRIPPERS: dict[str, StripSpec] = {
 # Transformers
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class TagTransform:
     """Describes a structural tag transformation."""
-    rename: str                                    # new tag name
-    add_children: list[tuple[str, str]] = field(default_factory=list)  # (tag, value) prepended to children
+
+    rename: str  # new tag name
+    add_children: list[tuple[str, str]] = field(
+        default_factory=list
+    )  # (tag, value) prepended to children
 
 
 # Each transformer maps source tag → str (simple rename) or TagTransform (rename + add children).
@@ -475,7 +504,9 @@ class TagTransform:
 # attribute via name mangling — this is a deliberate workaround.
 TRANSFORMERS: dict[str, dict[str, str | TagTransform]] = {
     "fid_fsftid": {"_FID": "_FSFTID"},
-    "latr_even":  {"LATR": TagTransform(rename="EVEN", add_children=[("TYPE", "Land Transaction")])},
+    "latr_even": {
+        "LATR": TagTransform(rename="EVEN", add_children=[("TYPE", "Land Transaction")])
+    },
 }
 
 
@@ -485,8 +516,8 @@ TRANSFORMERS: dict[str, dict[str, str | TagTransform]] = {
 
 PRESETS: dict[str, dict[str, list[str]]] = {
     "mft_webtrees": {
-        "clean":     ["dd_mmm_yyyy", "name_placeholder"],
-        "strip":     ["ste", "stf"],
+        "clean": ["dd_mmm_yyyy", "name_placeholder"],
+        "strip": ["ste", "stf", "addr_longlati"],
         "transform": ["fid_fsftid", "latr_even"],
     },
 }
@@ -495,6 +526,7 @@ PRESETS: dict[str, dict[str, list[str]]] = {
 # ---------------------------------------------------------------------------
 # Core processing
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class CleanerStats:
@@ -523,7 +555,9 @@ def process_file(
     transformers: list[str],
     warn: bool,
     verbose: bool = False,
-) -> tuple[dict[str, CleanerStats], dict[str, StripperStats], dict[str, TransformerStats]]:
+) -> tuple[
+    dict[str, CleanerStats], dict[str, StripperStats], dict[str, TransformerStats]
+]:
     """Returns (per-cleaner stats, per-stripper stats, per-transformer stats)."""
     parse_path, is_tmp = _transcode_to_utf8(input_path)
     try:
@@ -540,7 +574,9 @@ def process_file(
 
     stats: dict[str, CleanerStats] = {c: CleanerStats() for c in cleaners}
     strip_stats: dict[str, StripperStats] = {s: StripperStats() for s in strippers}
-    transform_stats: dict[str, TransformerStats] = {t: TransformerStats() for t in transformers}
+    transform_stats: dict[str, TransformerStats] = {
+        t: TransformerStats() for t in transformers
+    }
 
     if "dd_mmm_yyyy" in cleaners:
         s = stats["dd_mmm_yyyy"]
@@ -555,7 +591,10 @@ def process_file(
             if warning:
                 s.warn += 1
                 if warn:
-                    print(f"WARN [dd_mmm_yyyy]: {warning}  — {_record_label(element)}", file=sys.stderr)
+                    print(
+                        f"WARN [dd_mmm_yyyy]: {warning}  — {_record_label(element)}",
+                        file=sys.stderr,
+                    )
             else:
                 if cleaned == "":
                     s.fixed += 1
@@ -605,12 +644,15 @@ def process_file(
             for element in to_remove:
                 ss.removed += 1
                 if verbose:
-                    print(f"  [strip:{name}] removing {element.get_tag()} {element.get_pointer()}")
+                    print(
+                        f"  [strip:{name}] removing {element.get_tag()} {element.get_pointer()}"
+                    )
                 candidates.remove(element)
         else:
             all_elements = parser.get_element_list()
             to_remove = [
-                el for el in all_elements
+                el
+                for el in all_elements
                 if el.get_tag() in spec.tags
                 and el.get_parent_element() is not None
                 and el.get_parent_element().get_tag() == spec.parent_tag
@@ -620,7 +662,9 @@ def process_file(
                 ss.removed += 1
                 if verbose:
                     label = _record_label(element)
-                    print(f"  [strip:{name}] removing {element.get_tag()} under {spec.parent_tag}  — {label}")
+                    print(
+                        f"  [strip:{name}] removing {element.get_tag()} under {spec.parent_tag}  — {label}"
+                    )
                 element.get_parent_element().get_child_elements().remove(element)
 
     for name in transformers:
@@ -639,7 +683,11 @@ def process_file(
                 # Prepend each add_children entry before existing children
                 for i, (child_tag, child_value) in enumerate(spec.add_children):
                     child = Element(
-                        element.get_level() + 1, "", child_tag, child_value, "\n",
+                        element.get_level() + 1,
+                        "",
+                        child_tag,
+                        child_value,
+                        "\n",
                         multi_line=False,
                     )
                     child.set_parent_element(element)
@@ -653,7 +701,9 @@ def process_file(
                 if label != current_label:
                     print(label)
                     current_label = label
-                print(f"  [transform:{name}] {old_tag} -> {new_tag}  {element.get_value()!r}")
+                print(
+                    f"  [transform:{name}] {old_tag} -> {new_tag}  {element.get_value()!r}"
+                )
 
     parser.invalidate_cache()
     try:
@@ -671,6 +721,7 @@ def process_file(
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
@@ -680,7 +731,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("input",  help="Input GEDCOM file (.ged)")
+    parser.add_argument("input", help="Input GEDCOM file (.ged)")
     parser.add_argument("output", help="Output GEDCOM file (.ged)")
     parser.add_argument(
         "--clean",
@@ -724,8 +775,8 @@ def main():
 
     args = parser.parse_args()
 
-    requested_clean     = [c.strip() for c in args.clean.split(",")     if c.strip()]
-    requested_strip     = [s.strip() for s in args.strip.split(",")     if s.strip()]
+    requested_clean = [c.strip() for c in args.clean.split(",") if c.strip()]
+    requested_strip = [s.strip() for s in args.strip.split(",") if s.strip()]
     requested_transform = [t.strip() for t in args.transform.split(",") if t.strip()]
 
     if args.preset:
@@ -737,16 +788,21 @@ def main():
             )
             sys.exit(1)
         p = PRESETS[args.preset]
+
         # merge preset entries with any explicitly requested ones (dedup, preserve order)
         def _merge(base: list[str], extra: list[str]) -> list[str]:
             seen = set(base)
             return base + [x for x in extra if x not in seen]
-        requested_clean     = _merge(p.get("clean",     []), requested_clean)
-        requested_strip     = _merge(p.get("strip",     []), requested_strip)
+
+        requested_clean = _merge(p.get("clean", []), requested_clean)
+        requested_strip = _merge(p.get("strip", []), requested_strip)
         requested_transform = _merge(p.get("transform", []), requested_transform)
 
     if not requested_clean and not requested_strip and not requested_transform:
-        print("ERROR: at least one of --clean, --strip, or --transform must be specified.", file=sys.stderr)
+        print(
+            "ERROR: at least one of --clean, --strip, or --transform must be specified.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     unknown_clean = [c for c in requested_clean if c not in CLEANERS]
@@ -789,9 +845,13 @@ def main():
     print()
 
     stats, strip_stats, transform_stats = process_file(
-        args.input, args.output,
-        requested_clean, requested_strip, requested_transform,
-        args.warn, args.verbose,
+        args.input,
+        args.output,
+        requested_clean,
+        requested_strip,
+        requested_transform,
+        args.warn,
+        args.verbose,
     )
 
     total_warn = sum(s.warn for s in stats.values())
@@ -804,16 +864,22 @@ def main():
     if args.stats:
         rows = []
         for name, s in stats.items():
-            rows.append(("cleaner",     name, str(s.processed), str(s.fixed), str(s.warn)))
+            rows.append(("cleaner", name, str(s.processed), str(s.fixed), str(s.warn)))
         for name, s in strip_stats.items():
-            rows.append(("stripper",    name, str(s.processed), str(s.removed), "-"))
+            rows.append(("stripper", name, str(s.processed), str(s.removed), "-"))
         for name, s in transform_stats.items():
-            rows.append(("transformer", name, str(s.processed), str(s.transformed), "-"))
+            rows.append(
+                ("transformer", name, str(s.processed), str(s.transformed), "-")
+            )
 
         if rows:
             headers = ("type", "name", "processed", "changed", "warn")
-            widths = [max(len(h), max(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
-            fmt = "  ".join(f"{{:<{w}}}" if i < 2 else f"{{:>{w}}}" for i, w in enumerate(widths))
+            widths = [
+                max(len(h), max(len(r[i]) for r in rows)) for i, h in enumerate(headers)
+            ]
+            fmt = "  ".join(
+                f"{{:<{w}}}" if i < 2 else f"{{:>{w}}}" for i, w in enumerate(widths)
+            )
             print()
             print(fmt.format(*headers))
             print("-" * (sum(widths) + 2 * (len(widths) - 1)))

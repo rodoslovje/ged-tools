@@ -95,7 +95,7 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("After 1900",        "AFT 1900"),
     ("Aft. MAR 1900",     "AFT MAR 1900"),
     ("Est. 1900",         "EST 1900"),
-    ("Circa 1900",        "CAL 1900"),
+    ("Circa 1900",        "ABT 1900"),
     ("Cca. 1340",         "ABT 1340"),
     ("cca 994",           "ABT 994"),
     ("CCA 1250",          "ABT 1250"),
