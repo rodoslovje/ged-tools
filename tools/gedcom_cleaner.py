@@ -3,7 +3,7 @@
 gedcom-cleaner: Read a GEDCOM file and save it in a cleaned format.
 
 Usage:
-    python tools/gedcom_cleaner.py <input.ged> <output.ged> --cleaners <c1,c2,...> [--warn]
+    python tools/gedcom_cleaner.py <input.ged> <output.ged> --clean <c1,c2,...> [--warn]
 
 Available cleaners:
     dd_mmm_yyyy   Normalize all dates to DD MMM YYYY format (e.g. "15 JAN 1900").
@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import tempfile
+from dataclasses import dataclass, field
 
 import chardet
 from gedcom.parser import Parser
@@ -444,14 +445,21 @@ CLEANERS = {
 # Core processing
 # ---------------------------------------------------------------------------
 
+@dataclass
+class CleanerStats:
+    processed: int = 0
+    fixed: int = 0
+    warn: int = 0
+
+
 def process_file(
     input_path: str,
     output_path: str,
     cleaners: list[str],
     warn: bool,
     verbose: bool = False,
-) -> int:
-    """Returns number of warnings emitted."""
+) -> dict[str, CleanerStats]:
+    """Returns per-cleaner statistics."""
     parse_path, is_tmp = _transcode_to_utf8(input_path)
     try:
         parser = Parser()
@@ -465,22 +473,25 @@ def process_file(
         if is_tmp:
             os.unlink(parse_path)
 
-    warnings = 0
+    stats: dict[str, CleanerStats] = {c: CleanerStats() for c in cleaners}
 
     if "dd_mmm_yyyy" in cleaners:
+        s = stats["dd_mmm_yyyy"]
         cleaner_fn = CLEANERS["dd_mmm_yyyy"]
         current_label = None
         for element in parser.get_element_list():
             if element.get_tag() != gedcom.tags.GEDCOM_TAG_DATE:
                 continue
             raw = element.get_value()
+            s.processed += 1
             cleaned, warning = cleaner_fn(raw)
             if warning:
-                warnings += 1
+                s.warn += 1
                 if warn:
                     print(f"WARN [dd_mmm_yyyy]: {warning}", file=sys.stderr)
             else:
                 if cleaned == "":
+                    s.fixed += 1
                     if verbose:
                         label = _record_label(element)
                         if label != current_label:
@@ -489,6 +500,7 @@ def process_file(
                         print(f"  [dd_mmm_yyyy] {raw!r} -> (removed)")
                     element.get_parent_element().get_child_elements().remove(element)
                 elif cleaned != raw:
+                    s.fixed += 1
                     if verbose:
                         label = _record_label(element)
                         if label != current_label:
@@ -498,13 +510,16 @@ def process_file(
                     element.set_value(cleaned)
 
     if "name_placeholder" in cleaners:
+        s = stats["name_placeholder"]
         current_label = None
         for element in parser.get_element_list():
             if element.get_tag() != gedcom.tags.GEDCOM_TAG_NAME:
                 continue
             raw = element.get_value()
+            s.processed += 1
             cleaned, _ = clean_name_placeholder(raw)
             if cleaned == "" and raw != "":
+                s.fixed += 1
                 if verbose:
                     label = _record_label(element)
                     if label != current_label:
@@ -522,7 +537,7 @@ def process_file(
         print(f"ERROR: could not write '{output_path}': {e}", file=sys.stderr)
         sys.exit(1)
 
-    return warnings
+    return stats
 
 
 # ---------------------------------------------------------------------------
@@ -541,7 +556,7 @@ def main():
     parser.add_argument("input",  help="Input GEDCOM file (.ged)")
     parser.add_argument("output", help="Output GEDCOM file (.ged)")
     parser.add_argument(
-        "--cleaners",
+        "--clean",
         required=True,
         metavar="CLEANER[,CLEANER,...]",
         help=f"Comma-separated list of cleaners to apply. Available: {', '.join(CLEANERS)}",
@@ -554,12 +569,17 @@ def main():
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Print every date conversion performed",
+        help="Print every conversion performed",
+    )
+    parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="Print per-cleaner statistics at the end",
     )
 
     args = parser.parse_args()
 
-    requested = [c.strip() for c in args.cleaners.split(",")]
+    requested = [c.strip() for c in args.clean.split(",")]
     unknown = [c for c in requested if c not in CLEANERS]
     if unknown:
         print(
@@ -569,13 +589,21 @@ def main():
         )
         sys.exit(1)
 
-    warnings = process_file(args.input, args.output, requested, args.warn, args.verbose)
+    stats = process_file(args.input, args.output, requested, args.warn, args.verbose)
 
-    if warnings:
+    total_warn = sum(s.warn for s in stats.values())
+    if total_warn:
         note = " (use --warn to see details)" if not args.warn else ""
-        print(f"{warnings} date(s) could not be converted{note}.", file=sys.stderr)
+        print(f"{total_warn} value(s) could not be converted{note}.", file=sys.stderr)
 
     print(f"Saved: {args.output}")
+
+    if args.stats:
+        col = max(len(c) for c in stats) + 2
+        print(f"\n{'Cleaner':<{col}}  {'processed':>10}  {'fixed':>7}  {'warn':>6}")
+        print("-" * (col + 30))
+        for cleaner, s in stats.items():
+            print(f"{cleaner:<{col}}  {s.processed:>10}  {s.fixed:>7}  {s.warn:>6}")
 
 
 if __name__ == "__main__":
