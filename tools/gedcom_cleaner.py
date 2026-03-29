@@ -442,6 +442,16 @@ CLEANERS = {
 
 
 # ---------------------------------------------------------------------------
+# Strippers
+# ---------------------------------------------------------------------------
+
+# Each stripper is a set of level-0 GEDCOM tags to remove entirely.
+STRIPPERS: dict[str, set[str]] = {
+    "mft": {"_STE", "_STF"},   # MacFamilyTree source-template records
+}
+
+
+# ---------------------------------------------------------------------------
 # Core processing
 # ---------------------------------------------------------------------------
 
@@ -452,14 +462,20 @@ class CleanerStats:
     warn: int = 0
 
 
+@dataclass
+class StripperStats:
+    removed: int = 0
+
+
 def process_file(
     input_path: str,
     output_path: str,
     cleaners: list[str],
+    strippers: list[str],
     warn: bool,
     verbose: bool = False,
-) -> dict[str, CleanerStats]:
-    """Returns per-cleaner statistics."""
+) -> tuple[dict[str, CleanerStats], dict[str, StripperStats]]:
+    """Returns (per-cleaner stats, per-stripper stats)."""
     parse_path, is_tmp = _transcode_to_utf8(input_path)
     try:
         parser = Parser()
@@ -474,6 +490,7 @@ def process_file(
             os.unlink(parse_path)
 
     stats: dict[str, CleanerStats] = {c: CleanerStats() for c in cleaners}
+    strip_stats: dict[str, StripperStats] = {s: StripperStats() for s in strippers}
 
     if "dd_mmm_yyyy" in cleaners:
         s = stats["dd_mmm_yyyy"]
@@ -528,6 +545,19 @@ def process_file(
                     print(f"  [name_placeholder] {raw!r} -> (cleared)")
                 element.set_value("")
 
+    for name in strippers:
+        ss = strip_stats[name]
+        tags = STRIPPERS[name]
+        to_remove = [
+            el for el in parser.get_root_child_elements()
+            if el.get_tag() in tags
+        ]
+        for element in to_remove:
+            ss.removed += 1
+            if verbose:
+                print(f"  [strip:{name}] removing {element.get_tag()} {element.get_pointer()}")
+            parser.get_root_child_elements().remove(element)
+
     parser.invalidate_cache()
     try:
         with open(output_path, "w", encoding="utf-8-sig") as f:
@@ -537,7 +567,7 @@ def process_file(
         print(f"ERROR: could not write '{output_path}': {e}", file=sys.stderr)
         sys.exit(1)
 
-    return stats
+    return stats, strip_stats
 
 
 # ---------------------------------------------------------------------------
@@ -557,9 +587,15 @@ def main():
     parser.add_argument("output", help="Output GEDCOM file (.ged)")
     parser.add_argument(
         "--clean",
-        required=True,
+        default="",
         metavar="CLEANER[,CLEANER,...]",
         help=f"Comma-separated list of cleaners to apply. Available: {', '.join(CLEANERS)}",
+    )
+    parser.add_argument(
+        "--strip",
+        default="",
+        metavar="STRIPPER[,STRIPPER,...]",
+        help=f"Comma-separated list of strippers to apply. Available: {', '.join(STRIPPERS)}",
     )
     parser.add_argument(
         "--warn",
@@ -579,17 +615,34 @@ def main():
 
     args = parser.parse_args()
 
-    requested = [c.strip() for c in args.clean.split(",")]
-    unknown = [c for c in requested if c not in CLEANERS]
-    if unknown:
+    requested_clean   = [c.strip() for c in args.clean.split(",")  if c.strip()]
+    requested_strip   = [s.strip() for s in args.strip.split(",")  if s.strip()]
+
+    if not requested_clean and not requested_strip:
+        print("ERROR: at least one of --clean or --strip must be specified.", file=sys.stderr)
+        sys.exit(1)
+
+    unknown_clean = [c for c in requested_clean if c not in CLEANERS]
+    if unknown_clean:
         print(
-            f"ERROR: unknown cleaner(s): {', '.join(unknown)}. "
+            f"ERROR: unknown cleaner(s): {', '.join(unknown_clean)}. "
             f"Available: {', '.join(CLEANERS)}",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    stats = process_file(args.input, args.output, requested, args.warn, args.verbose)
+    unknown_strip = [s for s in requested_strip if s not in STRIPPERS]
+    if unknown_strip:
+        print(
+            f"ERROR: unknown stripper(s): {', '.join(unknown_strip)}. "
+            f"Available: {', '.join(STRIPPERS)}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    stats, strip_stats = process_file(
+        args.input, args.output, requested_clean, requested_strip, args.warn, args.verbose
+    )
 
     total_warn = sum(s.warn for s in stats.values())
     if total_warn:
@@ -599,11 +652,18 @@ def main():
     print(f"Saved: {args.output}")
 
     if args.stats:
-        col = max(len(c) for c in stats) + 2
-        print(f"\n{'Cleaner':<{col}}  {'processed':>10}  {'fixed':>7}  {'warn':>6}")
-        print("-" * (col + 30))
-        for cleaner, s in stats.items():
-            print(f"{cleaner:<{col}}  {s.processed:>10}  {s.fixed:>7}  {s.warn:>6}")
+        if stats:
+            col = max(len(c) for c in stats) + 2
+            print(f"\n{'Cleaner':<{col}}  {'processed':>10}  {'fixed':>7}  {'warn':>6}")
+            print("-" * (col + 30))
+            for cleaner, s in stats.items():
+                print(f"{cleaner:<{col}}  {s.processed:>10}  {s.fixed:>7}  {s.warn:>6}")
+        if strip_stats:
+            col = max(len(s) for s in strip_stats) + 2
+            print(f"\n{'Stripper':<{col}}  {'removed':>9}")
+            print("-" * (col + 12))
+            for name, s in strip_stats.items():
+                print(f"{name:<{col}}  {s.removed:>9}")
 
 
 if __name__ == "__main__":
