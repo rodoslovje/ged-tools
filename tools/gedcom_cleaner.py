@@ -218,6 +218,8 @@ DATE_PATTERNS = [
     ),
     # MMM YYYY  (no day)
     re.compile(rf"^{_MONTH}\s+{_YEAR}$"),
+    # MMM.YYYY  (no day, dot separator)
+    re.compile(rf"^{_MONTH}\.{_YEAR}$"),
     # YYYY only
     re.compile(r"^(?P<year>\d{3,4})$"),
 ]
@@ -282,7 +284,7 @@ def _parse_date_value(value: str) -> tuple[str | None, str | None]:
     return None, f"unrecognised date format '{value}'"
 
 
-_PLACEHOLDER_RE = re.compile(r"_+|[-]{2,}")  # _ / __ or -- placeholders
+_PLACEHOLDER_RE = re.compile(r"_+|[-]{2,}|<>")  # _ / __ or -- or <> placeholders
 
 
 def _handle_placeholder(value: str) -> tuple[str, None] | None:
@@ -369,6 +371,9 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     v = raw.strip()
     if not v:
         return None, "empty date value"
+
+    # Strip trailing dot (e.g. "12.09.1945.")
+    v = v.rstrip(".")
 
     # Handle __ placeholder dates first
     placeholder = _handle_placeholder(v)

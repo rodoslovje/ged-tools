@@ -27,6 +27,8 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("__.__.1933",  "1933"),
     ("__.1933",     "1933"),
     (".--.1968",    "1968"),
+    (".<>.1750",    "1750"),
+    (".<>.1850",    "1850"),
     ("--.--1933",   "1933"),
     ("._.1894",     "1894"),
     ("._.1966",     "1966"),
@@ -36,6 +38,10 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     (".03.1947",  "MAR 1947"),
     (".03.1970",  "MAR 1970"),
 
+    # Trailing dot
+    ("12.09.1945.",  "12 SEP 1945"),
+    ("01.09.1978.",  "1 SEP 1978"),
+
     # Numeric date with extra/missing delimiters
     ("16.07. 1947",  "16 JUL 1947"),
     ("17.11 1930",   "17 NOV 1930"),
@@ -44,6 +50,10 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("31. 3. 1931",  "31 MAR 1931"),
     ("1. 1. 1900",   "1 JAN 1900"),
     ("5. 12. 2000",  "5 DEC 2000"),
+
+    # MMM.YYYY (dot separator)
+    ("FEB.1922",  "FEB 1922"),
+    ("DEC.1944",  "DEC 1944"),
 
     # Already canonical
     ("15 JAN 1900",     "15 JAN 1900"),
