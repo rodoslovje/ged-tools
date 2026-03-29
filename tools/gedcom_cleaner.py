@@ -413,11 +413,30 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
 
 
 # ---------------------------------------------------------------------------
+# Cleaner: name_placeholder
+# ---------------------------------------------------------------------------
+
+# Matches values that are entirely placeholder characters (_, ?, /) plus whitespace
+_NAME_PLACEHOLDER_RE = re.compile(r"^[_?\s/]+$")
+
+
+def clean_name_placeholder(raw: str) -> tuple[str, None]:
+    """
+    Returns ("", None) if the name is a placeholder (all underscores or question marks).
+    Returns (raw, None) otherwise — no change.
+    """
+    if _NAME_PLACEHOLDER_RE.match(raw):
+        return "", None
+    return raw, None
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
 CLEANERS = {
-    "dd_mmm_yyyy": clean_date_dd_mmm_yyyy,
+    "dd_mmm_yyyy":      clean_date_dd_mmm_yyyy,
+    "name_placeholder": clean_name_placeholder,
 }
 
 
@@ -477,6 +496,22 @@ def process_file(
                             current_label = label
                         print(f"  [dd_mmm_yyyy] {raw!r} -> {cleaned!r}")
                     element.set_value(cleaned)
+
+    if "name_placeholder" in cleaners:
+        current_label = None
+        for element in parser.get_element_list():
+            if element.get_tag() != gedcom.tags.GEDCOM_TAG_NAME:
+                continue
+            raw = element.get_value()
+            cleaned, _ = clean_name_placeholder(raw)
+            if cleaned == "" and raw != "":
+                if verbose:
+                    label = _record_label(element)
+                    if label != current_label:
+                        print(label)
+                        current_label = label
+                    print(f"  [name_placeholder] {raw!r} -> (cleared)")
+                element.set_value("")
 
     parser.invalidate_cache()
     try:
