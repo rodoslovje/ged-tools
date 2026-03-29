@@ -182,6 +182,9 @@ PREFIX_MAP = {
     "circa":  "CAL",
     "cal.":   "CAL",
     "cal":    "CAL",
+    "cca.":   "ABT",
+    "cca":    "ABT",
+    "okoli":  "ABT",
     "est.":   "EST",
     "est":    "EST",
 }
@@ -208,6 +211,10 @@ DATE_PATTERNS = [
     # DD.MM. YYYY or DD.MM YYYY (numeric month, optional final dot, space before year)
     re.compile(
         r"^(?P<day>\d{1,2})[./]\s*(?P<monthnum>\d{1,2})\.?\s+(?P<year>\d{3,4})$"
+    ),
+    # .MM.YYYY  (unknown day, numeric month — leading dot placeholder)
+    re.compile(
+        r"^\.\s*(?P<monthnum>\d{1,2})\.\s*(?P<year>\d{3,4})$"
     ),
     # MMM YYYY  (no day)
     re.compile(rf"^{_MONTH}\s+{_YEAR}$"),
@@ -275,7 +282,7 @@ def _parse_date_value(value: str) -> tuple[str | None, str | None]:
     return None, f"unrecognised date format '{value}'"
 
 
-_PLACEHOLDER_RE = re.compile(r"[_]{2,}|[-]{2,}")  # __ or -- placeholders
+_PLACEHOLDER_RE = re.compile(r"_+|[-]{2,}")  # _ / __ or -- placeholders
 
 
 def _handle_placeholder(value: str) -> tuple[str, None] | None:

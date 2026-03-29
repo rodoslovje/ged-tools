@@ -28,6 +28,13 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("__.1933",     "1933"),
     (".--.1968",    "1968"),
     ("--.--1933",   "1933"),
+    ("._.1894",     "1894"),
+    ("._.1966",     "1966"),
+
+    # .MM.YYYY (unknown day, leading dot placeholder)
+    (".11.1952",  "NOV 1952"),
+    (".03.1947",  "MAR 1947"),
+    (".03.1970",  "MAR 1970"),
 
     # Numeric date with extra/missing delimiters
     ("16.07. 1947",  "16 JUL 1947"),
@@ -79,6 +86,11 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("Aft. MAR 1900",     "AFT MAR 1900"),
     ("Est. 1900",         "EST 1900"),
     ("Circa 1900",        "CAL 1900"),
+    ("Cca. 1340",         "ABT 1340"),
+    ("cca 994",           "ABT 994"),
+    ("CCA 1250",          "ABT 1250"),
+    ("okoli 1850",        "ABT 1850"),
+    ("OKOLI 1700",        "ABT 1700"),
 ])
 def test_clean_date_success(raw, expected):
     result, warning = clean_date_dd_mmm_yyyy(raw)
