@@ -153,6 +153,7 @@ def _update_char_tag(parser: Parser) -> None:
 # ---------------------------------------------------------------------------
 
 MONTHS_LONG = {
+    # English
     "january": "JAN",
     "february": "FEB",
     "march": "MAR",
@@ -165,9 +166,33 @@ MONTHS_LONG = {
     "october": "OCT",
     "november": "NOV",
     "december": "DEC",
+    # German
+    "januar": "JAN",
+    "februar": "FEB",
+    "märz": "MAR",
+    "maerz": "MAR",
+    "mai": "MAY",
+    "juni": "JUN",
+    "juli": "JUL",
+    "oktober": "OCT",
+    "dezember": "DEC",
+    # Slovenian
+    "januar": "JAN",
+    "februar": "FEB",
+    "marec": "MAR",
+    "april": "APR",
+    "maj": "MAY",
+    "junij": "JUN",
+    "julij": "JUL",
+    "avgust": "AUG",
+    "september": "SEP",
+    "oktober": "OCT",
+    "november": "NOV",
+    "december": "DEC",
 }
 
 MONTHS_SHORT = {
+    # English / GEDCOM canonical
     "jan": "JAN",
     "feb": "FEB",
     "mar": "MAR",
@@ -180,8 +205,39 @@ MONTHS_SHORT = {
     "oct": "OCT",
     "nov": "NOV",
     "dec": "DEC",
-    # common alternates
     "sept": "SEP",
+    # German short forms
+    "jan.": "JAN",
+    "feb.": "FEB",
+    "mär": "MAR",
+    "mär.": "MAR",
+    "mrz": "MAR",
+    "mrz.": "MAR",
+    "apr.": "APR",
+    "mai.": "MAY",
+    "jun.": "JUN",
+    "jul.": "JUL",
+    "aug.": "AUG",
+    "sep.": "SEP",
+    "okt": "OCT",
+    "okt.": "OCT",
+    "nov.": "NOV",
+    "dez": "DEC",
+    "dez.": "DEC",
+    # Slovenian short forms
+    "jan.": "JAN",
+    "feb.": "FEB",
+    "mar.": "MAR",
+    "apr.": "APR",
+    "maj.": "MAY",
+    "jun.": "JUN",
+    "jul.": "JUL",
+    "avg": "AUG",
+    "avg.": "AUG",
+    "sep.": "SEP",
+    "okt.": "OCT",
+    "nov.": "NOV",
+    "dec.": "DEC",
 }
 
 # Map all known prefix variants to their canonical GEDCOM form
@@ -210,7 +266,7 @@ PREFIX_MAP = {
 
 # Regex pieces
 _DAY = r"(?P<day>\d{1,2})"
-_MONTH = r"(?P<month>[A-Za-z]+\.?)"
+_MONTH = r"(?P<month>[A-Za-zÄäÖöÜüß]+\.?)"
 _YEAR = r"(?P<year>\d{3,4})"
 
 # Full date patterns (most specific first)

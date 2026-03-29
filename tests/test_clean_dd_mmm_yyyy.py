@@ -61,11 +61,40 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("MAY 1845",        "MAY 1845"),
     ("1923",            "1923"),
 
-    # Month name variants
+    # Month name variants — English
     ("15 January 1900", "15 JAN 1900"),
     ("15 january 1900", "15 JAN 1900"),
     ("Jan 15, 1900",    "15 JAN 1900"),
     ("Jan 15 1900",     "15 JAN 1900"),
+
+    # German long month names
+    ("15 Januar 1900",   "15 JAN 1900"),
+    ("15 März 1900",     "15 MAR 1900"),
+    ("15 Maerz 1900",    "15 MAR 1900"),
+    ("15 Mai 1900",      "15 MAY 1900"),
+    ("15 Oktober 1900",  "15 OCT 1900"),
+    ("15 Dezember 1900", "15 DEC 1900"),
+
+    # German short month names
+    ("15 Okt 1900",  "15 OCT 1900"),
+    ("15 Okt. 1900", "15 OCT 1900"),
+    ("15 Dez 1900",  "15 DEC 1900"),
+    ("15 Dez. 1900", "15 DEC 1900"),
+    ("15 Mär 1900",  "15 MAR 1900"),
+    ("15 Mär. 1900", "15 MAR 1900"),
+    ("15 Mrz 1900",  "15 MAR 1900"),
+
+    # Slovenian long month names
+    ("15 Marec 1900",    "15 MAR 1900"),
+    ("15 Maj 1900",      "15 MAY 1900"),
+    ("15 Junij 1900",    "15 JUN 1900"),
+    ("15 Julij 1900",    "15 JUL 1900"),
+    ("15 Avgust 1900",   "15 AUG 1900"),
+    ("15 Oktober 1900",  "15 OCT 1900"),
+
+    # Slovenian short month names
+    ("15 Avg 1900",  "15 AUG 1900"),
+    ("15 Avg. 1900", "15 AUG 1900"),
 
     # Separators
     ("15-JAN-1900",     "15 JAN 1900"),
