@@ -576,6 +576,11 @@ PRESETS: dict[str, dict[str, list[str]]] = {
         "strip": ["ste", "stf", "addr_longlati"],
         "transform": ["fid_fsftid", "latr_even"],
     },
+    "srd_index_cleanup": {
+        "clean": ["dd_mmm_yyyy", "name_placeholder"],
+        "strip": [],
+        "transform": [],
+    },
 }
 
 
