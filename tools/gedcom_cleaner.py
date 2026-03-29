@@ -18,6 +18,7 @@ import tempfile
 from dataclasses import dataclass, field
 
 import chardet
+from gedcom.element.element import Element
 from gedcom.parser import Parser
 import gedcom.tags
 
@@ -445,10 +446,16 @@ CLEANERS = {
 # Strippers
 # ---------------------------------------------------------------------------
 
-# Each stripper is a set of level-0 GEDCOM tags to remove entirely.
-STRIPPERS: dict[str, set[str]] = {
-    "ste": {"_STE"},   # MacFamilyTree source-template entries
-    "stf": {"_STF"},   # MacFamilyTree source-template fields
+@dataclass
+class StripSpec:
+    tags: set[str]
+    parent_tag: str | None = None  # None = level-0 records; str = children of that parent tag
+
+
+STRIPPERS: dict[str, StripSpec] = {
+    "ste":            StripSpec(tags={"_STE"}),            # MacFamilyTree source-template entries (level-0)
+    "stf":            StripSpec(tags={"_STF"}),            # MacFamilyTree source-template fields (level-0)
+    "addr_longlati":  StripSpec(tags={"LATI", "LONG"}, parent_tag="ADDR"),  # coords on ADDR unsupported by webtrees
 }
 
 
@@ -456,11 +463,19 @@ STRIPPERS: dict[str, set[str]] = {
 # Transformers
 # ---------------------------------------------------------------------------
 
-# Each transformer is a dict mapping source tag → target tag (any level).
+@dataclass
+class TagTransform:
+    """Describes a structural tag transformation."""
+    rename: str                                    # new tag name
+    add_children: list[tuple[str, str]] = field(default_factory=list)  # (tag, value) prepended to children
+
+
+# Each transformer maps source tag → str (simple rename) or TagTransform (rename + add children).
 # Note: python-gedcom has no set_tag(); we write to the private _Element__tag
 # attribute via name mangling — this is a deliberate workaround.
-TRANSFORMERS: dict[str, dict[str, str]] = {
-    "fid_fsftid": {"_FID": "_FSFTID"},  # MacFamilyTree FamilySearch ID → webtrees standard
+TRANSFORMERS: dict[str, dict[str, str | TagTransform]] = {
+    "fid_fsftid": {"_FID": "_FSFTID"},
+    "latr_even":  {"LATR": TagTransform(rename="EVEN", add_children=[("TYPE", "Land Transaction")])},
 }
 
 
@@ -472,7 +487,7 @@ PRESETS: dict[str, dict[str, list[str]]] = {
     "mft_webtrees": {
         "clean":     ["dd_mmm_yyyy", "name_placeholder"],
         "strip":     ["ste", "stf"],
-        "transform": ["fid_fsftid"],
+        "transform": ["fid_fsftid", "latr_even"],
     },
 }
 
@@ -582,17 +597,31 @@ def process_file(
 
     for name in strippers:
         ss = strip_stats[name]
-        tags = STRIPPERS[name]
-        to_remove = [
-            el for el in parser.get_root_child_elements()
-            if el.get_tag() in tags
-        ]
-        ss.processed = len(parser.get_root_child_elements())
-        for element in to_remove:
-            ss.removed += 1
-            if verbose:
-                print(f"  [strip:{name}] removing {element.get_tag()} {element.get_pointer()}")
-            parser.get_root_child_elements().remove(element)
+        spec = STRIPPERS[name]
+        if spec.parent_tag is None:
+            candidates = parser.get_root_child_elements()
+            ss.processed = len(candidates)
+            to_remove = [el for el in candidates if el.get_tag() in spec.tags]
+            for element in to_remove:
+                ss.removed += 1
+                if verbose:
+                    print(f"  [strip:{name}] removing {element.get_tag()} {element.get_pointer()}")
+                candidates.remove(element)
+        else:
+            all_elements = parser.get_element_list()
+            to_remove = [
+                el for el in all_elements
+                if el.get_tag() in spec.tags
+                and el.get_parent_element() is not None
+                and el.get_parent_element().get_tag() == spec.parent_tag
+            ]
+            ss.processed = len(to_remove)
+            for element in to_remove:
+                ss.removed += 1
+                if verbose:
+                    label = _record_label(element)
+                    print(f"  [strip:{name}] removing {element.get_tag()} under {spec.parent_tag}  — {label}")
+                element.get_parent_element().get_child_elements().remove(element)
 
     for name in transformers:
         ts = transform_stats[name]
@@ -603,8 +632,21 @@ def process_file(
             if old_tag not in tag_map:
                 continue
             ts.processed += 1
-            new_tag = tag_map[old_tag]
-            element._Element__tag = new_tag  # no set_tag() in library; name-mangling workaround
+            spec = tag_map[old_tag]
+            if isinstance(spec, TagTransform):
+                new_tag = spec.rename
+                element._Element__tag = new_tag
+                # Prepend each add_children entry before existing children
+                for i, (child_tag, child_value) in enumerate(spec.add_children):
+                    child = Element(
+                        element.get_level() + 1, "", child_tag, child_value, "\n",
+                        multi_line=False,
+                    )
+                    child.set_parent_element(element)
+                    element.get_child_elements().insert(i, child)
+            else:
+                new_tag = spec
+                element._Element__tag = new_tag
             ts.transformed += 1
             if verbose:
                 label = _record_label(element)

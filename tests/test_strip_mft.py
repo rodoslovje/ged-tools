@@ -8,6 +8,9 @@ _SAMPLE = textwrap.dedent("""\
     1 CHAR UTF-8
     0 @I1@ INDI
     1 NAME John /Smith/
+    1 ADDR 123 Main St
+    2 LATI N46.0
+    2 LONG E14.5
     0 @T1@ _STE
     1 _NKY SourceTemplate_ImmigrationRecord_PhysicalCopy
     1 _STF @TF1@
@@ -37,6 +40,22 @@ def test_strip_mft_removes_ste_records():
         assert "_STE" not in content
         assert "@I1@" in content   # individual preserved
         assert "TRLR" in content   # trailer preserved
+    finally:
+        os.unlink(inp)
+        os.unlink(out)
+
+
+def test_strip_addr_longlati():
+    inp = _write_tmp(_SAMPLE)
+    out = _write_tmp("")
+    try:
+        _, strip_stats, _ = process_file(inp, out, cleaners=[], strippers=["addr_longlati"], transformers=[], warn=False)
+        assert strip_stats["addr_longlati"].removed == 2
+
+        content = open(out, encoding="utf-8-sig").read()
+        assert "2 LATI" not in content
+        assert "2 LONG" not in content
+        assert "1 ADDR" in content   # ADDR itself preserved
     finally:
         os.unlink(inp)
         os.unlink(out)
