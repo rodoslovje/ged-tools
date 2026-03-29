@@ -29,8 +29,9 @@ def test_strip_mft_removes_ste_records():
     inp = _write_tmp(_SAMPLE)
     out = _write_tmp("")
     try:
-        _, strip_stats, _ = process_file(inp, out, cleaners=[], strippers=["mft"], transformers=[], warn=False)
-        assert strip_stats["mft"].removed == 2
+        _, strip_stats, _ = process_file(inp, out, cleaners=[], strippers=["ste", "stf"], transformers=[], warn=False)
+        assert strip_stats["ste"].removed == 2
+        assert strip_stats["stf"].removed == 0
 
         content = open(out, encoding="utf-8-sig").read()
         assert "_STE" not in content

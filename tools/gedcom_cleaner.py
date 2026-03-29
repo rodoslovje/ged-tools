@@ -447,7 +447,8 @@ CLEANERS = {
 
 # Each stripper is a set of level-0 GEDCOM tags to remove entirely.
 STRIPPERS: dict[str, set[str]] = {
-    "mft": {"_STE", "_STF"},   # MacFamilyTree source-template records
+    "ste": {"_STE"},   # MacFamilyTree source-template entries
+    "stf": {"_STF"},   # MacFamilyTree source-template fields
 }
 
 
@@ -470,7 +471,7 @@ TRANSFORMERS: dict[str, dict[str, str]] = {
 PRESETS: dict[str, dict[str, list[str]]] = {
     "mft_webtrees": {
         "clean":     ["dd_mmm_yyyy", "name_placeholder"],
-        "strip":     ["mft"],
+        "strip":     ["ste", "stf"],
         "transform": ["fid_fsftid"],
     },
 }
@@ -489,11 +490,13 @@ class CleanerStats:
 
 @dataclass
 class StripperStats:
+    processed: int = 0
     removed: int = 0
 
 
 @dataclass
 class TransformerStats:
+    processed: int = 0
     transformed: int = 0
 
 
@@ -537,7 +540,7 @@ def process_file(
             if warning:
                 s.warn += 1
                 if warn:
-                    print(f"WARN [dd_mmm_yyyy]: {warning}", file=sys.stderr)
+                    print(f"WARN [dd_mmm_yyyy]: {warning}  — {_record_label(element)}", file=sys.stderr)
             else:
                 if cleaned == "":
                     s.fixed += 1
@@ -584,6 +587,7 @@ def process_file(
             el for el in parser.get_root_child_elements()
             if el.get_tag() in tags
         ]
+        ss.processed = len(parser.get_root_child_elements())
         for element in to_remove:
             ss.removed += 1
             if verbose:
@@ -598,6 +602,7 @@ def process_file(
             old_tag = element.get_tag()
             if old_tag not in tag_map:
                 continue
+            ts.processed += 1
             new_tag = tag_map[old_tag]
             element._Element__tag = new_tag  # no set_tag() in library; name-mangling workaround
             ts.transformed += 1
@@ -729,6 +734,18 @@ def main():
         )
         sys.exit(1)
 
+    if args.preset:
+        print(f"Preset:       {args.preset}")
+    if requested_clean:
+        print(f"Cleaners:     {', '.join(requested_clean)}")
+    if requested_strip:
+        print(f"Strippers:    {', '.join(requested_strip)}")
+    if requested_transform:
+        print(f"Transformers: {', '.join(requested_transform)}")
+    print(f"Input:        {args.input}")
+    print(f"Output:       {args.output}")
+    print()
+
     stats, strip_stats, transform_stats = process_file(
         args.input, args.output,
         requested_clean, requested_strip, requested_transform,
@@ -747,9 +764,9 @@ def main():
         for name, s in stats.items():
             rows.append(("cleaner",     name, str(s.processed), str(s.fixed), str(s.warn)))
         for name, s in strip_stats.items():
-            rows.append(("stripper",    name, "-", str(s.removed), "-"))
+            rows.append(("stripper",    name, str(s.processed), str(s.removed), "-"))
         for name, s in transform_stats.items():
-            rows.append(("transformer", name, "-", str(s.transformed), "-"))
+            rows.append(("transformer", name, str(s.processed), str(s.transformed), "-"))
 
         if rows:
             headers = ("type", "name", "processed", "changed", "warn")
