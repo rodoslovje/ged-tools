@@ -128,6 +128,16 @@ def _record_label(element) -> str:
     return f"{tag} {pointer}".strip()
 
 
+def _serialize(element) -> str:
+    """Recursively serialize an element and all its descendants at any depth.
+    Works around the library bug where to_gedcom_string(recursive=True) only
+    goes one level deep."""
+    result = element.to_gedcom_string(recursive=False)
+    for child in element.get_child_elements():
+        result += _serialize(child)
+    return result
+
+
 def _update_char_tag(parser: Parser) -> None:
     """Set the CHAR header tag to UTF-8 in the parsed tree."""
     for element in parser.get_element_list():
@@ -337,10 +347,8 @@ def _parse_range(value: str) -> tuple[str | None, str | None, bool]:
     if m:
         return both(m.group(1), m.group(2), "BET {} AND {}")
 
-    # YYYY-YYYY  (plain year range, e.g. "1856-1881")
-    m = re.match(r"^(\d{3,4})\s*-\s*(\d{3,4})$", v)
-    if m:
-        return both(m.group(1), m.group(2), "FROM {} TO {}")
+    # YYYY-YYYY  (plain year range, e.g. "1856-1881") — left as-is, handled below
+
 
     return None, None, False
 
@@ -359,6 +367,10 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     placeholder = _handle_placeholder(v)
     if placeholder is not None:
         return placeholder  # ("", None) = remove  |  (year, None) = keep year only
+
+    # YYYY-YYYY year ranges are kept as-is (no conversion to FROM/TO)
+    if re.match(r"^\d{3,4}-\d{3,4}$", v):
+        return v, None
 
     # Try range patterns first (before prefix handling)
     result, err, is_range = _parse_range(v)
@@ -458,7 +470,7 @@ def process_file(
     try:
         with open(output_path, "w", encoding="utf-8-sig") as f:
             for element in parser.get_root_child_elements():
-                f.write(element.to_gedcom_string(recursive=True))
+                f.write(_serialize(element))
     except OSError as e:
         print(f"ERROR: could not write '{output_path}': {e}", file=sys.stderr)
         sys.exit(1)

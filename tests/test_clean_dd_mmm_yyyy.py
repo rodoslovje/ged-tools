@@ -18,10 +18,9 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("BETWEEN 1856-1881",               "BET 1856 AND 1881"),
     ("BET 15 JAN 1800 AND 20 MAR 1810", "BET 15 JAN 1800 AND 20 MAR 1810"),
 
-    # Implicit year ranges (YYYY-YYYY)
-    ("1856-1881",   "FROM 1856 TO 1881"),
-    ("1979-1980",   "FROM 1979 TO 1980"),
-    ("1979 - 1980", "FROM 1979 TO 1980"),
+    # Implicit year ranges (YYYY-YYYY) — kept as-is
+    ("1856-1881",   "1856-1881"),
+    ("1979-1980",   "1979-1980"),
 
     # Placeholder dates — partial (year known), underscore and hyphen variants
     (".__.1933",    "1933"),
