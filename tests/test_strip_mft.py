@@ -29,7 +29,7 @@ def test_strip_mft_removes_ste_records():
     inp = _write_tmp(_SAMPLE)
     out = _write_tmp("")
     try:
-        _, strip_stats = process_file(inp, out, cleaners=[], strippers=["mft"], warn=False)
+        _, strip_stats, _ = process_file(inp, out, cleaners=[], strippers=["mft"], transformers=[], warn=False)
         assert strip_stats["mft"].removed == 2
 
         content = open(out, encoding="utf-8-sig").read()

@@ -452,6 +452,18 @@ STRIPPERS: dict[str, set[str]] = {
 
 
 # ---------------------------------------------------------------------------
+# Transformers
+# ---------------------------------------------------------------------------
+
+# Each transformer is a dict mapping source tag → target tag (any level).
+# Note: python-gedcom has no set_tag(); we write to the private _Element__tag
+# attribute via name mangling — this is a deliberate workaround.
+TRANSFORMERS: dict[str, dict[str, str]] = {
+    "fid_fsftid": {"_FID": "_FSFTID"},  # MacFamilyTree FamilySearch ID → webtrees standard
+}
+
+
+# ---------------------------------------------------------------------------
 # Core processing
 # ---------------------------------------------------------------------------
 
@@ -467,15 +479,21 @@ class StripperStats:
     removed: int = 0
 
 
+@dataclass
+class TransformerStats:
+    transformed: int = 0
+
+
 def process_file(
     input_path: str,
     output_path: str,
     cleaners: list[str],
     strippers: list[str],
+    transformers: list[str],
     warn: bool,
     verbose: bool = False,
-) -> tuple[dict[str, CleanerStats], dict[str, StripperStats]]:
-    """Returns (per-cleaner stats, per-stripper stats)."""
+) -> tuple[dict[str, CleanerStats], dict[str, StripperStats], dict[str, TransformerStats]]:
+    """Returns (per-cleaner stats, per-stripper stats, per-transformer stats)."""
     parse_path, is_tmp = _transcode_to_utf8(input_path)
     try:
         parser = Parser()
@@ -491,6 +509,7 @@ def process_file(
 
     stats: dict[str, CleanerStats] = {c: CleanerStats() for c in cleaners}
     strip_stats: dict[str, StripperStats] = {s: StripperStats() for s in strippers}
+    transform_stats: dict[str, TransformerStats] = {t: TransformerStats() for t in transformers}
 
     if "dd_mmm_yyyy" in cleaners:
         s = stats["dd_mmm_yyyy"]
@@ -558,6 +577,24 @@ def process_file(
                 print(f"  [strip:{name}] removing {element.get_tag()} {element.get_pointer()}")
             parser.get_root_child_elements().remove(element)
 
+    for name in transformers:
+        ts = transform_stats[name]
+        tag_map = TRANSFORMERS[name]
+        current_label = None
+        for element in parser.get_element_list():
+            old_tag = element.get_tag()
+            if old_tag not in tag_map:
+                continue
+            new_tag = tag_map[old_tag]
+            element._Element__tag = new_tag  # no set_tag() in library; name-mangling workaround
+            ts.transformed += 1
+            if verbose:
+                label = _record_label(element)
+                if label != current_label:
+                    print(label)
+                    current_label = label
+                print(f"  [transform:{name}] {old_tag} -> {new_tag}  {element.get_value()!r}")
+
     parser.invalidate_cache()
     try:
         with open(output_path, "w", encoding="utf-8-sig") as f:
@@ -567,7 +604,7 @@ def process_file(
         print(f"ERROR: could not write '{output_path}': {e}", file=sys.stderr)
         sys.exit(1)
 
-    return stats, strip_stats
+    return stats, strip_stats, transform_stats
 
 
 # ---------------------------------------------------------------------------
@@ -598,6 +635,12 @@ def main():
         help=f"Comma-separated list of strippers to apply. Available: {', '.join(STRIPPERS)}",
     )
     parser.add_argument(
+        "--transform",
+        default="",
+        metavar="TRANSFORMER[,TRANSFORMER,...]",
+        help=f"Comma-separated list of transformers to apply. Available: {', '.join(TRANSFORMERS)}",
+    )
+    parser.add_argument(
         "--warn",
         action="store_true",
         help="Print dates that could not be converted to stderr",
@@ -615,11 +658,12 @@ def main():
 
     args = parser.parse_args()
 
-    requested_clean   = [c.strip() for c in args.clean.split(",")  if c.strip()]
-    requested_strip   = [s.strip() for s in args.strip.split(",")  if s.strip()]
+    requested_clean     = [c.strip() for c in args.clean.split(",")     if c.strip()]
+    requested_strip     = [s.strip() for s in args.strip.split(",")     if s.strip()]
+    requested_transform = [t.strip() for t in args.transform.split(",") if t.strip()]
 
-    if not requested_clean and not requested_strip:
-        print("ERROR: at least one of --clean or --strip must be specified.", file=sys.stderr)
+    if not requested_clean and not requested_strip and not requested_transform:
+        print("ERROR: at least one of --clean, --strip, or --transform must be specified.", file=sys.stderr)
         sys.exit(1)
 
     unknown_clean = [c for c in requested_clean if c not in CLEANERS]
@@ -640,8 +684,19 @@ def main():
         )
         sys.exit(1)
 
-    stats, strip_stats = process_file(
-        args.input, args.output, requested_clean, requested_strip, args.warn, args.verbose
+    unknown_transform = [t for t in requested_transform if t not in TRANSFORMERS]
+    if unknown_transform:
+        print(
+            f"ERROR: unknown transformer(s): {', '.join(unknown_transform)}. "
+            f"Available: {', '.join(TRANSFORMERS)}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    stats, strip_stats, transform_stats = process_file(
+        args.input, args.output,
+        requested_clean, requested_strip, requested_transform,
+        args.warn, args.verbose,
     )
 
     total_warn = sum(s.warn for s in stats.values())
@@ -652,18 +707,23 @@ def main():
     print(f"Saved: {args.output}")
 
     if args.stats:
-        if stats:
-            col = max(len(c) for c in stats) + 2
-            print(f"\n{'Cleaner':<{col}}  {'processed':>10}  {'fixed':>7}  {'warn':>6}")
-            print("-" * (col + 30))
-            for cleaner, s in stats.items():
-                print(f"{cleaner:<{col}}  {s.processed:>10}  {s.fixed:>7}  {s.warn:>6}")
-        if strip_stats:
-            col = max(len(s) for s in strip_stats) + 2
-            print(f"\n{'Stripper':<{col}}  {'removed':>9}")
-            print("-" * (col + 12))
-            for name, s in strip_stats.items():
-                print(f"{name:<{col}}  {s.removed:>9}")
+        rows = []
+        for name, s in stats.items():
+            rows.append(("cleaner",     name, str(s.processed), str(s.fixed), str(s.warn)))
+        for name, s in strip_stats.items():
+            rows.append(("stripper",    name, "-", str(s.removed), "-"))
+        for name, s in transform_stats.items():
+            rows.append(("transformer", name, "-", str(s.transformed), "-"))
+
+        if rows:
+            headers = ("type", "name", "processed", "changed", "warn")
+            widths = [max(len(h), max(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
+            fmt = "  ".join(f"{{:<{w}}}" if i < 2 else f"{{:>{w}}}" for i, w in enumerate(widths))
+            print()
+            print(fmt.format(*headers))
+            print("-" * (sum(widths) + 2 * (len(widths) - 1)))
+            for row in rows:
+                print(fmt.format(*row))
 
 
 if __name__ == "__main__":
