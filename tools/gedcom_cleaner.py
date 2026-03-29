@@ -464,6 +464,19 @@ TRANSFORMERS: dict[str, dict[str, str]] = {
 
 
 # ---------------------------------------------------------------------------
+# Presets
+# ---------------------------------------------------------------------------
+
+PRESETS: dict[str, dict[str, list[str]]] = {
+    "mft_webtrees": {
+        "clean":     ["dd_mmm_yyyy", "name_placeholder"],
+        "strip":     ["mft"],
+        "transform": ["fid_fsftid"],
+    },
+}
+
+
+# ---------------------------------------------------------------------------
 # Core processing
 # ---------------------------------------------------------------------------
 
@@ -641,6 +654,12 @@ def main():
         help=f"Comma-separated list of transformers to apply. Available: {', '.join(TRANSFORMERS)}",
     )
     parser.add_argument(
+        "--preset",
+        default="",
+        metavar="PRESET",
+        help=f"Apply a predefined combination of processors. Available: {', '.join(PRESETS)}",
+    )
+    parser.add_argument(
         "--warn",
         action="store_true",
         help="Print dates that could not be converted to stderr",
@@ -661,6 +680,23 @@ def main():
     requested_clean     = [c.strip() for c in args.clean.split(",")     if c.strip()]
     requested_strip     = [s.strip() for s in args.strip.split(",")     if s.strip()]
     requested_transform = [t.strip() for t in args.transform.split(",") if t.strip()]
+
+    if args.preset:
+        if args.preset not in PRESETS:
+            print(
+                f"ERROR: unknown preset '{args.preset}'. "
+                f"Available: {', '.join(PRESETS)}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        p = PRESETS[args.preset]
+        # merge preset entries with any explicitly requested ones (dedup, preserve order)
+        def _merge(base: list[str], extra: list[str]) -> list[str]:
+            seen = set(base)
+            return base + [x for x in extra if x not in seen]
+        requested_clean     = _merge(p.get("clean",     []), requested_clean)
+        requested_strip     = _merge(p.get("strip",     []), requested_strip)
+        requested_transform = _merge(p.get("transform", []), requested_transform)
 
     if not requested_clean and not requested_strip and not requested_transform:
         print("ERROR: at least one of --clean, --strip, or --transform must be specified.", file=sys.stderr)
