@@ -88,12 +88,24 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
     Otherwise decodes it and writes a temp UTF-8 file, returns (tmp_path, True).
     Caller must delete the temp file when done (only when second value is True).
     """
-    encoding = _detect_encoding(input_path)
-    if encoding.lower().replace("-", "").replace("_", "") in ("utf8", "utf8sig"):
-        return input_path, False
-
     with open(input_path, "rb") as f:
         raw = f.read()
+
+    encoding = _detect_encoding(input_path)
+
+    # If detected as utf-8/utf-8-sig, verify it actually decodes cleanly.
+    # chardet can misidentify cp1250/cp1252 as utf-8 when the file has few
+    # high bytes — a failed decode means we must re-detect without that assumption.
+    norm = encoding.lower().replace("-", "").replace("_", "")
+    if norm in ("utf8", "utf8sig"):
+        try:
+            raw.decode(encoding)
+            return input_path, False  # genuine UTF-8 — pass through unchanged
+        except UnicodeDecodeError:
+            # Not real UTF-8: fall back to chardet ignoring the utf-8 guess
+            detected = chardet.detect(raw)
+            enc = detected.get("encoding") if detected else None
+            encoding = enc if enc and "utf" not in enc.lower() else "windows-1250"
 
     try:
         text = raw.decode(encoding)
@@ -155,9 +167,25 @@ def _record_label(element) -> str:
 
 def _serialize(element) -> str:
     """Recursively serialize an element and all its descendants at any depth.
-    Works around the library bug where to_gedcom_string(recursive=True) only
-    goes one level deep."""
-    result = element.to_gedcom_string(recursive=False)
+    Works around two library bugs:
+    1. to_gedcom_string(recursive=True) only goes one level deep.
+    2. get_pointer() can return None instead of "" for synthetic elements,
+       causing a TypeError in to_gedcom_string — we build the line manually."""
+    level = element.get_level()
+    if level < 0:
+        result = ""
+    else:
+        pointer = element.get_pointer() or ""
+        tag = element.get_tag()
+        value = element.get_value()
+        line = str(level)
+        if pointer:
+            line += " " + pointer
+        line += " " + tag
+        if value:
+            line += " " + value
+        line += "\n"
+        result = line
     for child in element.get_child_elements():
         result += _serialize(child)
     return result
@@ -312,6 +340,10 @@ PREFIX_MAP = {
     "cca": "ABT",
     "okoli": "ABT",
     "okrog": "ABT",
+    "približno": "ABT",
+    "priblizno": "ABT",   # without diacritic
+    "priblixno": "ABT",   # legacy encoding mangling of približno (ž → x)
+
     "okr.": "ABT",
     "okr": "ABT",
     "ok.": "ABT",

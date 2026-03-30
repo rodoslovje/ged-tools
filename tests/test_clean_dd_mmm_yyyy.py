@@ -253,6 +253,10 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("CCA 1250",          "ABT 1250"),
     ("okoli 1850",        "ABT 1850"),
     ("OKOLI 1700",        "ABT 1700"),
+    ("PRIBLIXNO 1973",    "ABT 1973"),
+    ("PRIBLIXNO 1885",    "ABT 1885"),
+    ("PRIBLIŽNO 1900",    "ABT 1900"),
+    ("PRIBLIZNO 1900",    "ABT 1900"),
 ])
 def test_clean_date_success(raw, expected):
     result, warning = clean_date_dd_mmm_yyyy(raw)
