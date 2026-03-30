@@ -51,9 +51,10 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     (".03.1947",  "MAR 1947"),
     (".03.1970",  "MAR 1970"),
 
-    # Trailing dot, apostrophe, or " ?" (uncertain)
+    # Trailing punctuation (dot, apostrophe, asterisk, slash) or " ?" (uncertain)
     ("12.09.1945.",      "12 SEP 1945"),
     ("06.11.1920'",      "6 NOV 1920"),
+    ("08.03.1739*/",     "8 MAR 1739"),
     ("26.10.1903 ?",     "ABT 26 OCT 1903"),
     ("26.10.1903 ??",    "ABT 26 OCT 1903"),
     ("09.01.1958 ?",     "ABT 9 JAN 1958"),
@@ -63,6 +64,14 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     # MM.DD.YYYY fallback when month > 12
     ("04.14.1902",   "14 APR 1902"),
     ("06.31.1800",   "31 JUN 1800"),
+
+    # Both day and month > 12 — unresolvable, keep year only
+    ("15.13.1900",   "1900"),
+    ("16.18.1840",   "1840"),
+
+    # Leading junk characters stripped (e.g. "=)=)1840")
+    ("=)=)1840",     "1840"),
+    ("=1840",        "1840"),
 
     # Trailing dot
     ("01.09.1978.",  "1 SEP 1978"),
@@ -206,9 +215,10 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("NOV1839",      "NOV 1839"),
     ("JAN1900",      "JAN 1900"),
 
-    # Letter O misread as digit 0 (OCR/typo) — word boundary and between digits
+    # Letter O misread as digit 0 (OCR/typo) — word boundary, between digits, or trailing
     ("O6 FEB 1918",   "6 FEB 1918"),
     ("09.06.19O6",    "9 JUN 1906"),
+    ("182O",          "1820"),
 
     # Missing delimiter between month and year (DD.MMYYYY)
     ("21.041831",     "21 APR 1831"),
@@ -271,6 +281,8 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("before 1900",       "BEF 1900"),
     ("Pred 1900",         "BEF 1900"),
     ("pred 1900",         "BEF 1900"),
+    ("PRD 1905",          "BEF 1905"),
+    ("prd 1870",          "BEF 1870"),
     ("Vor 1900",          "BEF 1900"),
     ("vor 1900",          "BEF 1900"),
     ("After 1900",        "AFT 1900"),
@@ -418,7 +430,6 @@ def test_clean_date_remove(raw):
     "not a date",
     "sometime",
     "15 FOO 1900",   # bad month
-    "15.13.1900",    # invalid month number
 ])
 def test_clean_date_warns(raw):
     result, warning = clean_date_dd_mmm_yyyy(raw)

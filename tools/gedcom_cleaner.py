@@ -401,6 +401,7 @@ PREFIX_MAP = {
     "ca.": "ABT",
     "ca": "ABT",
     "pred": "BEF",
+    "prd": "BEF",
     "vor": "BEF",
     "po": "AFT",
     "ˇ": "ABT",  # modifier letter caron (U+02C7) used as ABT in some apps
@@ -534,7 +535,9 @@ def _parse_date_value(value: str) -> tuple[str | None, str | None]:
                         month = _monthnum_to_abbr(day)
                         day = mn
                     else:
-                        return None, f"invalid month number in '{value}'"
+                        # Both day and month > 12 — unresolvable, keep year only
+                        month = None
+                        day = None
         elif "month" in gd and gd["month"]:
             month = _normalize_month_name(gd["month"])
             if month is None:
@@ -669,8 +672,8 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     if re.match(r"^\?+$", v):
         return "", None
 
-    # Strip trailing dot or apostrophe (e.g. "12.09.1945.", "06.11.1920'")
-    v = v.rstrip(".'`")
+    # Strip trailing punctuation: dot, apostrophe, backtick, asterisk, slash
+    v = v.rstrip(".'`*/")
 
     # Trailing ? or " ??" etc. — uncertain date; strip question marks, keep value as ABT
     uncertain = False
@@ -718,12 +721,11 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
         if rest and not rest[0].isdigit():
             v = rest
 
-    # Strip leading = (means "exact date" in some apps — no GEDCOM equivalent, keep value)
-    if v.startswith("="):
-        v = v[1:].strip()
+    # Strip leading = / ) and similar junk characters (repeated, e.g. "=)=)1840")
+    v = re.sub(r"^[=≈≡＝\)\(]+\s*", "", v)
 
-    # Normalize letter O → digit 0 (OCR/typo): at word boundary before digit, or between digits
-    v = re.sub(r"\bO(?=\d)|(?<=\d)O(?=\d)", "0", v)
+    # Normalize letter O → digit 0 (OCR/typo): before digit, between digits, or after digit at word end
+    v = re.sub(r"\bO(?=\d)|(?<=\d)O(?=\d)|(?<=\d)O\b", "0", v)
 
     # Collapse repeated tilde to single (e.g. "~~ 1968" → "~ 1968")
     v = re.sub(r"~+", "~", v)
