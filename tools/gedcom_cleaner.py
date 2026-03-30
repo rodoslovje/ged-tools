@@ -266,6 +266,17 @@ MONTHS_LONG = {
     "oktobru": "OCT",
     "novembru": "NOV",
     "decembru": "DEC",
+    # Old Slovenian long forms
+    "prosinec": "JAN",
+    "svečan": "FEB",
+    "sušec": "MAR",
+    "rožnik": "JUN",
+    "srpan": "JUL",
+    "kosec": "SEP",
+    "vinotok": "OCT",
+    "kimovec": "OCT",
+    "listopad": "NOV",
+    "gruden": "DEC",
 }
 
 MONTHS_SHORT = {
@@ -317,6 +328,45 @@ MONTHS_SHORT = {
     "okt.": "OCT",
     "nov.": "NOV",
     "dec.": "DEC",
+    # Old Slovenian short forms
+    "pros.": "JAN",
+    "pros": "JAN",
+    "sveč.": "FEB",
+    "sveč": "FEB",
+    "vel.": "FEB",
+    "vel": "FEB",
+    "suš.": "MAR",
+    "suš": "MAR",
+    "rožn.": "JUN",
+    "rožn": "JUN",
+    "srp.": "JUL",
+    "srp": "JUL",
+    "kos.": "SEP",
+    "kos": "SEP",
+    "kim.": "OCT",
+    "kim": "OCT",
+    "vin.": "OCT",
+    "vin": "OCT",
+    "list.": "NOV",
+    "list": "NOV",
+    "grud.": "DEC",
+    "grud": "DEC",
+}
+
+MONTHS_MULTI = {
+    # Old Slovenian multi-word month names (checked before single-word)
+    "mali traven": "APR",
+    "mali.traven": "APR",
+    "m.traven": "APR",
+    "veliki traven": "MAY",
+    "vel.traven": "MAY",
+    "v.traven": "MAY",
+    "vel. srpan": "AUG",
+    "veliki srpan": "AUG",
+    "v.srpan": "AUG",
+    "vel.srpan": "AUG",
+    "mali srpan": "JUL",
+    "m.srpan": "JUL",
 }
 
 # Map all known prefix variants to their canonical GEDCOM form
@@ -358,12 +408,16 @@ PREFIX_MAP = {
     "l": "",
     "est.": "EST",
     "est": "EST",
+    "pribl.": "ABT",
+    "pribl": "ABT",
+    "wft est.": "ABT",
+    "wft est": "ABT",
 }
 
 # Regex pieces
 _DAY = r"(?P<day>\d{1,2})"
-_MONTH = r"(?P<month>[A-Za-zÄäÖöÜüß]+\.?)"
-_YEAR = r"(?P<year>\d{3,4})"
+_MONTH = r"(?P<month>[^\W\d_]+\.?)"
+_YEAR = r"(?P<year>\d{3,4}(?:/\d{1,4})?)"
 
 # Flexible separator: one or more of space, dot, comma, slash, hyphen, colon, tilde
 _SEP = r"[\s.,/\-:~]+"
@@ -436,6 +490,9 @@ def _monthnum_to_abbr(num: str) -> str | None:
     return None
 
 
+_MONTHS_MULTI_SORTED = sorted(MONTHS_MULTI.keys(), key=len, reverse=True)
+
+
 def _parse_date_value(value: str) -> tuple[str | None, str | None]:
     """
     Try to parse a date string (without prefix).
@@ -443,6 +500,16 @@ def _parse_date_value(value: str) -> tuple[str | None, str | None]:
     Formatted date is like 'DD MMM YYYY', 'MMM YYYY', or 'YYYY'.
     """
     v = value.strip()
+
+    # Substitute multi-word month names before pattern matching
+    vl = v.lower()
+    for mw in _MONTHS_MULTI_SORTED:
+        if mw in vl:
+            abbr = MONTHS_MULTI[mw]
+            idx = vl.index(mw)
+            v = v[:idx] + abbr + v[idx + len(mw):]
+            vl = v.lower()
+            break
 
     for pat in DATE_PATTERNS:
         m = pat.match(v)
@@ -455,14 +522,19 @@ def _parse_date_value(value: str) -> tuple[str | None, str | None]:
         month = None
 
         if "monthnum" in gd and gd["monthnum"]:
-            month = _monthnum_to_abbr(gd["monthnum"])
-            if month is None:
-                # month number > 12: try swapping day and month (MM.DD.YYYY → DD.MM.YYYY)
-                if day and _monthnum_to_abbr(day) and int(gd["monthnum"]) <= 31:
-                    month = _monthnum_to_abbr(day)
-                    day = gd["monthnum"]
-                else:
-                    return None, f"invalid month number in '{value}'"
+            mn = gd["monthnum"]
+            if int(mn) == 0:
+                month = None
+                day = None
+            else:
+                month = _monthnum_to_abbr(mn)
+                if month is None:
+                    # month number > 12: try swapping day and month (MM.DD.YYYY → DD.MM.YYYY)
+                    if day and _monthnum_to_abbr(day) and int(mn) <= 31:
+                        month = _monthnum_to_abbr(day)
+                        day = mn
+                    else:
+                        return None, f"invalid month number in '{value}'"
         elif "month" in gd and gd["month"]:
             month = _normalize_month_name(gd["month"])
             if month is None:
@@ -471,6 +543,9 @@ def _parse_date_value(value: str) -> tuple[str | None, str | None]:
         # Three-digit years are assumed to be missing a leading '1' (e.g. 994 → 1994)
         if year and len(year) == 3:
             year = "1" + year
+
+        if day == "00":
+            day = None
 
         parts = []
         if day:
@@ -566,6 +641,11 @@ def _parse_range(value: str) -> tuple[str | None, str | None, bool]:
     if m:
         return both(m.group(1), m.group(2), "BET {} AND {}")
 
+    # MED date - date  (Slovenian "med" = between)
+    m = re.match(r"^MED\s+(.+?)\s*[-–]\s*(.+)$", v, re.IGNORECASE)
+    if m:
+        return both(m.group(1), m.group(2), "FROM {} TO {}")
+
     # YYYY-YYYY  (plain year range, e.g. "1856-1881") — left as-is, handled below
 
     return None, None, False
@@ -581,6 +661,10 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     if not v:
         return "", None  # silently keep empty date as-is
 
+    # PRIVATE passthrough
+    if v.upper() == "PRIVATE":
+        return raw, None
+
     # Pure ? / ?? — unknown date, treat as empty
     if re.match(r"^\?+$", v):
         return "", None
@@ -595,11 +679,37 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
         v = v_stripped
         uncertain = True
 
+    # Strip trailing birth hour info: spaces + digits + optional H (e.g. "05.07.1913    7", "04.05.1915   2H")
+    v_no_hour = re.sub(r"\s+\d{1,2}H?$", "", v)
+    if v_no_hour != v and v_no_hour and v_no_hour[0].isdigit():
+        v = v_no_hour
+
+    # Inline x/X/y/Y/? placeholders within numeric tokens (e.g. "195x", "19xx", "197Y", "2?") → replace with 0, mark ABT
+    v_norm, n_subs = re.subn(r"(?<=\d)[xXyY?]+|[xXyY?]+(?=\d)", lambda m: "0" * len(m.group()), v)
+    if n_subs:
+        v = v_norm
+        uncertain = True
+
+    # Standalone X as day/month placeholder (e.g. "X.X.1965") → replace with 0
+    v = re.sub(r"(?<![A-Za-z])X(?![A-Za-z])", "0", v)
+
     # Strip parentheses (e.g. "(1620)", ".-.(1740)")
     v = re.sub(r"[()]", "", v).strip()
 
+    # UNKNOWN / unknown — fully unknown date, treat as empty
+    if v.upper() == "UNKNOWN":
+        return "", None
+
     # Collapse multiple leading dots/spaces/hyphens to a single dot (e.g. "..1920", ".-. 1740")
     v = re.sub(r"^[.\s\-]{2,}", ".", v)
+
+    # Strip spurious single leading separator when followed by DD.MM... (e.g. ".24.03.1892").
+    # Do NOT strip when it's a .MM placeholder: leading 2-digit number ≤ 12 (valid month).
+    if len(v) > 1 and v[0] in ".,:" and v[1].isdigit():
+        m2 = re.match(r"^[.,](\d{1,2})", v)
+        num = int(m2.group(1)) if m2 else 99
+        if num > 12:  # can't be a month → spurious leading separator, strip it
+            v = v[1:]
 
     # Strip single leading comma/dot used as unknown-day placeholder (e.g. ",MAJ 1945", ".MAJ 1945")
     if len(v) > 1 and v[0] in ".,":
@@ -632,6 +742,11 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     if m:
         return f"{m.group(1)}-{m.group(2)}", None
 
+    # YYYY-N or YYYY-NN — trailing sequence number / entry index, strip it, keep year only
+    m = re.match(r"^(\d{3,4})-(\d{1,2})$", v)
+    if m:
+        return m.group(1), None
+
     # YYYY/Y … YYYY/YYYY — dual dating / alternative year notation, kept as-is
     if re.match(r"^\d{3,4}/\d{1,4}$", v):
         return v, None
@@ -641,18 +756,26 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     if is_range:
         return result, err
 
-    # Detect and strip prefix
+    # Detect and strip prefix (run up to twice for compound prefixes like "ˇ~")
     prefix_canon = None
-    for variant, canon in PREFIX_MAP.items():
-        # match whole word / token at start, case-insensitive
-        pattern = re.compile(r"^" + re.escape(variant) + r"(?=[\s\d\w.]|$)", re.IGNORECASE)
-        if pattern.match(v):
-            prefix_canon = canon
-            v = v[len(variant) :].strip()
+    for _ in range(2):
+        matched = False
+        for variant, canon in PREFIX_MAP.items():
+            # match whole word / token at start, case-insensitive
+            pattern = re.compile(r"^" + re.escape(variant) + r"(?=[\s\d\w.~]|$)", re.IGNORECASE)
+            if pattern.match(v):
+                if prefix_canon is None:
+                    prefix_canon = canon
+                elif canon:
+                    prefix_canon = canon
+                v = v[len(variant):].strip()
+                matched = True
+                break
+        if not matched:
             break
 
     if not v:
-        return None, f"date consists only of a prefix: '{raw}'"
+        return "", None
 
     formatted, err = _parse_date_value(v)
     if err:

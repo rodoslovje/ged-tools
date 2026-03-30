@@ -163,6 +163,9 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     # No separator between day and month name
     ("11FEB.1694",   "11 FEB 1694"),
 
+    # Spurious leading separator before DD.MM.YYYY (stripped)
+    (".24.03.1892",  "24 MAR 1892"),
+
     # Leading dot/comma placeholder with named month
     (".MAJ.1693",    "MAY 1693"),
     (",MAJ 1945",    "MAY 1945"),
@@ -232,6 +235,11 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("1964?",   "ABT 1964"),
     ("1917?",   "ABT 1917"),
 
+    # Inline x/? placeholders in numeric tokens → replace with 0, mark ABT
+    ("26.12.195x",   "ABT 26 DEC 1950"),
+    ("17.3.19xx",    "ABT 17 MAR 1900"),
+    ("2?.12.1929",   "ABT 20 DEC 1929"),
+
     # Leading comma placeholder (unknown day)
     (",06.1590",  "JUN 1590"),
 
@@ -282,6 +290,102 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("PRIBLIXNO 1885",    "ABT 1885"),
     ("PRIBLIŽNO 1900",    "ABT 1900"),
     ("PRIBLIZNO 1900",    "ABT 1900"),
+
+    # PRIBL. / PRIBL prefix → ABT
+    ("pribl. 1900",  "ABT 1900"),
+    ("pribl 1870",   "ABT 1870"),
+    ("PRIBL. 1740",  "ABT 1740"),
+
+    # WFT EST. prefix → ABT
+    ("WFT EST. 1900",  "ABT 1900"),
+    ("WFT EST 1850",   "ABT 1850"),
+    ("wft est. 1920",  "ABT 1920"),
+
+    # ˇ~ compound prefix → ABT
+    ("ˇ~1955",  "ABT 1955"),
+    ("ˇ~1820",  "ABT 1820"),
+
+    # ABT (or other prefix) alone → empty
+    ("ABT",   ""),
+    ("BEF",   ""),
+    ("AFT",   ""),
+
+    # PRIVATE passthrough (no change, no warning)
+    ("PRIVATE",  "PRIVATE"),
+    ("private",  "private"),
+
+    # YYYY-N trailing sequence number → year only
+    ("1863-1",   "1863"),
+    ("1927-2",   "1927"),
+    ("1874-1",   "1874"),
+
+    # Old Slovenian short month names
+    ("17.kim 1888",      "17 OCT 1888"),
+    ("15 vel. 1890",     "15 FEB 1890"),
+    ("10.srpan 1850",    "10 JUL 1850"),
+    ("5.pros. 1900",     "5 JAN 1900"),
+    ("3.sveč 1901",      "3 FEB 1901"),
+    ("7.suš. 1902",      "7 MAR 1902"),
+    ("2.rožn. 1903",     "2 JUN 1903"),
+    ("8.kim. 1904",      "8 OCT 1904"),
+    ("9.kos. 1905",      "9 SEP 1905"),
+    ("11.vin. 1906",     "11 OCT 1906"),
+    ("12.list. 1907",    "12 NOV 1907"),
+    ("13.grud. 1908",    "13 DEC 1908"),
+
+    # Old Slovenian long month names
+    ("5 prosinec 1900",   "5 JAN 1900"),
+    ("3 svečan 1901",     "3 FEB 1901"),
+    ("7 sušec 1902",      "7 MAR 1902"),
+    ("2 rožnik 1903",     "2 JUN 1903"),
+    ("10 srpan 1850",     "10 JUL 1850"),
+    ("8 kimovec 1904",    "8 OCT 1904"),
+    ("9 kosec 1905",      "9 SEP 1905"),
+    ("11 vinotok 1906",   "11 OCT 1906"),
+    ("12 listopad 1907",  "12 NOV 1907"),
+    ("13 gruden 1908",    "13 DEC 1908"),
+
+    # Old Slovenian multi-word month names
+    ("17.vel. srpan 1888",   "17 AUG 1888"),
+    ("5 mali traven 1900",   "5 APR 1900"),
+    ("6 veliki traven 1901", "6 MAY 1901"),
+    ("3 mali srpan 1870",    "3 JUL 1870"),
+    ("4 veliki srpan 1880",  "4 AUG 1880"),
+    ("7 v.srpan 1900",       "7 AUG 1900"),
+
+    # 00.00.YYYY → year only
+    ("00.00.1965",  "1965"),
+    ("00.00.1842",  "1842"),
+
+    # 00.MM.YYYY → month + year only
+    ("00.05.1970",  "MAY 1970"),
+    ("00.03.1885",  "MAR 1885"),
+
+    # DD.00.YYYY → year only (day and month unknown)
+    ("15.00.1900",  "1900"),
+
+    # 00.05.197Y → ABT + month + year (Y placeholder)
+    ("00.05.197Y",  "ABT MAY 1970"),
+    ("00.07.196Y",  "ABT JUL 1960"),
+
+    # X.X.YYYY → year only (X as day/month placeholder)
+    ("X.X.1965",  "1965"),
+    ("X.X.1842",  "1842"),
+
+    # Birth hour stripping
+    ("05.07.1913    7",   "5 JUL 1913"),
+    ("04.05.1915   2H",   "4 MAY 1915"),
+    ("12.03.1900  10H",   "12 MAR 1900"),
+
+    # MED date - date (Slovenian "between")
+    ("MED 1900 - 1910",           "FROM 1900 TO 1910"),
+    ("MED 15.01.1900 - 20.3.1910", "FROM 15 JAN 1900 TO 20 MAR 1910"),
+    ("med 1850 - 1860",            "FROM 1850 TO 1860"),
+
+    # DD MMM YYYY/YY dual dating
+    ("4 JAN 1718/19",   "4 JAN 1718/19"),
+    ("15 MAR 1700/01",  "15 MAR 1700/01"),
+    ("1 FEB 1800/1801", "1 FEB 1800/1801"),
 ])
 def test_clean_date_success(raw, expected):
     result, warning = clean_date_dd_mmm_yyyy(raw)
@@ -299,6 +403,9 @@ def test_clean_date_success(raw, expected):
     "",    # empty — no warning, no value
     "?",   # single unknown marker
     "??",  # double unknown marker
+    "ABT", # prefix alone — treat as empty
+    "BEF",
+    "UNKNOWN",
 ])
 def test_clean_date_remove(raw):
     """Fully unknown placeholder dates return ('', None) — signal to remove the element."""
