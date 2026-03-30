@@ -107,6 +107,28 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
     return tmp_path, True
 
 
+_EVENT_LABELS: dict[str, str] = {
+    gedcom.tags.GEDCOM_TAG_BIRTH:    "birth",
+    gedcom.tags.GEDCOM_TAG_DEATH:    "death",
+    gedcom.tags.GEDCOM_TAG_MARRIAGE: "marriage",
+    "BURI": "burial",
+    "CHR":  "christening",
+    "DIV":  "divorce",
+    "EMIG": "emigration",
+    "IMMI": "immigration",
+    "NATU": "naturalization",
+    "PROB": "probate",
+}
+
+
+def _event_label(element) -> str:
+    """Return a human-readable event name for the parent of a DATE element, or ''."""
+    parent = element.get_parent_element()
+    if parent is None:
+        return ""
+    return _EVENT_LABELS.get(parent.get_tag(), "")
+
+
 def _record_label(element) -> str:
     """Return a human-readable label for the level-0 record containing element."""
     el = element
@@ -261,6 +283,8 @@ PREFIX_MAP = {
     "cca.": "ABT",
     "cca": "ABT",
     "okoli": "ABT",
+    "pred": "BEF",
+    "vor": "BEF",
     "est.": "EST",
     "est": "EST",
 }
@@ -270,26 +294,25 @@ _DAY = r"(?P<day>\d{1,2})"
 _MONTH = r"(?P<month>[A-Za-zÄäÖöÜüß]+\.?)"
 _YEAR = r"(?P<year>\d{3,4})"
 
+# Flexible separator: one or more of space, dot, comma, slash, hyphen
+_SEP = r"[\s.,/\-]+"
+
 # Full date patterns (most specific first)
 DATE_PATTERNS = [
-    # DD MMM YYYY  /  DD-MMM-YYYY  /  DD/MMM/YYYY
-    re.compile(rf"^{_DAY}[\s\-/]{_MONTH}[\s\-/]{_YEAR}$"),
+    # DD MMM YYYY  — any mix of separators/spaces between tokens
+    re.compile(rf"^{_DAY}{_SEP}{_MONTH}{_SEP}{_YEAR}$"),
     # MMM DD YYYY  (e.g. "Jan 15 1900")
-    re.compile(rf"^{_MONTH}\s+{_DAY}[,\s]+{_YEAR}$"),
-    # YYYY-MM-DD  (ISO)
+    re.compile(rf"^{_MONTH}{_SEP}{_DAY}{_SEP}{_YEAR}$"),
+    # YYYY-MM-DD  (ISO — must come before generic numeric to avoid wrong group assignment)
     re.compile(r"^(?P<year>\d{4})-(?P<monthnum>\d{1,2})-(?P<day>\d{1,2})$"),
-    # DD.MM.YYYY  or  DD/MM/YYYY  (numeric month, no spaces)
-    re.compile(r"^(?P<day>\d{1,2})[./](?P<monthnum>\d{1,2})[./](?P<year>\d{3,4})$"),
-    # DD.MM. YYYY or DD.MM YYYY (numeric month, optional final dot, space before year)
-    re.compile(
-        r"^(?P<day>\d{1,2})[./]\s*(?P<monthnum>\d{1,2})\.?\s+(?P<year>\d{3,4})$"
-    ),
+    # DD MM YYYY  — numeric month, any mix of separators (including mixed like "31 05.1756")
+    re.compile(rf"^(?P<day>\d{{1,2}}){_SEP}(?P<monthnum>\d{{1,2}}){_SEP}(?P<year>\d{{3,4}})$"),
     # .MM.YYYY  (unknown day, numeric month — leading dot placeholder)
     re.compile(r"^\.\s*(?P<monthnum>\d{1,2})\.\s*(?P<year>\d{3,4})$"),
-    # MMM YYYY  (no day)
-    re.compile(rf"^{_MONTH}\s+{_YEAR}$"),
-    # MMM.YYYY  (no day, dot separator)
-    re.compile(rf"^{_MONTH}\.{_YEAR}$"),
+    # MMM YYYY  (no day, with separator)
+    re.compile(rf"^{_MONTH}{_SEP}{_YEAR}$"),
+    # MMMYYYY  (no day, no separator — e.g. "NOV1839")
+    re.compile(rf"^{_MONTH}(?P<year>\d{{3,4}})$"),
     # YYYY only
     re.compile(r"^(?P<year>\d{3,4})$"),
 ]
@@ -673,8 +696,10 @@ def process_file(
             if warning:
                 s.warn += 1
                 if warn:
+                    event = _event_label(element)
+                    event_str = f" ({event})" if event else ""
                     print(
-                        f"WARN [dd_mmm_yyyy]: {warning}  — {_record_label(element)}",
+                        f"WARN [dd_mmm_yyyy]: {warning}{event_str}  — {_record_label(element)}",
                         file=sys.stderr,
                     )
             else:

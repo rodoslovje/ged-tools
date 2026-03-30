@@ -105,6 +105,20 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("15.01.1900",      "15 JAN 1900"),
     ("15/01/1900",      "15 JAN 1900"),
 
+    # Extra spaces between tokens
+    ("24   MRZ 1975",  "24 MAR 1975"),
+    ("29   MRZ 1975",  "29 MAR 1975"),
+    ("15   JAN  1900", "15 JAN 1900"),
+
+    # Mixed delimiters and spaces between numeric day/month/year
+    ("11. 09.1960",  "11 SEP 1960"),
+    ("20.01,1722",   "20 JAN 1722"),
+    ("31 05.1756",   "31 MAY 1756"),
+
+    # No separator between month name and year
+    ("NOV1839",      "NOV 1839"),
+    ("JAN1900",      "JAN 1900"),
+
     # Prefixes — normalised to GEDCOM canonical prefix
     ("Abt 15 JAN 1900",   "ABT 15 JAN 1900"),
     ("Abt. 15 JAN 1900",  "ABT 15 JAN 1900"),
@@ -121,6 +135,10 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("Bef. 1900",         "BEF 1900"),
     ("Bef 1900",          "BEF 1900"),
     ("before 1900",       "BEF 1900"),
+    ("Pred 1900",         "BEF 1900"),
+    ("pred 1900",         "BEF 1900"),
+    ("Vor 1900",          "BEF 1900"),
+    ("vor 1900",          "BEF 1900"),
     ("After 1900",        "AFT 1900"),
     ("Aft. MAR 1900",     "AFT MAR 1900"),
     ("Est. 1900",         "EST 1900"),
