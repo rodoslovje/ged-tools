@@ -18,9 +18,21 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("BETWEEN 1856-1881",               "BET 1856 AND 1881"),
     ("BET 15 JAN 1800 AND 20 MAR 1810", "BET 15 JAN 1800 AND 20 MAR 1810"),
 
+    # Date ranges — DO (Slovenian/German "to")
+    ("1920 DO 1945",          "FROM 1920 TO 1945"),
+    ("FROM 1920 DO 1945",     "FROM 1920 TO 1945"),
+
     # Implicit year ranges (YYYY-YYYY) — kept as-is
     ("1856-1881",   "1856-1881"),
     ("1979-1980",   "1979-1980"),
+
+    # Multiple leading dots/spaces as placeholder (unknown day/month)
+    ("..1920",       "1920"),
+    ("...1964",      "1964"),
+    (".....1714",    "1714"),
+    (".  .1993",     "1993"),
+    (".  .1666",     "1666"),
+    ("..MAJ 1945",   "MAY 1945"),
 
     # Placeholder dates — partial (year known), underscore and hyphen variants
     (".__.1933",    "1933"),
@@ -38,8 +50,15 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     (".03.1947",  "MAR 1947"),
     (".03.1970",  "MAR 1970"),
 
+    # Trailing dot or apostrophe
+    ("12.09.1945.",   "12 SEP 1945"),
+    ("06.11.1920'",   "6 NOV 1920"),
+
+    # MM.DD.YYYY fallback when month > 12
+    ("04.14.1902",   "14 APR 1902"),
+    ("06.31.1800",   "31 JUN 1800"),
+
     # Trailing dot
-    ("12.09.1945.",  "12 SEP 1945"),
     ("01.09.1978.",  "1 SEP 1978"),
 
     # Numeric date with extra/missing delimiters
@@ -138,8 +157,12 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     # No separator between day and month name
     ("11FEB.1694",   "11 FEB 1694"),
 
-    # Leading dot placeholder with named month
+    # Leading dot/comma placeholder with named month
     (".MAJ.1693",    "MAY 1693"),
+    (",MAJ 1945",    "MAY 1945"),
+
+    # DDMM.YYYY — no separator between day and month
+    ("0208.1902",    "2 AUG 1902"),
 
     # Tilde prefix with dot separator in date
     ("~APR.1967",    "ABT APR 1967"),
@@ -148,8 +171,23 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("NOV1839",      "NOV 1839"),
     ("JAN1900",      "JAN 1900"),
 
-    # Letter O misread as digit 0 (OCR/typo)
-    ("O6 FEB 1918",  "6 FEB 1918"),
+    # Letter O misread as digit 0 (OCR/typo) — word boundary and between digits
+    ("O6 FEB 1918",   "6 FEB 1918"),
+    ("09.06.19O6",    "9 JUN 1906"),
+
+    # Missing delimiter between month and year (DD.MMYYYY)
+    ("21.041831",     "21 APR 1831"),
+    ("30.051694",     "30 MAY 1694"),
+
+    # Parentheses stripped — plain year treated as-is, uncertain context as ABT
+    ("(1620)",        "1620"),
+    (".-.(1740)",     "1740"),
+    (".-. (1775)",    "1775"),
+
+    # L. / L prefix (Slovenian/German "Leto/Jahr" = year) → strip, keep year
+    ("L.1610",   "1610"),
+    ("L.1880",   "1880"),
+    ("L 1880",   "1880"),
 
     # Leading dot with placeholder characters for unknown day/month
     (".<,1820",  "1820"),

@@ -307,6 +307,8 @@ PREFIX_MAP = {
     "ca": "ABT",
     "pred": "BEF",
     "vor": "BEF",
+    "l.": "",   # Slovenian/German "Leto/Jahr" (year) — strip prefix, keep year
+    "l": "",
     "est.": "EST",
     "est": "EST",
 }
@@ -333,6 +335,10 @@ DATE_PATTERNS = [
     re.compile(r"^(?P<year>\d{4})-(?P<monthnum>\d{1,2})-(?P<day>\d{1,2})$"),
     # DD MM YYYY  — numeric month, any mix of separators (including mixed like "31 05.1756")
     re.compile(rf"^(?P<day>\d{{1,2}}){_SEP}(?P<monthnum>\d{{1,2}}){_SEP}(?P<year>\d{{3,4}})$"),
+    # DD.MMYYYY  — separator after day, no separator between 2-digit month and 4-digit year
+    re.compile(r"^(?P<day>\d{1,2})[.,/\-:](?P<monthnum>\d{2})(?P<year>\d{4})$"),
+    # DDMM.YYYY  — no separator between day and month, separator before year (e.g. "0208.1902")
+    re.compile(r"^(?P<day>\d{2})(?P<monthnum>\d{2})[.,/\-:](?P<year>\d{4})$"),
     # .MM.YYYY or ,MM.YYYY  (unknown day, numeric month — leading dot/comma placeholder)
     re.compile(r"^[.,]\s*(?P<monthnum>\d{1,2})[.,]\s*(?P<year>\d{3,4})$"),
     # .MMM.YYYY  (unknown day, named month — leading dot placeholder, e.g. ".MAJ.1693")
@@ -400,7 +406,12 @@ def _parse_date_value(value: str) -> tuple[str | None, str | None]:
         if "monthnum" in gd and gd["monthnum"]:
             month = _monthnum_to_abbr(gd["monthnum"])
             if month is None:
-                return None, f"invalid month number in '{value}'"
+                # month number > 12: try swapping day and month (MM.DD.YYYY → DD.MM.YYYY)
+                if day and _monthnum_to_abbr(day) and int(gd["monthnum"]) <= 31:
+                    month = _monthnum_to_abbr(day)
+                    day = gd["monthnum"]
+                else:
+                    return None, f"invalid month number in '{value}'"
         elif "month" in gd and gd["month"]:
             month = _normalize_month_name(gd["month"])
             if month is None:
@@ -429,6 +440,15 @@ def _handle_placeholder(value: str) -> tuple[str, None] | None:
     Returns (year, None) if only the year is known     → keep just the year.
     Returns None         if the value has no placeholders at all.
     """
+    # Single dot alone = fully unknown (e.g. "--.--" collapses to ".")
+    if re.match(r"^\.$", value):
+        return "", None
+
+    # Leading single dot followed directly by a year (e.g. ".1920" after normalization)
+    m = re.match(r"^\.\s*(\d{3,4})$", value)
+    if m:
+        return m.group(1), None
+
     if not _PLACEHOLDER_RE.search(value):
         return None
 
@@ -466,8 +486,13 @@ def _parse_range(value: str) -> tuple[str | None, str | None, bool]:
             return None, e, True
         return fmt.format(r), None, True
 
-    # FROM date TO date
-    m = re.match(r"^FROM\s+(.+?)\s+TO\s+(.+)$", v, re.IGNORECASE)
+    # FROM date TO date  (TO / DO)
+    m = re.match(r"^FROM\s+(.+?)\s+(?:TO|DO)\s+(.+)$", v, re.IGNORECASE)
+    if m:
+        return both(m.group(1), m.group(2), "FROM {} TO {}")
+
+    # date DO/TO date  (no FROM, e.g. "1920 DO 1945")
+    m = re.match(r"^(.+?)\s+(?:TO|DO)\s+(.+)$", v, re.IGNORECASE)
     if m:
         return both(m.group(1), m.group(2), "FROM {} TO {}")
 
@@ -477,7 +502,7 @@ def _parse_range(value: str) -> tuple[str | None, str | None, bool]:
         return one(m.group(1), "FROM {}")
 
     # TO date  (open-ended)
-    m = re.match(r"^TO\s+(.+)$", v, re.IGNORECASE)
+    m = re.match(r"^(?:TO|DO)\s+(.+)$", v, re.IGNORECASE)
     if m:
         return one(m.group(1), "TO {}")
 
@@ -506,15 +531,28 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     if not v:
         return None, "empty date value"
 
-    # Strip trailing dot (e.g. "12.09.1945.")
-    v = v.rstrip(".")
+    # Strip trailing dot or apostrophe (e.g. "12.09.1945.", "06.11.1920'")
+    v = v.rstrip(".'`")
+
+    # Strip parentheses (e.g. "(1620)", ".-.(1740)")
+    v = re.sub(r"[()]", "", v).strip()
+
+    # Collapse multiple leading dots/spaces/hyphens to a single dot (e.g. "..1920", ".-. 1740")
+    v = re.sub(r"^[.\s\-]{2,}", ".", v)
+
+    # Strip single leading comma/dot used as unknown-day placeholder (e.g. ",MAJ 1945", ".MAJ 1945")
+    if len(v) > 1 and v[0] in ".,":
+        rest = v[1:].lstrip()
+        # Only strip if what follows is not purely numeric (that would be .MM.YYYY — handled separately)
+        if rest and not rest[0].isdigit():
+            v = rest
 
     # Strip leading = (means "exact date" in some apps — no GEDCOM equivalent, keep value)
     if v.startswith("="):
         v = v[1:].strip()
 
-    # Normalize letter O → digit 0 when used as a zero in numeric context (OCR/typo)
-    v = re.sub(r"\bO(?=\d)", "0", v)
+    # Normalize letter O → digit 0 (OCR/typo): at word boundary before digit, or between digits
+    v = re.sub(r"\bO(?=\d)|(?<=\d)O(?=\d)", "0", v)
 
     # Trailing ? means uncertain — treat as ABT
     uncertain = False
