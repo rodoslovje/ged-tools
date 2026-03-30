@@ -476,6 +476,7 @@ PREFIX_MAP = {
     "abt.": "ABT",
     "abt": "ABT",
     "~": "ABT",
+    "'": "ABT",   # leading apostrophe = circa (genealogy convention)
     "<": "BEF",
     ">": "AFT",
     "before": "BEF",
@@ -503,6 +504,9 @@ PREFIX_MAP = {
     "izracunano": "ABT",   # without diacritic
     "oli": "ABT",     # truncated "okoli" (approximately)
     "olkrog": "ABT",  # typo for "okrog" (L instead of K)
+    "orog": "ABT",    # typo for "okrog" (missing k)
+    "krog": "ABT",    # truncation of "okrog" (missing leading o)
+    "recimo": "ABT",  # Slovenian "recimo" = "let's say" (approximate)
     "okr.": "ABT",
     "okr": "ABT",
     "ok.": "ABT",
@@ -541,6 +545,8 @@ DATE_PATTERNS = [
     re.compile(rf"^{_DAY}{_SEP}{_MONTH}(?P<year>\d{{3,4}})$"),
     # DDMMM YYYY  — no separator before month, separator before year (e.g. "11FEB.1694")
     re.compile(rf"^{_DAY}{_MONTH}{_SEP}{_YEAR}$"),
+    # DDMMMYYYY  — no separators at all (e.g. "03NOV1912")
+    re.compile(rf"^{_DAY}{_MONTH}(?P<year>\d{{3,4}})$"),
     # MMM DD YYYY  (e.g. "Jan 15 1900")
     re.compile(rf"^{_MONTH}{_SEP}{_DAY}{_SEP}{_YEAR}$"),
     # YYYY-MM-DD  (ISO — must come before generic numeric to avoid wrong group assignment)
@@ -709,17 +715,29 @@ def _parse_range(value: str) -> tuple[str | None, str | None, bool]:
     """
     v = value.strip()
 
+    _qualifier_re = re.compile(r"^(ABT|EST|CAL|BEF|AFT)\s+", re.IGNORECASE)
+
+    def _parse_part(d: str) -> tuple[str | None, str | None]:
+        """Strip an optional GEDCOM qualifier, parse the bare date, reassemble."""
+        m = _qualifier_re.match(d)
+        qualifier = (m.group(1).upper() + " ") if m else ""
+        bare = d[m.end():] if m else d
+        result, err = _parse_date_value(bare)
+        if err:
+            return None, err
+        return qualifier + result, None
+
     def both(d1: str, d2: str, fmt: str) -> tuple[str | None, str | None, bool]:
-        r1, e1 = _parse_date_value(d1)
+        r1, e1 = _parse_part(d1)
         if e1:
             return None, e1, True
-        r2, e2 = _parse_date_value(d2)
+        r2, e2 = _parse_part(d2)
         if e2:
             return None, e2, True
         return fmt.format(r1, r2), None, True
 
     def one(d: str, fmt: str) -> tuple[str | None, str | None, bool]:
-        r, e = _parse_date_value(d)
+        r, e = _parse_part(d)
         if e:
             return None, e, True
         return fmt.format(r), None, True
