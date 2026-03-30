@@ -413,6 +413,27 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     # Typo: jjun → JUN
     ("jjun 10 1799",   "10 JUN 1799"),
 
+    # XX day placeholder → month+year only
+    ("XX.05.2004",   "MAY 2004"),
+    ("XX.12.1899",   "DEC 1899"),
+
+    # Excessive leading separator before full 3-part date
+    (".04.05.1923",  "4 MAY 1923"),
+    (".31.12.1900",  "31 DEC 1900"),
+
+    # OD → FROM (Slovenian "od" = from)
+    ("OD 2005",      "FROM 2005"),
+    ("od 1950",      "FROM 1950"),
+
+    # CIR / CIR. → ABT (circa)
+    ("CIR 1774",     "ABT 1774"),
+    ("cir. 1850",    "ABT 1850"),
+
+    # videno / Izračunano → ABT (Slovenian "seen" / "calculated")
+    ("videno: 1762",       "ABT 1762"),
+    ("Izračunano: 1717",   "ABT 1717"),
+    ("izracunano: 1800",   "ABT 1800"),
+
     # Typo variants from real files
     ("22 manj 1922",   "22 MAY 1922"),   # typo for maj
     ("eog 1785",       "AUG 1785"),      # garbled avg/ago

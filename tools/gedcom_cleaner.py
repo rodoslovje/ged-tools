@@ -107,10 +107,18 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
             raw.decode(encoding)
             return input_path, False  # genuine UTF-8 — pass through unchanged
         except UnicodeDecodeError:
-            # Not real UTF-8: fall back to chardet ignoring the utf-8 guess
+            # Not real UTF-8: fall back to chardet ignoring the utf-8 guess.
+            # Apply same guards as _detect_encoding: require ≥20% confidence and
+            # exclude mac_roman/ascii which are unreliable for Central European text.
             detected = chardet.detect(raw)
-            enc = detected.get("encoding") if detected else None
-            encoding = enc if enc and "utf" not in enc.lower() else "windows-1250"
+            enc = (detected.get("encoding") or "") if detected else ""
+            confidence = (detected.get("confidence") or 0) if detected else 0
+            if (enc and confidence >= 0.2
+                    and enc.lower() not in ("mac_roman", "ascii")
+                    and "utf" not in enc.lower()):
+                encoding = enc
+            else:
+                encoding = "windows-1250"
 
     try:
         text = raw.decode(encoding)
@@ -481,6 +489,12 @@ PREFIX_MAP = {
     "priblizno": "ABT",   # without diacritic
     "priblixno": "ABT",   # legacy encoding mangling of približno (ž → x)
 
+    "od": "FROM",     # Slovenian "od" (from)
+    "cir.": "ABT",   # circa
+    "cir": "ABT",
+    "videno": "ABT",       # Slovenian "videno" (seen/observed — implies estimated)
+    "izračunano": "ABT",   # Slovenian "izračunano" (calculated)
+    "izracunano": "ABT",   # without diacritic
     "oli": "ABT",     # truncated "okoli" (approximately)
     "olkrog": "ABT",  # typo for "okrog" (L instead of K)
     "okr.": "ABT",
@@ -783,8 +797,8 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
         v = v_norm
         uncertain = True
 
-    # Standalone X as day/month placeholder (e.g. "X.X.1965") → replace with 0
-    v = re.sub(r"(?<![A-Za-z])X(?![A-Za-z])", "0", v)
+    # Standalone X or XX as day/month placeholder (e.g. "X.X.1965", "XX.05.2004") → replace with 0
+    v = re.sub(r"(?<![A-Za-z])(X+)(?![A-Za-z])", lambda m: "0" * len(m.group()), v)
 
     # Strip parentheses (e.g. "(1620)", ".-.(1740)")
     v = re.sub(r"[()]", "", v).strip()
@@ -797,12 +811,14 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     v = re.sub(r"^[.\s\-]{2,}", ".", v)
 
     # Strip spurious single leading separator when followed by DD.MM... (e.g. ".24.03.1892").
-    # Do NOT strip when it's a .MM placeholder: leading 2-digit number ≤ 12 (valid month).
+    # Also strip when the remainder is already a full 3-part date (e.g. ".04.05.1923").
+    # Do NOT strip when it's a .MM placeholder (2-digit ≤ 12 followed by space/year only).
     if len(v) > 1 and v[0] in ".,:" and v[1].isdigit():
         m2 = re.match(r"^[.,](\d{1,2})", v)
         num = int(m2.group(1)) if m2 else 99
-        if num > 12:  # can't be a month → spurious leading separator, strip it
-            v = v[1:]
+        remainder = v[1:]
+        if num > 12 or re.match(r"^\d{1,2}[.,\s]\d{1,2}[.,\s]\d{3,4}$", remainder):
+            v = remainder
 
     # Strip single leading comma/dot used as unknown-day placeholder (e.g. ",MAJ 1945", ".MAJ 1945")
     if len(v) > 1 and v[0] in ".,":
@@ -810,6 +826,9 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
         # Only strip if what follows is not purely numeric (that would be .MM.YYYY — handled separately)
         if rest and not rest[0].isdigit():
             v = rest
+
+    # Strip colon after leading word (e.g. "videno: 1762" → "videno 1762")
+    v = re.sub(r"^(\S+):\s+", r"\1 ", v)
 
     # Strip leading = / ) and similar junk characters (repeated, e.g. "=)=)1840")
     v = re.sub(r"^[=≈≡＝\)\(]+\s*", "", v)
@@ -952,12 +971,15 @@ class StripSpec:
     )
 
 
-STRIPPERS: dict[str, StripSpec] = {
+STRIPPERS: dict[str, StripSpec | None] = {
     "ste": StripSpec(tags={"_STE"}),  # MacFamilyTree source-template entries (level-0)
     "stf": StripSpec(tags={"_STF"}),  # MacFamilyTree source-template fields (level-0)
     "addr_longlati": StripSpec(
         tags={"LATI", "LONG", "MAP"}, parent_tag="ADDR"
     ),  # coords on ADDR unsupported by webtrees (direct or via MAP)
+    # Post-strippers (run after all cleaners and transformers):
+    "noname_indi": None,  # remove INDI records whose every NAME value is empty
+    "noname_fam": None,   # remove FAM records where all HUSB/WIFE INDIs are nameless
 }
 
 
@@ -999,7 +1021,7 @@ PRESETS: dict[str, dict[str, list[str]]] = {
     },
     "srd_index_cleanup": {
         "clean": ["dd_mmm_yyyy", "name_placeholder", "place_placeholder"],
-        "strip": [],
+        "strip": ["noname_indi", "noname_fam"],
         "transform": [],
     },
 }
@@ -1137,39 +1159,6 @@ def process_file(
                     print(f"  [place_placeholder] {raw!r} -> (cleared)")
                 element.set_value("")
 
-    for name in strippers:
-        ss = strip_stats[name]
-        spec = STRIPPERS[name]
-        if spec.parent_tag is None:
-            candidates = parser.get_root_child_elements()
-            ss.processed = len(candidates)
-            to_remove = [el for el in candidates if el.get_tag() in spec.tags]
-            for element in to_remove:
-                ss.removed += 1
-                if verbose:
-                    print(
-                        f"  [strip:{name}] removing {element.get_tag()} {element.get_pointer()}"
-                    )
-                candidates.remove(element)
-        else:
-            all_elements = parser.get_element_list()
-            to_remove = [
-                el
-                for el in all_elements
-                if el.get_tag() in spec.tags
-                and el.get_parent_element() is not None
-                and el.get_parent_element().get_tag() == spec.parent_tag
-            ]
-            ss.processed = len(to_remove)
-            for element in to_remove:
-                ss.removed += 1
-                if verbose:
-                    label = _record_label(element)
-                    print(
-                        f"  [strip:{name}] removing {element.get_tag()} under {spec.parent_tag}  — {label}"
-                    )
-                element.get_parent_element().get_child_elements().remove(element)
-
     for name in transformers:
         ts = transform_stats[name]
         tag_map = TRANSFORMERS[name]
@@ -1207,6 +1196,100 @@ def process_file(
                 print(
                     f"  [transform:{name}] {old_tag} -> {new_tag}  {element.get_value()!r}"
                 )
+
+    # Regular tag-based strippers (run after cleaners and transformers)
+    for name in strippers:
+        spec = STRIPPERS[name]
+        if spec is None:
+            continue  # noname strippers handled below
+        ss = strip_stats[name]
+        if spec.parent_tag is None:
+            candidates = parser.get_root_child_elements()
+            ss.processed = len(candidates)
+            to_remove = [el for el in candidates if el.get_tag() in spec.tags]
+            for element in to_remove:
+                ss.removed += 1
+                if verbose:
+                    print(
+                        f"  [strip:{name}] removing {element.get_tag()} {element.get_pointer()}"
+                    )
+                candidates.remove(element)
+        else:
+            all_elements = parser.get_element_list()
+            to_remove = [
+                el
+                for el in all_elements
+                if el.get_tag() in spec.tags
+                and el.get_parent_element() is not None
+                and el.get_parent_element().get_tag() == spec.parent_tag
+            ]
+            ss.processed = len(to_remove)
+            for element in to_remove:
+                ss.removed += 1
+                if verbose:
+                    label = _record_label(element)
+                    print(
+                        f"  [strip:{name}] removing {element.get_tag()} under {spec.parent_tag}  — {label}"
+                    )
+                element.get_parent_element().get_child_elements().remove(element)
+
+    # Post-strippers: noname_indi and noname_fam (must run last, after cleaners have emptied names)
+    _run_noname = "noname_indi" in strippers or "noname_fam" in strippers
+    if _run_noname:
+        # Build pointer → element index for the current root tree
+        root_elements = parser.get_root_child_elements()
+        ptr_index: dict[str, object] = {
+            el.get_pointer(): el for el in root_elements if el.get_pointer()
+        }
+
+        def _indi_is_nameless(indi_el) -> bool:
+            names = [
+                ch for ch in indi_el.get_child_elements()
+                if ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME
+            ]
+            return not names or all(ch.get_value().strip() == "" for ch in names)
+
+    if "noname_indi" in strippers:
+        ss = strip_stats["noname_indi"]
+        indi_list = [
+            el for el in parser.get_root_child_elements()
+            if el.get_tag() == gedcom.tags.GEDCOM_TAG_INDIVIDUAL
+        ]
+        ss.processed = len(indi_list)
+        for el in indi_list:
+            if _indi_is_nameless(el):
+                ss.removed += 1
+                ptr_index.pop(el.get_pointer(), None)  # mark as gone for noname_fam
+                if verbose:
+                    print(f"  [strip:noname_indi] removing {el.get_pointer()}")
+                parser.get_root_child_elements().remove(el)
+
+    if "noname_fam" in strippers:
+        ss = strip_stats["noname_fam"]
+        fam_list = [
+            el for el in parser.get_root_child_elements()
+            if el.get_tag() == gedcom.tags.GEDCOM_TAG_FAMILY
+        ]
+        ss.processed = len(fam_list)
+        for fam in fam_list:
+            refs = [
+                ch.get_value().strip()
+                for ch in fam.get_child_elements()
+                if ch.get_tag() in (
+                    gedcom.tags.GEDCOM_TAG_HUSBAND, gedcom.tags.GEDCOM_TAG_WIFE
+                )
+            ]
+            # A FAM with no HUSB/WIFE, or where every referenced INDI is nameless
+            # (or already stripped), is considered nameless.
+            all_nameless = not refs or all(
+                ptr not in ptr_index or _indi_is_nameless(ptr_index[ptr])
+                for ptr in refs
+            )
+            if all_nameless:
+                ss.removed += 1
+                if verbose:
+                    print(f"  [strip:noname_fam] removing {fam.get_pointer()}")
+                parser.get_root_child_elements().remove(fam)
 
     parser.invalidate_cache()
     try:
