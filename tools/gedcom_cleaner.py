@@ -225,6 +225,19 @@ MONTHS_LONG = {
     "oktobra": "OCT",
     "novembra": "NOV",
     "decembra": "DEC",
+    # Slovenian locative/dative (used after "po": "po maju 1875")
+    "januarju": "JAN",
+    "februarju": "FEB",
+    "marcu": "MAR",
+    "aprilu": "APR",
+    "maju": "MAY",
+    "juniju": "JUN",
+    "juliju": "JUL",
+    "avgustu": "AUG",
+    "septembru": "SEP",
+    "oktobru": "OCT",
+    "novembru": "NOV",
+    "decembru": "DEC",
 }
 
 MONTHS_SHORT = {
@@ -307,6 +320,7 @@ PREFIX_MAP = {
     "ca": "ABT",
     "pred": "BEF",
     "vor": "BEF",
+    "po": "AFT",
     "l.": "",   # Slovenian/German "Leto/Jahr" (year) — strip prefix, keep year
     "l": "",
     "est.": "EST",
@@ -337,8 +351,8 @@ DATE_PATTERNS = [
     re.compile(rf"^(?P<day>\d{{1,2}}){_SEP}(?P<monthnum>\d{{1,2}}){_SEP}(?P<year>\d{{3,4}})$"),
     # DD.MMYYYY  — separator after day, no separator between 2-digit month and 4-digit year
     re.compile(r"^(?P<day>\d{1,2})[.,/\-:](?P<monthnum>\d{2})(?P<year>\d{4})$"),
-    # DDMM.YYYY  — no separator between day and month, separator before year (e.g. "0208.1902")
-    re.compile(r"^(?P<day>\d{2})(?P<monthnum>\d{2})[.,/\-:](?P<year>\d{4})$"),
+    # DDMM.YYYY or DDMM YYYY  — no separator between day and month, separator before year
+    re.compile(r"^(?P<day>\d{2})(?P<monthnum>\d{2})[.,/\-:\s](?P<year>\d{4})$"),
     # .MM.YYYY or ,MM.YYYY  (unknown day, numeric month — leading dot/comma placeholder)
     re.compile(r"^[.,]\s*(?P<monthnum>\d{1,2})[.,]\s*(?P<year>\d{3,4})$"),
     # .MMM.YYYY  (unknown day, named month — leading dot placeholder, e.g. ".MAJ.1693")
@@ -534,6 +548,13 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     # Strip trailing dot or apostrophe (e.g. "12.09.1945.", "06.11.1920'")
     v = v.rstrip(".'`")
 
+    # Trailing ? or " ??" etc. — uncertain date; strip question marks, keep value as ABT
+    uncertain = False
+    v_stripped = v.rstrip("?").rstrip()
+    if v_stripped != v and v_stripped:
+        v = v_stripped
+        uncertain = True
+
     # Strip parentheses (e.g. "(1620)", ".-.(1740)")
     v = re.sub(r"[()]", "", v).strip()
 
@@ -554,20 +575,22 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     # Normalize letter O → digit 0 (OCR/typo): at word boundary before digit, or between digits
     v = re.sub(r"\bO(?=\d)|(?<=\d)O(?=\d)", "0", v)
 
-    # Trailing ? means uncertain — treat as ABT
-    uncertain = False
-    if v.endswith("?"):
-        v = v[:-1].strip()
-        uncertain = True
+    # Collapse repeated tilde to single (e.g. "~~ 1968" → "~ 1968")
+    v = re.sub(r"~+", "~", v)
+
+    # Bare "/" is unknown — treat as empty
+    if v == "/":
+        return "", None
 
     # Handle __ placeholder dates first
     placeholder = _handle_placeholder(v)
     if placeholder is not None:
         return placeholder  # ("", None) = remove  |  (year, None) = keep year only
 
-    # YYYY-YYYY year ranges are kept as-is (no conversion to FROM/TO)
-    if re.match(r"^\d{3,4}-\d{3,4}$", v):
-        return v, None
+    # YYYY-YYYY year ranges are kept as-is (no conversion to FROM/TO), spaces around hyphen allowed
+    m = re.match(r"^(\d{3,4})\s*-\s*(\d{3,4})$", v)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}", None
 
     # Try range patterns first (before prefix handling)
     result, err, is_range = _parse_range(v)

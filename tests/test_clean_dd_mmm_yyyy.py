@@ -22,9 +22,10 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("1920 DO 1945",          "FROM 1920 TO 1945"),
     ("FROM 1920 DO 1945",     "FROM 1920 TO 1945"),
 
-    # Implicit year ranges (YYYY-YYYY) — kept as-is
+    # Implicit year ranges (YYYY-YYYY) — kept as-is, spaces around hyphen allowed
     ("1856-1881",   "1856-1881"),
     ("1979-1980",   "1979-1980"),
+    ("1941 - 1945", "1941-1945"),
 
     # Multiple leading dots/spaces as placeholder (unknown day/month)
     ("..1920",       "1920"),
@@ -50,9 +51,14 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     (".03.1947",  "MAR 1947"),
     (".03.1970",  "MAR 1970"),
 
-    # Trailing dot or apostrophe
-    ("12.09.1945.",   "12 SEP 1945"),
-    ("06.11.1920'",   "6 NOV 1920"),
+    # Trailing dot, apostrophe, or " ?" (uncertain)
+    ("12.09.1945.",      "12 SEP 1945"),
+    ("06.11.1920'",      "6 NOV 1920"),
+    ("26.10.1903 ?",     "ABT 26 OCT 1903"),
+    ("26.10.1903 ??",    "ABT 26 OCT 1903"),
+    ("09.01.1958 ?",     "ABT 9 JAN 1958"),
+    ("1720?",            "ABT 1720"),
+    ("1720??",           "ABT 1720"),
 
     # MM.DD.YYYY fallback when month > 12
     ("04.14.1902",   "14 APR 1902"),
@@ -161,8 +167,9 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     (".MAJ.1693",    "MAY 1693"),
     (",MAJ 1945",    "MAY 1945"),
 
-    # DDMM.YYYY — no separator between day and month
+    # DDMM.YYYY or DDMM YYYY — no separator between day and month
     ("0208.1902",    "2 AUG 1902"),
+    ("0702 1729",    "7 FEB 1729"),
 
     # Tilde prefix with dot separator in date
     ("~APR.1967",    "ABT APR 1967"),
@@ -197,7 +204,6 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("=1840",   "1840"),
 
     # Trailing ? → ABT
-    ("1720?",   "ABT 1720"),
     ("1964?",   "ABT 1964"),
     ("1917?",   "ABT 1917"),
 
@@ -236,6 +242,10 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("vor 1900",          "BEF 1900"),
     ("After 1900",        "AFT 1900"),
     ("Aft. MAR 1900",     "AFT MAR 1900"),
+    ("PO 1736",           "AFT 1736"),
+    ("PO MAJU 1875",      "AFT MAY 1875"),
+    ("~~ 1968",           "ABT 1968"),
+
     ("Est. 1900",         "EST 1900"),
     ("Circa 1900",        "ABT 1900"),
     ("Cca. 1340",         "ABT 1340"),
@@ -256,6 +266,7 @@ def test_clean_date_success(raw, expected):
     "__.____",
     ".--.----",
     "--.--",
+    "/",
 ])
 def test_clean_date_remove(raw):
     """Fully unknown placeholder dates return ('', None) — signal to remove the element."""
