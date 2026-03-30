@@ -61,6 +61,19 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("MAY 1845",        "MAY 1845"),
     ("1923",            "1923"),
 
+    # Numeric month + year only (no day)
+    ("04 1883",  "APR 1883"),
+    ("03 1818",  "MAR 1818"),
+
+    # Slovenian genitive month forms
+    ("30. APRILA 1998",  "30 APR 1998"),
+    ("28. MAJA 1893",    "28 MAY 1893"),
+    ("10. APRILA 1863",  "10 APR 1863"),
+
+    # FEBR. abbreviation
+    ("27. FEBR. 1923",  "27 FEB 1923"),
+    ("1. FEBR. 1915",   "1 FEB 1915"),
+
     # Month name variants — English
     ("15 January 1900", "15 JAN 1900"),
     ("15 january 1900", "15 JAN 1900"),
@@ -115,9 +128,53 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("20.01,1722",   "20 JAN 1722"),
     ("31 05.1756",   "31 MAY 1756"),
 
+    # Colon as delimiter
+    ("25:NOV.1850",  "25 NOV 1850"),
+
+    # Separator before month, none between month and year
+    ("18.FEB1732",   "18 FEB 1732"),
+    ("23.FEB1930",   "23 FEB 1930"),
+
+    # No separator between day and month name
+    ("11FEB.1694",   "11 FEB 1694"),
+
+    # Leading dot placeholder with named month
+    (".MAJ.1693",    "MAY 1693"),
+
+    # Tilde prefix with dot separator in date
+    ("~APR.1967",    "ABT APR 1967"),
+
     # No separator between month name and year
     ("NOV1839",      "NOV 1839"),
     ("JAN1900",      "JAN 1900"),
+
+    # Letter O misread as digit 0 (OCR/typo)
+    ("O6 FEB 1918",  "6 FEB 1918"),
+
+    # Leading dot with placeholder characters for unknown day/month
+    (".<,1820",  "1820"),
+
+    # Leading = stripped (exact date marker, no GEDCOM equivalent)
+    ("=1971",   "1971"),
+    ("=1840",   "1840"),
+
+    # Trailing ? → ABT
+    ("1720?",   "ABT 1720"),
+    ("1964?",   "ABT 1964"),
+    ("1917?",   "ABT 1917"),
+
+    # Leading comma placeholder (unknown day)
+    (",06.1590",  "JUN 1590"),
+
+    # OKR / OK / CA prefixes → ABT
+    ("OKR. 1700",  "ABT 1700"),
+    ("OKR. 1733",  "ABT 1733"),
+    ("okr 1850",   "ABT 1850"),
+    ("OK.1890",    "ABT 1890"),
+    ("OK.1910",    "ABT 1910"),
+    ("CA 1972",    "ABT 1972"),
+    ("CA 1780",    "ABT 1780"),
+    ("ca. 1865",   "ABT 1865"),
 
     # Prefixes — normalised to GEDCOM canonical prefix
     ("Abt 15 JAN 1900",   "ABT 15 JAN 1900"),

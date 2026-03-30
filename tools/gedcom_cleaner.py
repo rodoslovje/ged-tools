@@ -199,7 +199,7 @@ MONTHS_LONG = {
     "juli": "JUL",
     "oktober": "OCT",
     "dezember": "DEC",
-    # Slovenian
+    # Slovenian nominative
     "januar": "JAN",
     "februar": "FEB",
     "marec": "MAR",
@@ -212,6 +212,19 @@ MONTHS_LONG = {
     "oktober": "OCT",
     "november": "NOV",
     "december": "DEC",
+    # Slovenian genitive (used in dates: "30. aprila 1998")
+    "januarja": "JAN",
+    "februarja": "FEB",
+    "marca": "MAR",
+    "aprila": "APR",
+    "maja": "MAY",
+    "junija": "JUN",
+    "julija": "JUL",
+    "avgusta": "AUG",
+    "septembra": "SEP",
+    "oktobra": "OCT",
+    "novembra": "NOV",
+    "decembra": "DEC",
 }
 
 MONTHS_SHORT = {
@@ -250,6 +263,8 @@ MONTHS_SHORT = {
     # Slovenian short forms
     "jan.": "JAN",
     "feb.": "FEB",
+    "febr.": "FEB",
+    "febr": "FEB",
     "mar.": "MAR",
     "apr.": "APR",
     "maj.": "MAY",
@@ -283,6 +298,13 @@ PREFIX_MAP = {
     "cca.": "ABT",
     "cca": "ABT",
     "okoli": "ABT",
+    "okrog": "ABT",
+    "okr.": "ABT",
+    "okr": "ABT",
+    "ok.": "ABT",
+    "ok": "ABT",
+    "ca.": "ABT",
+    "ca": "ABT",
     "pred": "BEF",
     "vor": "BEF",
     "est.": "EST",
@@ -294,21 +316,29 @@ _DAY = r"(?P<day>\d{1,2})"
 _MONTH = r"(?P<month>[A-Za-zÄäÖöÜüß]+\.?)"
 _YEAR = r"(?P<year>\d{3,4})"
 
-# Flexible separator: one or more of space, dot, comma, slash, hyphen
-_SEP = r"[\s.,/\-]+"
+# Flexible separator: one or more of space, dot, comma, slash, hyphen, colon
+_SEP = r"[\s.,/\-:]+"
 
 # Full date patterns (most specific first)
 DATE_PATTERNS = [
     # DD MMM YYYY  — any mix of separators/spaces between tokens
     re.compile(rf"^{_DAY}{_SEP}{_MONTH}{_SEP}{_YEAR}$"),
+    # DD MMMYYYY  — separator before month, none between month and year (e.g. "18.FEB1732")
+    re.compile(rf"^{_DAY}{_SEP}{_MONTH}(?P<year>\d{{3,4}})$"),
+    # DDMMM YYYY  — no separator before month, separator before year (e.g. "11FEB.1694")
+    re.compile(rf"^{_DAY}{_MONTH}{_SEP}{_YEAR}$"),
     # MMM DD YYYY  (e.g. "Jan 15 1900")
     re.compile(rf"^{_MONTH}{_SEP}{_DAY}{_SEP}{_YEAR}$"),
     # YYYY-MM-DD  (ISO — must come before generic numeric to avoid wrong group assignment)
     re.compile(r"^(?P<year>\d{4})-(?P<monthnum>\d{1,2})-(?P<day>\d{1,2})$"),
     # DD MM YYYY  — numeric month, any mix of separators (including mixed like "31 05.1756")
     re.compile(rf"^(?P<day>\d{{1,2}}){_SEP}(?P<monthnum>\d{{1,2}}){_SEP}(?P<year>\d{{3,4}})$"),
-    # .MM.YYYY  (unknown day, numeric month — leading dot placeholder)
-    re.compile(r"^\.\s*(?P<monthnum>\d{1,2})\.\s*(?P<year>\d{3,4})$"),
+    # .MM.YYYY or ,MM.YYYY  (unknown day, numeric month — leading dot/comma placeholder)
+    re.compile(r"^[.,]\s*(?P<monthnum>\d{1,2})[.,]\s*(?P<year>\d{3,4})$"),
+    # .MMM.YYYY  (unknown day, named month — leading dot placeholder, e.g. ".MAJ.1693")
+    re.compile(rf"^\.\s*{_MONTH}{_SEP}{_YEAR}$"),
+    # MM YYYY  (numeric month, no day — e.g. "04 1883")
+    re.compile(rf"^(?P<monthnum>\d{{1,2}}){_SEP}(?P<year>\d{{3,4}})$"),
     # MMM YYYY  (no day, with separator)
     re.compile(rf"^{_MONTH}{_SEP}{_YEAR}$"),
     # MMMYYYY  (no day, no separator — e.g. "NOV1839")
@@ -389,7 +419,7 @@ def _parse_date_value(value: str) -> tuple[str | None, str | None]:
     return None, f"unrecognised date format '{value}'"
 
 
-_PLACEHOLDER_RE = re.compile(r"_+|[-]{2,}|<>")  # _ / __ or -- or <> placeholders
+_PLACEHOLDER_RE = re.compile(r"_+|[-]{2,}|<>|(?<!\d)<(?!\d{3,4})")  # _ / __ or -- or <> or bare < (not BEF prefix)
 
 
 def _handle_placeholder(value: str) -> tuple[str, None] | None:
@@ -479,6 +509,19 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     # Strip trailing dot (e.g. "12.09.1945.")
     v = v.rstrip(".")
 
+    # Strip leading = (means "exact date" in some apps — no GEDCOM equivalent, keep value)
+    if v.startswith("="):
+        v = v[1:].strip()
+
+    # Normalize letter O → digit 0 when used as a zero in numeric context (OCR/typo)
+    v = re.sub(r"\bO(?=\d)", "0", v)
+
+    # Trailing ? means uncertain — treat as ABT
+    uncertain = False
+    if v.endswith("?"):
+        v = v[:-1].strip()
+        uncertain = True
+
     # Handle __ placeholder dates first
     placeholder = _handle_placeholder(v)
     if placeholder is not None:
@@ -497,7 +540,7 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     prefix_canon = None
     for variant, canon in PREFIX_MAP.items():
         # match whole word / token at start, case-insensitive
-        pattern = re.compile(r"^" + re.escape(variant) + r"(?=\s|\d|$)", re.IGNORECASE)
+        pattern = re.compile(r"^" + re.escape(variant) + r"(?=[\s\d\w]|$)", re.IGNORECASE)
         if pattern.match(v):
             prefix_canon = canon
             v = v[len(variant) :].strip()
@@ -510,6 +553,8 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     if err:
         return None, err
 
+    if uncertain and not prefix_canon:
+        prefix_canon = "ABT"
     result = f"{prefix_canon} {formatted}" if prefix_canon else formatted
     return result, None
 
