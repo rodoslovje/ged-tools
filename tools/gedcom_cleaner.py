@@ -353,6 +353,7 @@ PREFIX_MAP = {
     "pred": "BEF",
     "vor": "BEF",
     "po": "AFT",
+    "ˇ": "ABT",  # modifier letter caron (U+02C7) used as ABT in some apps
     "l.": "",   # Slovenian/German "Leto/Jahr" (year) — strip prefix, keep year
     "l": "",
     "est.": "EST",
@@ -364,8 +365,8 @@ _DAY = r"(?P<day>\d{1,2})"
 _MONTH = r"(?P<month>[A-Za-zÄäÖöÜüß]+\.?)"
 _YEAR = r"(?P<year>\d{3,4})"
 
-# Flexible separator: one or more of space, dot, comma, slash, hyphen, colon
-_SEP = r"[\s.,/\-:]+"
+# Flexible separator: one or more of space, dot, comma, slash, hyphen, colon, tilde
+_SEP = r"[\s.,/\-:~]+"
 
 # Full date patterns (most specific first)
 DATE_PATTERNS = [
@@ -385,8 +386,10 @@ DATE_PATTERNS = [
     re.compile(r"^(?P<day>\d{1,2})[.,/\-:](?P<monthnum>\d{2})(?P<year>\d{4})$"),
     # DDMM.YYYY or DDMM YYYY  — no separator between day and month, separator before year
     re.compile(r"^(?P<day>\d{2})(?P<monthnum>\d{2})[.,/\-:\s](?P<year>\d{4})$"),
-    # .MM.YYYY or ,MM.YYYY  (unknown day, numeric month — leading dot/comma placeholder)
-    re.compile(r"^[.,]\s*(?P<monthnum>\d{1,2})[.,]\s*(?P<year>\d{3,4})$"),
+    # .MM.YYYY / .MM-YYYY / .MM YYYY  (unknown day, numeric month, any separator)
+    re.compile(rf"^[.,]\s*(?P<monthnum>\d{{1,2}}){_SEP}(?P<year>\d{{3,4}})$"),
+    # .MMYYYY  (unknown day, numeric month, no separator — e.g. ".051948")
+    re.compile(r"^[.,]\s*(?P<monthnum>\d{2})(?P<year>\d{4})$"),
     # .MMM.YYYY  (unknown day, named month — leading dot placeholder, e.g. ".MAJ.1693")
     re.compile(rf"^\.\s*{_MONTH}{_SEP}{_YEAR}$"),
     # MM YYYY  (numeric month, no day — e.g. "04 1883")
@@ -395,6 +398,8 @@ DATE_PATTERNS = [
     re.compile(rf"^{_MONTH}{_SEP}{_YEAR}$"),
     # MMMYYYY  (no day, no separator — e.g. "NOV1839")
     re.compile(rf"^{_MONTH}(?P<year>\d{{3,4}})$"),
+    # .YYYY  (unknown day and month — leading dot placeholder, year only)
+    re.compile(r"^\.\s*(?P<year>\d{3,4})$"),
     # YYYY only
     re.compile(r"^(?P<year>\d{3,4})$"),
 ]
@@ -463,6 +468,10 @@ def _parse_date_value(value: str) -> tuple[str | None, str | None]:
             if month is None:
                 return None, f"unrecognised month '{gd['month']}' in '{value}'"
 
+        # Three-digit years are assumed to be missing a leading '1' (e.g. 994 → 1994)
+        if year and len(year) == 3:
+            year = "1" + year
+
         parts = []
         if day:
             parts.append(str(int(day)))  # strip leading zero
@@ -489,11 +498,6 @@ def _handle_placeholder(value: str) -> tuple[str, None] | None:
     # Single dot alone = fully unknown (e.g. "--.--" collapses to ".")
     if re.match(r"^\.$", value):
         return "", None
-
-    # Leading single dot followed directly by a year (e.g. ".1920" after normalization)
-    m = re.match(r"^\.\s*(\d{3,4})$", value)
-    if m:
-        return m.group(1), None
 
     if not _PLACEHOLDER_RE.search(value):
         return None
@@ -575,7 +579,11 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     """
     v = raw.strip()
     if not v:
-        return None, "empty date value"
+        return "", None  # silently keep empty date as-is
+
+    # Pure ? / ?? — unknown date, treat as empty
+    if re.match(r"^\?+$", v):
+        return "", None
 
     # Strip trailing dot or apostrophe (e.g. "12.09.1945.", "06.11.1920'")
     v = v.rstrip(".'`")
@@ -624,6 +632,10 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     if m:
         return f"{m.group(1)}-{m.group(2)}", None
 
+    # YYYY/Y … YYYY/YYYY — dual dating / alternative year notation, kept as-is
+    if re.match(r"^\d{3,4}/\d{1,4}$", v):
+        return v, None
+
     # Try range patterns first (before prefix handling)
     result, err, is_range = _parse_range(v)
     if is_range:
@@ -633,7 +645,7 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     prefix_canon = None
     for variant, canon in PREFIX_MAP.items():
         # match whole word / token at start, case-insensitive
-        pattern = re.compile(r"^" + re.escape(variant) + r"(?=[\s\d\w]|$)", re.IGNORECASE)
+        pattern = re.compile(r"^" + re.escape(variant) + r"(?=[\s\d\w.]|$)", re.IGNORECASE)
         if pattern.match(v):
             prefix_canon = canon
             v = v[len(variant) :].strip()

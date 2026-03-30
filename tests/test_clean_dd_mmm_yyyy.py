@@ -171,8 +171,33 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("0208.1902",    "2 AUG 1902"),
     ("0702 1729",    "7 FEB 1729"),
 
+    # Tilde as separator within date (e.g. "08.01~1938")
+    ("08.01~1938",   "8 JAN 1938"),
+
     # Tilde prefix with dot separator in date
     ("~APR.1967",    "ABT APR 1967"),
+    (">.1746",       "AFT 1746"),
+    ("ˇ1790",        "ABT 1790"),
+    ("ˇ1925",        "ABT 1925"),
+
+    # YYYY/Y … YYYY/YYYY — dual dating, kept as-is
+    ("1846/7",      "1846/7"),
+    ("1801/2",      "1801/2"),
+    ("1814/15",     "1814/15"),
+    ("1820/21",     "1820/21"),
+    ("1878/9",      "1878/9"),
+    ("1807/8",      "1807/8"),
+    ("1814/5",      "1814/5"),
+    ("1820/1",      "1820/1"),
+    ("1954/1955",   "1954/1955"),
+
+    # .MMYYYY — no separator between month and year
+    (".051948",  "MAY 1948"),
+
+    # .MM-YYYY / .MM YYYY — dash or space as separator
+    (".02-2012",  "FEB 2012"),
+    (".08 1947",  "AUG 1947"),
+    (".06 2006",  "JUN 2006"),
 
     # No separator between month name and year
     ("NOV1839",      "NOV 1839"),
@@ -249,7 +274,7 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("Est. 1900",         "EST 1900"),
     ("Circa 1900",        "ABT 1900"),
     ("Cca. 1340",         "ABT 1340"),
-    ("cca 994",           "ABT 994"),
+    ("cca 994",           "ABT 1994"),
     ("CCA 1250",          "ABT 1250"),
     ("okoli 1850",        "ABT 1850"),
     ("OKOLI 1700",        "ABT 1700"),
@@ -271,6 +296,9 @@ def test_clean_date_success(raw, expected):
     ".--.----",
     "--.--",
     "/",
+    "",    # empty — no warning, no value
+    "?",   # single unknown marker
+    "??",  # double unknown marker
 ])
 def test_clean_date_remove(raw):
     """Fully unknown placeholder dates return ('', None) — signal to remove the element."""
@@ -281,9 +309,7 @@ def test_clean_date_remove(raw):
 
 @pytest.mark.parametrize("raw", [
     "not a date",
-    "??",
     "sometime",
-    "",
     "15 FOO 1900",   # bad month
     "15.13.1900",    # invalid month number
 ])
