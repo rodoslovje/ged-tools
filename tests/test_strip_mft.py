@@ -41,7 +41,7 @@ def test_strip_mft_removes_ste_records():
         assert strip_stats["ste"].removed == 2
         assert strip_stats["stf"].removed == 0
 
-        content = open(out, encoding="utf-8-sig").read()
+        content = open(out, encoding="utf-8").read()
         assert "_STE" not in content
         assert "@I1@" in content   # individual preserved
         assert "TRLR" in content   # trailer preserved
@@ -57,7 +57,7 @@ def test_strip_addr_longlati():
         _, strip_stats, _ = process_file(inp, out, cleaners=[], strippers=["addr_longlati"], transformers=[], warn=False)
         assert strip_stats["addr_longlati"].removed == 3  # 2 direct + 1 MAP block
 
-        content = open(out, encoding="utf-8-sig").read()
+        content = open(out, encoding="utf-8").read()
         assert "2 LATI" not in content
         assert "2 LONG" not in content
         assert "1 ADDR" in content   # ADDR itself preserved

@@ -33,7 +33,8 @@ _GEDCOM_CHAR_MAP = {
     "UNICODE": "utf-16",
     "UTF-16": "utf-16",
     "ASCII": "ascii",
-    "ANSI": "windows-1252",
+    # "ANSI" is intentionally omitted — it is ambiguous (cp1252 for Western European,
+    # cp1250 for Central/Eastern European). chardet is more reliable for distinguishing them.
     "WINDOWS-1250": "windows-1250",
     "WINDOWS-1251": "windows-1251",
     "WINDOWS-1252": "windows-1252",
@@ -807,7 +808,7 @@ def process_file(
 
     parser.invalidate_cache()
     try:
-        with open(output_path, "w", encoding="utf-8-sig") as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             for element in parser.get_root_child_elements():
                 f.write(_serialize(element))
     except OSError as e:
