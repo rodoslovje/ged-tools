@@ -122,8 +122,14 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
 
     try:
         text = raw.decode(encoding)
-    except (UnicodeDecodeError, LookupError):
-        text = raw.decode("latin-1")
+    except UnicodeDecodeError:
+        # File has bytes undefined in the chosen encoding (e.g. 0x81 in a cp1250 file
+        # that also contains DOS-encoded German umlauts). Retry with the same encoding
+        # using replacement chars — this preserves all correctly-encoded characters
+        # (Slovenian Š/Č/Ž) and substitutes only the truly undefined bytes.
+        text = raw.decode(encoding, errors="replace")
+    except LookupError:
+        text = raw.decode("latin-1", errors="replace")
 
     fd, tmp_path = tempfile.mkstemp(suffix=".ged")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
