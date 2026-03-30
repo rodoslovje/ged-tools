@@ -73,13 +73,18 @@ def _detect_encoding(file_path: str) -> str:
         if char_value in _GEDCOM_CHAR_MAP:
             return _GEDCOM_CHAR_MAP[char_value]
 
-    # 3. chardet fallback
+    # 3. chardet fallback — require reasonable confidence; mac_roman and ascii are unreliable
+    #    for GEDCOM files with Slovenian/Central European content. Below threshold, prefer
+    #    windows-1250 which is the most common encoding for this region.
     detected = chardet.detect(raw)
-    if detected and detected.get("encoding"):
-        return detected["encoding"]
+    if detected:
+        enc = detected.get("encoding") or ""
+        confidence = detected.get("confidence") or 0
+        if enc and confidence >= 0.2 and enc.lower() not in ("mac_roman", "ascii"):
+            return enc
 
-    # 4. Last resort — latin-1 never raises UnicodeDecodeError
-    return "latin-1"
+    # 4. Last resort — windows-1250 is safer than latin-1 for Slovenian GEDCOM files
+    return "windows-1250"
 
 
 def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
@@ -277,6 +282,57 @@ MONTHS_LONG = {
     "kimovec": "OCT",
     "listopad": "NOV",
     "gruden": "DEC",
+    # Latin nominative
+    "januarius": "JAN", "ianuarius": "JAN",
+    "februarius": "FEB",
+    "martius": "MAR",
+    "aprilis": "APR",
+    "maius": "MAY",
+    "iunius": "JUN", "junius": "JUN",
+    "iulius": "JUL", "julius": "JUL",
+    "augustus": "AUG",
+    "september": "SEP",   # already in English, same form
+    "october": "OCT",     # already in English, same form
+    "november": "NOV",    # already in English, same form
+    "december": "DEC",    # already in English, same form
+    # Latin genitive (common in church records: "die 3 Januarii 1750")
+    "januarii": "JAN", "ianuarii": "JAN",
+    "februarii": "FEB",
+    "martii": "MAR",
+    "maii": "MAY",
+    "iunii": "JUN", "junii": "JUN",
+    "iulii": "JUL", "julii": "JUL",
+    "augusti": "AUG",
+    "septembris": "SEP",
+    "octobris": "OCT",
+    "novembris": "NOV",
+    "decembris": "DEC",
+    # Latin ablative/dative (common in church records: "natus Januario 1750")
+    "januario": "JAN", "ianuario": "JAN",
+    "februario": "FEB",
+    "martio": "MAR",
+    "aprili": "APR",
+    "maio": "MAY",
+    "iunio": "JUN", "junio": "JUN",
+    "iulio": "JUL", "julio": "JUL",
+    "augusto": "AUG",
+    "septembrio": "SEP", "septembr": "SEP",
+    "octobrio": "OCT",
+    "novembrio": "NOV",
+    "decembrio": "DEC",
+    # Italian
+    "gennaio": "JAN",
+    "febbraio": "FEB",
+    "marzo": "MAR",
+    "aprile": "APR",
+    "maggio": "MAY",
+    "giugno": "JUN",
+    "luglio": "JUL",
+    "agosto": "AUG",
+    "settembre": "SEP",
+    "ottobre": "OCT",
+    "novembre": "NOV",
+    "dicembre": "DEC",
 }
 
 MONTHS_SHORT = {
@@ -351,6 +407,37 @@ MONTHS_SHORT = {
     "list": "NOV",
     "grud.": "DEC",
     "grud": "DEC",
+    # Old Latin/Italian June forms (common in old church records)
+    "iûno": "JUN",
+    "iunio": "JUN",
+    "iugno": "JUN",
+    # Slovenian August variant
+    "svg": "AUG",
+    # Typo variants
+    "jjun": "JUN",
+    "manj": "MAY",   # typo for "maj"
+    "eog": "AUG",    # garbled form of "avg"/"ago" (Slovenian/Italian August)
+    # Latin short forms
+    "ian.": "JAN", "ian": "JAN",
+    "mart.": "MAR", "mart": "MAR",
+    "maij": "MAY",  # old Latin genitive short form
+    "iun.": "JUN", "iun": "JUN",
+    "iul.": "JUL", "iul": "JUL",
+    "aug.": "AUG", "aug": "AUG",
+    "sept.": "SEP",
+    "oct.": "OCT", "oct": "OCT",
+    "xber": "DEC", "xbr": "DEC", "xbris": "DEC",  # X=10, old Latin December abbreviation
+    # Italian short forms
+    "gen.": "JAN", "gen": "JAN",
+    "genn.": "JAN", "genn": "JAN",
+    "febb.": "FEB", "febb": "FEB",
+    "mag.": "MAY", "mag": "MAY",
+    "giu.": "JUN", "giu": "JUN",
+    "lug.": "JUL", "lug": "JUL",
+    "ago.": "AUG", "ago": "AUG",
+    "set.": "SEP", "set": "SEP",
+    "ott.": "OCT", "ott": "OCT",
+    "dic.": "DEC", "dic": "DEC",
 }
 
 MONTHS_MULTI = {
@@ -394,6 +481,8 @@ PREFIX_MAP = {
     "priblizno": "ABT",   # without diacritic
     "priblixno": "ABT",   # legacy encoding mangling of približno (ž → x)
 
+    "oli": "ABT",     # truncated "okoli" (approximately)
+    "olkrog": "ABT",  # typo for "okrog" (L instead of K)
     "okr.": "ABT",
     "okr": "ABT",
     "ok.": "ABT",
@@ -401,6 +490,7 @@ PREFIX_MAP = {
     "ca.": "ABT",
     "ca": "ABT",
     "pred": "BEF",
+    "prred": "BEF",  # typo for "pred" (double r)
     "prd": "BEF",
     "vor": "BEF",
     "po": "AFT",
@@ -729,6 +819,18 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
 
     # Collapse repeated tilde to single (e.g. "~~ 1968" → "~ 1968")
     v = re.sub(r"~+", "~", v)
+
+    # Latin numeric month abbreviations (old Roman-calendar positional form):
+    #   7bris/7ber → SEP,  8bris/8ber → OCT,  9bris/9ber → NOV,  10bris/10ber → DEC
+    # _MONTH regex only matches letters, so these must be expanded before pattern matching.
+    _NUMERIC_MONTHS = (
+        (r"\b10br(?:is)?\b|\b10ber\b", "DEC"),
+        (r"\b9br(?:is)?\b|\b9ber\b",   "NOV"),
+        (r"\b8br(?:is)?\b|\b8ber\b",   "OCT"),
+        (r"\b7br(?:is)?\b|\b7ber\b",   "SEP"),
+    )
+    for pat, repl in _NUMERIC_MONTHS:
+        v = re.sub(pat, repl, v, flags=re.IGNORECASE)
 
     # Bare "/" is unknown — treat as empty
     if v == "/":

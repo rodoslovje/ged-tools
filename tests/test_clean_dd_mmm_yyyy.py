@@ -398,6 +398,66 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("4 JAN 1718/19",   "4 JAN 1718/19"),
     ("15 MAR 1700/01",  "15 MAR 1700/01"),
     ("1 FEB 1800/1801", "1 FEB 1800/1801"),
+
+    # Old Latin/Italian June (common in old church records)
+    ("iûno 1900",      "JUN 1900"),
+    ("15 iunio 1856",  "15 JUN 1856"),
+    ("3 iugno 1802",   "3 JUN 1802"),
+
+    # Slovenian August variant svg
+    ("13 svg 1889",    "13 AUG 1889"),
+
+    # OLI prefix → ABT (truncated "okoli")
+    ("oli 1745",       "ABT 1745"),
+
+    # Typo: jjun → JUN
+    ("jjun 10 1799",   "10 JUN 1799"),
+
+    # Typo variants from real files
+    ("22 manj 1922",   "22 MAY 1922"),   # typo for maj
+    ("eog 1785",       "AUG 1785"),      # garbled avg/ago
+    ("OLkrog 1886",    "ABT 1886"),      # typo for okrog
+    ("Prred 1815",     "BEF 1815"),      # typo for pred (double r)
+
+    # Latin full forms (church records)
+    ("15 Januarii 1750",   "15 JAN 1750"),
+    ("3 Martii 1800",      "3 MAR 1800"),
+    ("10 Augusti 1785",    "10 AUG 1785"),
+    ("5 Septembris 1722",  "5 SEP 1722"),
+    ("20 Decembris 1840",  "20 DEC 1840"),
+    ("7 Iunio 1700",       "7 JUN 1700"),
+    ("4 Iulii 1765",       "4 JUL 1765"),
+
+    # Latin short forms
+    ("15 ian. 1750",   "15 JAN 1750"),
+    ("3 mart. 1800",   "3 MAR 1800"),
+    ("10 aug. 1785",   "10 AUG 1785"),
+    ("5 iun. 1722",    "5 JUN 1722"),
+    ("4 iul. 1765",    "4 JUL 1765"),
+    ("20 xber 1840",   "20 DEC 1840"),   # X=10 old Latin December
+
+    # Numeric Latin forms (7bris=SEP, 8ber=OCT, 9bris=NOV, 10ber=DEC)
+    ("15 7bris 1750",  "15 SEP 1750"),
+    ("3 8ber 1780",    "3 OCT 1780"),
+    ("10 9bris 1800",  "10 NOV 1800"),
+    ("5 10ber 1820",   "5 DEC 1820"),
+    ("20 7ber 1755",   "20 SEP 1755"),
+
+    # Italian full forms
+    ("15 gennaio 1900",   "15 JAN 1900"),
+    ("10 agosto 1800",    "10 AUG 1800"),
+    ("3 ottobre 1780",    "3 OCT 1780"),
+    ("5 dicembre 1850",   "5 DEC 1850"),
+    ("7 giugno 1923",     "7 JUN 1923"),
+    ("12 luglio 1891",    "12 JUL 1891"),
+
+    # Italian short forms
+    ("5 mag. 1850",    "5 MAY 1850"),
+    ("12 ago. 1891",   "12 AUG 1891"),
+    ("7 lug. 1923",    "7 JUL 1923"),
+    ("3 ott. 1780",    "3 OCT 1780"),
+    ("5 giu. 1850",    "5 JUN 1850"),
+    ("20 dic. 1840",   "20 DEC 1840"),
 ])
 def test_clean_date_success(raw, expected):
     result, warning = clean_date_dd_mmm_yyyy(raw)
