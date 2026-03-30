@@ -11,6 +11,12 @@ from tools.gedcom_cleaner import clean_place_placeholder
     "   ___   ",
     ",,,",
     "_, ?,",
+    "(?)",
+    "(???)",
+    "(????)",
+    "(??, ???)",
+    "_____--",
+    "___--___",
 ])
 def test_place_placeholder_cleared(raw):
     result, warning = clean_place_placeholder(raw)

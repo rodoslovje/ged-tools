@@ -914,8 +914,9 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
 # Cleaner: name_placeholder
 # ---------------------------------------------------------------------------
 
-# Matches values that are entirely placeholder characters (_, ?, /) plus whitespace
-_NAME_PLACEHOLDER_RE = re.compile(r"^[_?\s/]+$")
+# Matches values that are entirely placeholder characters (_, ?, /) plus whitespace,
+# optionally wrapped in parentheses (e.g. "(?)", "(????)").
+_NAME_PLACEHOLDER_RE = re.compile(r"^\(?[_?\s/\-]+\)?$")
 
 
 def clean_name_placeholder(raw: str) -> tuple[str, None]:
@@ -932,8 +933,9 @@ def clean_name_placeholder(raw: str) -> tuple[str, None]:
 # Cleaner: place_placeholder
 # ---------------------------------------------------------------------------
 
-# Matches place values that are entirely placeholder characters (_, ?, commas) plus whitespace
-_PLACE_PLACEHOLDER_RE = re.compile(r"^[_?,\s]+$")
+# Matches place values that are entirely placeholder characters (_, ?, commas) plus whitespace,
+# optionally wrapped in parentheses (e.g. "(?)", "(???, ???)").
+_PLACE_PLACEHOLDER_RE = re.compile(r"^\(?[_?,\s\-]+\)?$")
 
 
 def clean_place_placeholder(raw: str) -> tuple[str, None]:

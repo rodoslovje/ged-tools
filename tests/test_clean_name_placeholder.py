@@ -13,6 +13,13 @@ from tools.gedcom_cleaner import clean_name_placeholder
     "??? /???/",
     "_ /_/",
     "   ___   ",
+    "(?)",
+    "(???)",
+    "(????)",
+    "(?????)",
+    "_____--",
+    "___--___",
+    "__ __",
 ])
 def test_name_placeholder_cleared(raw):
     result, warning = clean_name_placeholder(raw)
