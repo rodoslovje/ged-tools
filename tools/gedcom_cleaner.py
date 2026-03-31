@@ -520,6 +520,7 @@ PREFIX_MAP = {
     "krog": "ABT",    # truncation of "okrog" (missing leading o)
     "recimo": "ABT",  # Slovenian "recimo" = "let's say" (approximate)
     "around": "ABT",  # English "around"
+    "say": "ABT",     # English "say" = approximately
     "etu": "ABT",     # garbled/truncated approximation prefix
     "og": "ABT",      # truncation of "okrog"
     "org": "ABT",     # truncation of "okrog" (variant)
@@ -755,14 +756,11 @@ def _parse_range(value: str) -> tuple[str | None, str | None, bool]:
     _qualifier_re = re.compile(r"^(ABT|EST|CAL|BEF|AFT)\s+", re.IGNORECASE)
 
     def _parse_part(d: str) -> tuple[str | None, str | None]:
-        """Strip an optional GEDCOM qualifier, parse the bare date, reassemble."""
-        m = _qualifier_re.match(d)
-        qualifier = (m.group(1).upper() + " ") if m else ""
-        bare = d[m.end():] if m else d
-        result, err = _parse_date_value(bare)
-        if err:
-            return None, err
-        return qualifier + result, None
+        """Full clean of an inner date part (handles stacked prefixes like 'ABT OG 1784')."""
+        result, warn = clean_date_dd_mmm_yyyy(d)
+        if warn:
+            return None, warn
+        return result, None
 
     def both(d1: str, d2: str, fmt: str) -> tuple[str | None, str | None, bool]:
         r1, e1 = _parse_part(d1)
@@ -817,7 +815,13 @@ def _parse_range(value: str) -> tuple[str | None, str | None, bool]:
     # BET date  (only one date, no AND/TO — treat as ABT)
     m = re.match(r"^(?:BETWEEN|BET)\s+(.+)$", v, re.IGNORECASE)
     if m:
-        return one(m.group(1), "ABT {}")
+        r, e = _parse_part(m.group(1))
+        if e:
+            return None, e
+        # _parse_part may already include ABT; only add it if not already a qualifier
+        if r and not re.match(r"^(ABT|EST|CAL|BEF|AFT)\b", r, re.IGNORECASE):
+            r = "ABT " + r
+        return r, None, True
 
     # YYYY-YYYY  (plain year range, e.g. "1856-1881") — left as-is, handled below
 
@@ -844,7 +848,14 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
 
     # N / NN / NNN / NO / NE / DA / Y / NOT MARRIED / +++ etc. — unknown/irrelevant markers
     if (re.match(r"^[N+]+$", v, re.IGNORECASE)
-            or v.upper() in ("NO", "NE", "DA", "Y", "NOT MARRIED")):
+            or v.upper() in ("NO", "NE", "DA", "Y", "NOT MARRIED",
+                             "HITRO", "UMRL",      # Slovenian "quickly"/"died" in date field
+                             "CIVILNA",             # Slovenian "civil" (marriage type)
+                             )):
+        return "", None
+
+    # Bare 2-digit number (e.g. "17", "18", "19") — century prefix without year, too ambiguous
+    if re.match(r"^\d{2}$", v):
         return "", None
 
     # Strip trailing punctuation: dot, apostrophe, backtick, asterisk, slash
@@ -909,6 +920,10 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
 
     # Collapse repeated tilde to single (e.g. "~~ 1968" → "~ 1968")
     v = re.sub(r"~+", "~", v)
+
+    # Strip English ordinal suffixes and trailing comma (e.g. "20TH SEPTEMBER," → "20 SEPTEMBER")
+    v = re.sub(r"(\d+)(st|nd|rd|th)\b", r"\1", v, flags=re.IGNORECASE)
+    v = v.rstrip(",").strip()
 
     # Strip bare single-letter markers T/M before year (e.g. "T 1640", "M 1750" → year only)
     # Only when T/M is the complete leading token (not a suffix like the T in OKT)
@@ -981,7 +996,7 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
 
     # Detect and strip prefix (run up to twice for compound prefixes like "ˇ~")
     prefix_canon = None
-    for _ in range(2):
+    for _ in range(5):
         matched = False
         for variant, canon in PREFIX_MAP.items():
             # match whole word / token at start, case-insensitive.
