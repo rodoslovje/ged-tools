@@ -559,6 +559,8 @@ DATE_PATTERNS = [
     re.compile(r"^(?P<day>\d{2})(?P<monthnum>\d{2})[.,/\-:\s](?P<year>\d{4})$"),
     # .MM.YYYY / .MM-YYYY / .MM YYYY  (unknown day, numeric month, any separator)
     re.compile(rf"^[.,]\s*(?P<monthnum>\d{{1,2}}){_SEP}(?P<year>\d{{3,4}})$"),
+    # .0YYYY  — leading dot+zero = unknown day and month (e.g. ".01620", ".01865")
+    re.compile(r"^[.,]\s*0(?P<year>\d{4})$"),
     # .MMYYYY  (unknown day, numeric month, no separator — e.g. ".051948")
     re.compile(r"^[.,]\s*(?P<monthnum>\d{2})(?P<year>\d{4})$"),
     # .MMM.YYYY  (unknown day, named month — leading dot placeholder, e.g. ".MAJ.1693")
@@ -676,6 +678,12 @@ def _parse_date_value(value: str) -> tuple[str | None, str | None]:
 
         return " ".join(parts), None
 
+    # Last resort: extract a plausible 4-digit year (1000-2099) from a malformed date
+    # (e.g. "30.101.1871" → "1871", "25.08.18101810" → "1810", "129.06.1866" → "1866")
+    m = re.search(r"(1[0-9]{3}|20[0-2][0-9])", value)
+    if m:
+        return m.group(1), None
+
     return None, f"unrecognised date format '{value}'"
 
 
@@ -777,6 +785,11 @@ def _parse_range(value: str) -> tuple[str | None, str | None, bool]:
     if m:
         return both(m.group(1), m.group(2), "FROM {} TO {}")
 
+    # BET date  (only one date, no AND/TO — treat as ABT)
+    m = re.match(r"^(?:BETWEEN|BET)\s+(.+)$", v, re.IGNORECASE)
+    if m:
+        return one(m.group(1), "ABT {}")
+
     # YYYY-YYYY  (plain year range, e.g. "1856-1881") — left as-is, handled below
 
     return None, None, False
@@ -798,6 +811,10 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
 
     # Pure ? / ?? — unknown date, treat as empty
     if re.match(r"^\?+$", v):
+        return "", None
+
+    # N / NN / NNN / NO / NE / +++ etc. — various "unknown" markers, treat as empty
+    if re.match(r"^[N+]+$", v, re.IGNORECASE) or v.upper() in ("NO", "NE"):
         return "", None
 
     # Strip trailing punctuation: dot, apostrophe, backtick, asterisk, slash
