@@ -400,8 +400,16 @@ MONTHS_SHORT = {
     "novemb.": "NOV",
     "novemb": "NOV",
     "dec.": "DEC",
-    # Typo forms
+    # Typo / transposition forms
     "frb": "FEB",
+    "apil": "APR",   # transposition of APRIL
+    "naov": "NOV",   # transposition of NAOV→NOV
+    "niv": "NOV",    # typo (i instead of o); NIV.1915 etc.
+    "dac": "DEC",    # typo (a instead of e)
+    "dsc": "DEC",    # typo (s instead of e)
+    "ma": "MAY",     # truncation of MAJ/MAY
+    # Hebrew calendar month in Slavic transcription
+    "ašr": "OCT",    # Tishrei (תשרי) ≈ October; ת misread as A, ש→Š, ר→R
     # Old Slovenian short forms
     "pros.": "JAN",
     "pros": "JAN",
@@ -1056,9 +1064,9 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
 # Cleaner: name_placeholder
 # ---------------------------------------------------------------------------
 
-# Matches values that are entirely placeholder characters (_, ?, /) plus whitespace,
-# optionally wrapped in parentheses (e.g. "(?)", "(????)").
-_NAME_PLACEHOLDER_RE = re.compile(r"^\(?[_?\s/\-]+\)?$")
+# Matches values that are entirely placeholder characters (_, ?, ., ,, -, /) plus whitespace,
+# optionally wrapped in parentheses. Handles any combination of these "unknown" markers.
+_NAME_PLACEHOLDER_RE = re.compile(r"^\(?[_.?,\s/\-]+\)?$")
 
 
 def clean_name_placeholder(raw: str) -> tuple[str, None]:
@@ -1075,9 +1083,9 @@ def clean_name_placeholder(raw: str) -> tuple[str, None]:
 # Cleaner: place_placeholder
 # ---------------------------------------------------------------------------
 
-# Matches place values that are entirely placeholder characters (_, ?, commas) plus whitespace,
-# optionally wrapped in parentheses (e.g. "(?)", "(???, ???)").
-_PLACE_PLACEHOLDER_RE = re.compile(r"^\(?[_?,\s\-]+\)?$")
+# Matches place values that are entirely placeholder characters (_, ?, ., ,, -) plus whitespace,
+# optionally wrapped in parentheses. Handles any combination of these "unknown" markers.
+_PLACE_PLACEHOLDER_RE = re.compile(r"^\(?[_.?,\s\-]+\)?$")
 
 
 def clean_place_placeholder(raw: str) -> tuple[str, None]:
