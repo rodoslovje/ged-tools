@@ -397,7 +397,11 @@ MONTHS_SHORT = {
     "sep.": "SEP",
     "okt.": "OCT",
     "nov.": "NOV",
+    "novemb.": "NOV",
+    "novemb": "NOV",
     "dec.": "DEC",
+    # Typo forms
+    "frb": "FEB",
     # Old Slovenian short forms
     "pros.": "JAN",
     "pros": "JAN",
@@ -427,6 +431,10 @@ MONTHS_SHORT = {
     "iugno": "JUN",
     # Slovenian August variant
     "svg": "AUG",
+    # Russian/Ukrainian month abbreviations in Latin transliteration
+    # (В→B, Г→G; PKT likely OCR misread of OKT where О→P)
+    "abg": "AUG",    # рус. авг = август (August)
+    "pkt": "OCT",    # рус. окт = октябрь (October), O misread as P
     # Typo variants
     "jjun": "JUN",
     "manj": "MAY",   # typo for "maj"
@@ -507,12 +515,18 @@ PREFIX_MAP = {
     "orog": "ABT",    # typo for "okrog" (missing k)
     "krog": "ABT",    # truncation of "okrog" (missing leading o)
     "recimo": "ABT",  # Slovenian "recimo" = "let's say" (approximate)
+    "around": "ABT",  # English "around"
+    "etu": "ABT",     # garbled/truncated approximation prefix
+    "og": "ABT",      # truncation of "okrog"
+    "org": "ABT",     # truncation of "okrog" (variant)
+    "abg": "ABT",     # Russian авг without day = approximately (with day handled as AUG month)
     "okr.": "ABT",
     "okr": "ABT",
     "ok.": "ABT",
     "ok": "ABT",
     "ca.": "ABT",
     "ca": "ABT",
+    "c": "ABT",       # single-letter circa (must come after "ca"/"ca." to not shadow them)
     "pred": "BEF",
     "prred": "BEF",  # typo for "pred" (double r)
     "prd": "BEF",
@@ -678,11 +692,18 @@ def _parse_date_value(value: str) -> tuple[str | None, str | None]:
 
         return " ".join(parts), None
 
-    # Last resort: extract a plausible 4-digit year (1000-2099) from a malformed date
-    # (e.g. "30.101.1871" → "1871", "25.08.18101810" → "1810", "129.06.1866" → "1866")
-    m = re.search(r"(1[0-9]{3}|20[0-2][0-9])", value)
-    if m:
-        return m.group(1), None
+    # Last resort: extract a plausible 4-digit year (1000-2099) from a malformed date.
+    # Use overlapping search (advance 1 char at a time) and take the rightmost match,
+    # so that in digit-concatenated dates the trailing year wins over leading fragments.
+    # e.g. "30.101.1871" → "1871", "100118900" → "1890", "2101802" → "1802"
+    _year_pat = re.compile(r"1[0-9]{3}|20[0-2][0-9]")
+    found = None
+    for i in range(len(value)):
+        m = _year_pat.match(value, i)
+        if m:
+            found = m.group()
+    if found:
+        return found, None
 
     return None, f"unrecognised date format '{value}'"
 
@@ -813,8 +834,8 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     if re.match(r"^\?+$", v):
         return "", None
 
-    # N / NN / NNN / NO / NE / +++ etc. — various "unknown" markers, treat as empty
-    if re.match(r"^[N+]+$", v, re.IGNORECASE) or v.upper() in ("NO", "NE"):
+    # N / NN / NNN / NO / NE / DA / Y / +++ etc. — various "unknown" markers, treat as empty
+    if re.match(r"^[N+]+$", v, re.IGNORECASE) or v.upper() in ("NO", "NE", "DA", "Y"):
         return "", None
 
     # Strip trailing punctuation: dot, apostrophe, backtick, asterisk, slash
@@ -879,6 +900,25 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
 
     # Collapse repeated tilde to single (e.g. "~~ 1968" → "~ 1968")
     v = re.sub(r"~+", "~", v)
+
+    # Strip bare single-letter markers T/M before year (e.g. "T 1640", "M 1750" → year only)
+    v = re.sub(r"^[TM]\s+(?=\d)", "", v, flags=re.IGNORECASE)
+
+    # Strip leading single-letter abbreviation + dot (e.g. "R.15.02.1931" → "15.02.1931")
+    v = re.sub(r"^[A-Za-z]\.\s*(?=\d)", "", v)
+
+    # Strip trailing single letter after a date (e.g. "27.05.1946 L" → "27.05.1946")
+    v_no_sfx = re.sub(r"(?<=\d)\s+[A-Za-z]$", "", v)
+    if v_no_sfx and v_no_sfx != v:
+        v = v_no_sfx
+
+    # Expand MA0 → MAY (stray 0 between month abbreviation and year, e.g. "22MA01970")
+    v = re.sub(r"MA0(?=\d)", "MAY", v, flags=re.IGNORECASE)
+
+    # Expand 2-digit year → 20YY for DD.MM.YY dates (e.g. "31.08.18" → "31.08.2018")
+    m2y = re.match(r"^(\d{1,2})[.,\s](\d{1,2})[.,\s](\d{2})$", v)
+    if m2y:
+        v = f"{m2y.group(1)}.{m2y.group(2)}.20{m2y.group(3)}"
 
     # Latin numeric month abbreviations (old Roman-calendar positional form):
     #   7bris/7ber → SEP,  8bris/8ber → OCT,  9bris/9ber → NOV,  10bris/10ber → DEC
