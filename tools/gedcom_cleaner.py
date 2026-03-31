@@ -533,6 +533,14 @@ PREFIX_MAP = {
     "ok": "ABT",
     "ca.": "ABT",
     "ca": "ABT",
+    # Garbled "cca" (circa) variants — C/CC/CCC etc. with OCR/encoding corruption
+    "çca": "ABT",   # cedilla-c variant
+    "žcca": "ABT",  # diacritic corruption
+    "ccca": "ABT",  # quadruple-c garble
+    "ccac": "ABT",  # transposition/corruption
+    "cvca": "ABT",  # v-corruption
+    "ccc": "ABT",   # triple-c garble
+    "cc": "ABT",    # double-c garble (must come after longer forms)
     "c": "ABT",       # single-letter circa (must come after "ca"/"ca." to not shadow them)
     "pred": "BEF",
     "prred": "BEF",  # typo for "pred" (double r)
@@ -546,6 +554,9 @@ PREFIX_MAP = {
     "letom": "", # Slovenian "letom" (in the year)
     "est.": "EST",
     "est": "EST",
+    "ges.": "EST",
+    "ges": "EST",    # German "geschätzt" (estimated)
+    "act": "EST",    # Latin "actum" (dated/recorded on)
     "pribl.": "ABT",
     "pribl": "ABT",
     "wft est.": "ABT",
@@ -817,7 +828,7 @@ def _parse_range(value: str) -> tuple[str | None, str | None, bool]:
     if m:
         r, e = _parse_part(m.group(1))
         if e:
-            return None, e
+            return None, e, True
         # _parse_part may already include ABT; only add it if not already a qualifier
         if r and not re.match(r"^(ABT|EST|CAL|BEF|AFT)\b", r, re.IGNORECASE):
             r = "ABT " + r
@@ -966,9 +977,14 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     for pat, repl in _NUMERIC_MONTHS:
         v = re.sub(pat, repl, v, flags=re.IGNORECASE)
 
-    # Bare "/" is unknown — treat as empty
-    if v == "/":
+    # Bare "/" or bare hyphen(s) — unknown date, treat as empty
+    if v == "/" or re.match(r"^-+$", v):
         return "", None
+
+    # Truncated decade: "184-" → ABT 1840 (trailing dash = uncertain decade)
+    m_decade = re.match(r"^(\d{3})-$", v)
+    if m_decade:
+        return "ABT " + m_decade.group(1) + "0", None
 
     # Handle __ placeholder dates first
     placeholder = _handle_placeholder(v)
@@ -1021,6 +1037,10 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
 
     if not v:
         return "", None
+
+    # Re-apply ! → 1 normalization in case it appeared after a prefix (e.g. "CCA !640")
+    if v.startswith("!") and v[1:].isdigit():
+        v = "1" + v[1:]
 
     formatted, err = _parse_date_value(v)
     if err:

@@ -479,6 +479,19 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
     ("3 ott. 1780",    "3 OCT 1780"),
     ("5 giu. 1850",    "5 JUN 1850"),
     ("20 dic. 1840",   "20 DEC 1840"),
+
+    # Garbled circa variants (CC/CCC/CCAC/CVCA/ŽCCA/ÇCA = corrupted "cca")
+    ("CC 1785",    "ABT 1785"),
+    ("CCC 1814",   "ABT 1814"),
+    ("CCCA 1850",  "ABT 1850"),
+    ("CCAC 1780",  "ABT 1780"),
+    ("CVCA 1800",  "ABT 1800"),
+    ("ŽCCA 1860",  "ABT 1860"),
+    ("ÇCA 1948",   "ABT 1948"),
+
+    # Truncated decade: "184-" → ABT 1840
+    ("184-",   "ABT 1840"),
+    ("185-",   "ABT 1850"),
 ])
 def test_clean_date_success(raw, expected):
     result, warning = clean_date_dd_mmm_yyyy(raw)
@@ -492,6 +505,8 @@ def test_clean_date_success(raw, expected):
     "__.____",
     ".--.----",
     "--.--",
+    "-",
+    "----",
     "/",
     "",    # empty — no warning, no value
     "?",   # single unknown marker
