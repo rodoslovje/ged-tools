@@ -437,6 +437,7 @@ MONTHS_SHORT = {
     "pkt": "OCT",    # рус. окт = октябрь (October), O misread as P
     # Typo variants
     "jjun": "JUN",
+    "jum": "JUN",    # typo for jun
     "manj": "MAY",   # typo for "maj"
     "eog": "AUG",    # garbled form of "avg"/"ago" (Slovenian/Italian August)
     # Latin short forms
@@ -483,6 +484,9 @@ PREFIX_MAP = {
     "about": "ABT",
     "abt.": "ABT",
     "abt": "ABT",
+    "abtt": "ABT",  # typo for abt (double t)
+    "abtg": "ABT",  # typo for abt (stray g)
+    "1bt": "ABT",   # typo for abt (1 instead of a)
     "~": "ABT",
     "'": "ABT",   # leading apostrophe = circa (genealogy convention)
     "<": "BEF",
@@ -519,6 +523,8 @@ PREFIX_MAP = {
     "etu": "ABT",     # garbled/truncated approximation prefix
     "og": "ABT",      # truncation of "okrog"
     "org": "ABT",     # truncation of "okrog" (variant)
+    "okorg": "ABT",   # compound typo for "okrog"
+    "estimated": "ABT",
     "abg": "ABT",     # Russian авг without day = approximately (with day handled as AUG month)
     "okr.": "ABT",
     "okr": "ABT",
@@ -533,8 +539,10 @@ PREFIX_MAP = {
     "vor": "BEF",
     "po": "AFT",
     "ˇ": "ABT",  # modifier letter caron (U+02C7) used as ABT in some apps
-    "l.": "",   # Slovenian/German "Leto/Jahr" (year) — strip prefix, keep year
+    "l.": "",    # Slovenian/German "Leto/Jahr" (year) — strip prefix, keep year
     "l": "",
+    "letu": "",  # Slovenian "v letu" (in the year) — strip, keep year
+    "letom": "", # Slovenian "letom" (in the year)
     "est.": "EST",
     "est": "EST",
     "pribl.": "ABT",
@@ -834,8 +842,9 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     if re.match(r"^\?+$", v):
         return "", None
 
-    # N / NN / NNN / NO / NE / DA / Y / +++ etc. — various "unknown" markers, treat as empty
-    if re.match(r"^[N+]+$", v, re.IGNORECASE) or v.upper() in ("NO", "NE", "DA", "Y"):
+    # N / NN / NNN / NO / NE / DA / Y / NOT MARRIED / +++ etc. — unknown/irrelevant markers
+    if (re.match(r"^[N+]+$", v, re.IGNORECASE)
+            or v.upper() in ("NO", "NE", "DA", "Y", "NOT MARRIED")):
         return "", None
 
     # Strip trailing punctuation: dot, apostrophe, backtick, asterisk, slash
@@ -902,7 +911,17 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     v = re.sub(r"~+", "~", v)
 
     # Strip bare single-letter markers T/M before year (e.g. "T 1640", "M 1750" → year only)
-    v = re.sub(r"^[TM]\s+(?=\d)", "", v, flags=re.IGNORECASE)
+    # Only when T/M is the complete leading token (not a suffix like the T in OKT)
+    if re.match(r"^[TM]\s+\d", v, re.IGNORECASE) and len(v.split()[0]) == 1:
+        v = v.split(None, 1)[1]
+
+    # ! as leading character is a typo for 1 (e.g. "!938" → "1938")
+    if v.startswith("!") and v[1:].isdigit():
+        v = "1" + v[1:]
+
+    # Day + month with no year (e.g. "20 JUN") — pass through unchanged
+    if re.match(rf"^\d{{1,2}}\s+[A-Za-z]+\.?$", v):
+        return raw, None
 
     # Strip leading single-letter abbreviation + dot (e.g. "R.15.02.1931" → "15.02.1931")
     v = re.sub(r"^[A-Za-z]\.\s*(?=\d)", "", v)
@@ -965,8 +984,15 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     for _ in range(2):
         matched = False
         for variant, canon in PREFIX_MAP.items():
-            # match whole word / token at start, case-insensitive
-            pattern = re.compile(r"^" + re.escape(variant) + r"(?=[\s\d\w.~]|$)", re.IGNORECASE)
+            # match whole word / token at start, case-insensitive.
+            # If the prefix ends with a letter (e.g. "ok", "pred"), require the next char
+            # to be whitespace/digit/end — not another letter — so "ok" doesn't match "okt".
+            # If the prefix ends with a punctuation char (e.g. "abt.", "~"), allow any follow.
+            if variant[-1].isalpha():
+                lookahead = r"(?=[\s\d.~]|$)"
+            else:
+                lookahead = r"(?=[\s\d\w.~]|$)"
+            pattern = re.compile(r"^" + re.escape(variant) + lookahead, re.IGNORECASE)
             if pattern.match(v):
                 if prefix_canon is None:
                     prefix_canon = canon
