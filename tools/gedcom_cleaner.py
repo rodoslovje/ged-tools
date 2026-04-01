@@ -1256,6 +1256,7 @@ TRANSFORMERS: dict[str, dict[str, str | TagTransform] | None] = {
     },
     # Custom transformers (None = handled separately):
     "addr_to_plac": None,  # merge ADDR value into PLAC (prepend with ", ") for event elements
+    "living_private": None,
 }
 
 
@@ -1290,8 +1291,8 @@ PRESETS: dict[str, dict[str, list[str]]] = {
             "place_placeholder",
             "place_duplicate_rm",
         ],
-        "strip": ["living", "noname_indi", "noname_fam"],
-        "transform": [],
+        "strip": ["noname_indi", "noname_fam"],
+        "transform": ["living_private"],
     },
 }
 
@@ -1553,6 +1554,94 @@ def process_file(
                 print(
                     f"  [transform:addr_to_plac] ADDR {addr_val!r} + PLAC {old_plac!r} -> PLAC {new_plac!r}"
                 )
+
+    if "living_private" in transformers:
+        import datetime
+
+        ts = transform_stats["living_private"]
+        curr_year = datetime.date.today().year
+
+        for element in parser.get_root_child_elements():
+            if element.get_tag() != gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
+                continue
+
+            ts.processed += 1
+            is_private = False
+            name_val = ""
+
+            for ch in element.get_child_elements():
+                if ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME:
+                    name_val = ch.get_value().replace("/", "").strip().lower()
+                    break
+
+            if name_val == "living":
+                is_private = True
+            else:
+                has_death = False
+                death_year = None
+                birth_year = None
+                for ch in element.get_child_elements():
+                    tag = ch.get_tag()
+                    if tag in ("DEAT", "BURI"):
+                        has_death = True
+                        for gch in ch.get_child_elements():
+                            if gch.get_tag() == gedcom.tags.GEDCOM_TAG_DATE:
+                                m = re.search(
+                                    r"\b(1[0-9]{3}|20[0-2][0-9])\b", gch.get_value()
+                                )
+                                if m:
+                                    year = int(m.group(1))
+                                    if death_year is None or year > death_year:
+                                        death_year = year
+                    elif tag == "BIRT":
+                        for gch in ch.get_child_elements():
+                            if gch.get_tag() == gedcom.tags.GEDCOM_TAG_DATE:
+                                m = re.search(
+                                    r"\b(1[0-9]{3}|20[0-2][0-9])\b", gch.get_value()
+                                )
+                                if m:
+                                    birth_year = int(m.group(1))
+
+                if has_death:
+                    if death_year is not None and (curr_year - death_year) < 20:
+                        is_private = True
+                else:
+                    if birth_year is None or (curr_year - birth_year) < 100:
+                        is_private = True
+
+            if is_private:
+                children = element.get_child_elements()
+                to_keep = []
+                name_kept = False
+                for ch in children:
+                    if ch.get_tag() in ("FAMC", "FAMS", "SEX"):
+                        to_keep.append(ch)
+                    elif ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME and not name_kept:
+                        ch.set_value("private")
+                        ch.get_child_elements().clear()
+                        to_keep.append(ch)
+                        name_kept = True
+
+                if not name_kept:
+                    name_el = Element(
+                        element.get_level() + 1,
+                        "",
+                        gedcom.tags.GEDCOM_TAG_NAME,
+                        "private",
+                        "\n",
+                        multi_line=False,
+                    )
+                    name_el.set_parent_element(element)
+                    to_keep.insert(0, name_el)
+
+                children.clear()
+                children.extend(to_keep)
+
+                ts.transformed += 1
+                if verbose:
+                    print(
+                        f"  [transform:living_private] anonymised INDI {element.get_pointer()}"
+                    )
 
     # Regular tag-based strippers (run after cleaners and transformers)
     for name in strippers:
