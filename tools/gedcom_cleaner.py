@@ -1221,6 +1221,8 @@ STRIPPERS: dict[str, StripSpec | None] = {
     "indi_race": StripSpec(tags={"RACE"}, parent_tag="INDI"),
     "change_date": StripSpec(tags={"CHAN"}, level=2),
     "create_date": StripSpec(tags={"CREA"}, level=2),
+    "bkm": StripSpec(tags={"_BKM"}),
+    "sto": StripSpec(tags={"_STO"}),
     # Post-strippers (run after all cleaners and transformers):
     "noname_indi": None,  # remove INDI records whose every NAME value is empty
     "noname_fam": None,  # remove FAM records where all HUSB/WIFE INDIs are nameless
@@ -1271,6 +1273,8 @@ PRESETS: dict[str, dict[str, list[str]]] = {
             "change_date",
             "create_date",
             "indi_race",
+            "bkm",
+            "sto",
         ],
         "transform": ["fid_fsftid", "latr_even"],
     },
