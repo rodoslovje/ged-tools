@@ -1103,28 +1103,56 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
 # Cleaner: name_placeholder
 # ---------------------------------------------------------------------------
 
-# Matches values that are entirely placeholder characters (_, ?, ., ,, -, /) plus whitespace,
-# optionally wrapped in parentheses. Handles any combination of these "unknown" markers.
-_NAME_PLACEHOLDER_RE = re.compile(r"^\(?[_.?,\s/\-]+\)?$")
+# Matches values that are entirely placeholder characters (_, ?, ., ,, -, /, (, ), [, ], <, >)
+# plus whitespace. Handles any combination of these "unknown" markers.
+_NAME_PLACEHOLDER_RE = re.compile(r"^[_.?,\s/\-()\[\]<>]+$")
 
 
 def clean_name_placeholder(raw: str) -> tuple[str, None]:
     """
     Returns ("", None) if the name is a placeholder (all underscores or question marks).
-    Returns (raw, None) otherwise — no change.
+    Also clears placeholder surnames from within slashes (e.g. "Jane /___/" -> "Jane //"),
+    and placeholder given names (e.g. "___ /Smith/" -> "/Smith/").
+    Returns (cleaned, None) otherwise.
     """
+    if not raw:
+        return raw, None
+
     if _NAME_PLACEHOLDER_RE.match(raw):
         return "", None
-    return raw, None
+
+    # Clean placeholder surname between slashes
+    def repl_surname(match):
+        inner = match.group(1)
+        if inner and _NAME_PLACEHOLDER_RE.match(inner):
+            return "//"
+        return match.group(0)
+
+    cleaned = re.sub(r"/([^/]*)/", repl_surname, raw)
+
+    # Clean placeholder given names (tokens that are placeholders, but not containing slashes)
+    final_parts = []
+    for part in cleaned.split():
+        if "/" in part:
+            final_parts.append(part)
+        elif not _NAME_PLACEHOLDER_RE.match(part):
+            final_parts.append(part)
+
+    cleaned = " ".join(final_parts)
+
+    if not cleaned or _NAME_PLACEHOLDER_RE.match(cleaned):
+        return "", None
+
+    return cleaned, None
 
 
 # ---------------------------------------------------------------------------
 # Cleaner: place_placeholder
 # ---------------------------------------------------------------------------
 
-# Matches place values that are entirely placeholder characters (_, ?, ., ,, -) plus whitespace,
-# optionally wrapped in parentheses. Handles any combination of these "unknown" markers.
-_PLACE_PLACEHOLDER_RE = re.compile(r"^\(?[_.?,\s\-]+\)?$")
+# Matches place values that are entirely placeholder characters (_, ?, ., ,, -, /, (, ), [, ], <, >)
+# plus whitespace. Handles any combination of these "unknown" markers.
+_PLACE_PLACEHOLDER_RE = re.compile(r"^[_.?,\s/\-()\[\]<>]+$")
 
 
 def clean_place_placeholder(raw: str) -> tuple[str, None]:
@@ -1393,21 +1421,31 @@ def process_file(
     if "name_placeholder" in cleaners:
         s = stats["name_placeholder"]
         current_label = None
+        _NAME_TAGS = (
+            gedcom.tags.GEDCOM_TAG_NAME,
+            "SURN",
+            "GIVN",
+            "NICK",
+            "MARNM",
+            "_MARNM",
+        )
         for element in parser.get_element_list():
-            if element.get_tag() != gedcom.tags.GEDCOM_TAG_NAME:
+            if element.get_tag() not in _NAME_TAGS:
                 continue
             raw = element.get_value()
             s.processed += 1
             cleaned, _ = clean_name_placeholder(raw)
-            if cleaned == "" and raw != "":
+            if cleaned != raw:
                 s.fixed += 1
                 if verbose:
                     label = _record_label(element)
                     if label != current_label:
                         print(label)
                         current_label = label
-                    print(f"  [name_placeholder] {raw!r} -> (cleared)")
-                element.set_value("")
+                    print(
+                        f"  [name_placeholder] {element.get_tag()} {raw!r} -> {cleaned!r}"
+                    )
+                element.set_value(cleaned)
 
     if "place_placeholder" in cleaners:
         s = stats["place_placeholder"]
@@ -1418,15 +1456,15 @@ def process_file(
             raw = element.get_value()
             s.processed += 1
             cleaned, _ = clean_place_placeholder(raw)
-            if cleaned == "" and raw != "":
+            if cleaned != raw:
                 s.fixed += 1
                 if verbose:
                     label = _record_label(element)
                     if label != current_label:
                         print(label)
                         current_label = label
-                    print(f"  [place_placeholder] {raw!r} -> (cleared)")
-                element.set_value("")
+                    print(f"  [place_placeholder] {raw!r} -> {cleaned!r}")
+                element.set_value(cleaned)
 
     if "place_slovenia_rm" in cleaners:
         s = stats["place_slovenia_rm"]
