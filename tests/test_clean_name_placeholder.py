@@ -57,10 +57,12 @@ def test_name_placeholder_kept(raw):
     [
         ("Jane /___/", "Jane //"),
         ("___ /Smith/", "/Smith/"),
-        ("___ Jane /Smith/", "Jane /Smith/"),
+        ("___ Jane /Smith/", "___ Jane /Smith/"),
         ("Jane /_?_/", "Jane //"),
         ("___ /___/", ""),
         ("John  /Smith/  ", "John /Smith/"),  # checks extra space normalization
+        ("Jože - Pepi", "Jože - Pepi"),
+        ("Jože - Pepi /Surname/", "Jože - Pepi /Surname/"),
     ],
 )
 def test_name_placeholder_partial(raw, expected):

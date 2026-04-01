@@ -1130,15 +1130,20 @@ def clean_name_placeholder(raw: str) -> tuple[str, None]:
 
     cleaned = re.sub(r"/([^/]*)/", repl_surname, raw)
 
-    # Clean placeholder given names (tokens that are placeholders, but not containing slashes)
+    # Clean placeholder given names (only if the ENTIRE part outside slashes is a placeholder)
+    parts = re.split(r"(/[^/]*/)", cleaned)
     final_parts = []
-    for part in cleaned.split():
-        if "/" in part:
-            final_parts.append(part)
-        elif not _NAME_PLACEHOLDER_RE.match(part):
-            final_parts.append(part)
+    for p in parts:
+        if p.startswith("/") and p.endswith("/"):
+            final_parts.append(p)
+        else:
+            if _NAME_PLACEHOLDER_RE.match(p):
+                final_parts.append("")
+            else:
+                final_parts.append(p)
 
-    cleaned = " ".join(final_parts)
+    cleaned = "".join(final_parts).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
 
     if not cleaned or _NAME_PLACEHOLDER_RE.match(cleaned):
         return "", None
