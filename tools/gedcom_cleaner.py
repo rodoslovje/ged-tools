@@ -113,9 +113,12 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
             detected = chardet.detect(raw)
             enc = (detected.get("encoding") or "") if detected else ""
             confidence = (detected.get("confidence") or 0) if detected else 0
-            if (enc and confidence >= 0.2
-                    and enc.lower() not in ("mac_roman", "ascii")
-                    and "utf" not in enc.lower()):
+            if (
+                enc
+                and confidence >= 0.2
+                and enc.lower() not in ("mac_roman", "ascii")
+                and "utf" not in enc.lower()
+            ):
                 encoding = enc
             else:
                 encoding = "windows-1250"
@@ -139,12 +142,12 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
 
 
 _EVENT_LABELS: dict[str, str] = {
-    gedcom.tags.GEDCOM_TAG_BIRTH:    "birth",
-    gedcom.tags.GEDCOM_TAG_DEATH:    "death",
+    gedcom.tags.GEDCOM_TAG_BIRTH: "birth",
+    gedcom.tags.GEDCOM_TAG_DEATH: "death",
     gedcom.tags.GEDCOM_TAG_MARRIAGE: "marriage",
     "BURI": "burial",
-    "CHR":  "christening",
-    "DIV":  "divorce",
+    "CHR": "christening",
+    "DIV": "divorce",
     "EMIG": "emigration",
     "IMMI": "immigration",
     "NATU": "naturalization",
@@ -297,40 +300,50 @@ MONTHS_LONG = {
     "listopad": "NOV",
     "gruden": "DEC",
     # Latin nominative
-    "januarius": "JAN", "ianuarius": "JAN",
+    "januarius": "JAN",
+    "ianuarius": "JAN",
     "februarius": "FEB",
     "martius": "MAR",
     "aprilis": "APR",
     "maius": "MAY",
-    "iunius": "JUN", "junius": "JUN",
-    "iulius": "JUL", "julius": "JUL",
+    "iunius": "JUN",
+    "junius": "JUN",
+    "iulius": "JUL",
+    "julius": "JUL",
     "augustus": "AUG",
-    "september": "SEP",   # already in English, same form
-    "october": "OCT",     # already in English, same form
-    "november": "NOV",    # already in English, same form
-    "december": "DEC",    # already in English, same form
+    "september": "SEP",  # already in English, same form
+    "october": "OCT",  # already in English, same form
+    "november": "NOV",  # already in English, same form
+    "december": "DEC",  # already in English, same form
     # Latin genitive (common in church records: "die 3 Januarii 1750")
-    "januarii": "JAN", "ianuarii": "JAN",
+    "januarii": "JAN",
+    "ianuarii": "JAN",
     "februarii": "FEB",
     "martii": "MAR",
     "maii": "MAY",
-    "iunii": "JUN", "junii": "JUN",
-    "iulii": "JUL", "julii": "JUL",
+    "iunii": "JUN",
+    "junii": "JUN",
+    "iulii": "JUL",
+    "julii": "JUL",
     "augusti": "AUG",
     "septembris": "SEP",
     "octobris": "OCT",
     "novembris": "NOV",
     "decembris": "DEC",
     # Latin ablative/dative (common in church records: "natus Januario 1750")
-    "januario": "JAN", "ianuario": "JAN",
+    "januario": "JAN",
+    "ianuario": "JAN",
     "februario": "FEB",
     "martio": "MAR",
     "aprili": "APR",
     "maio": "MAY",
-    "iunio": "JUN", "junio": "JUN",
-    "iulio": "JUL", "julio": "JUL",
+    "iunio": "JUN",
+    "junio": "JUN",
+    "iulio": "JUL",
+    "julio": "JUL",
     "augusto": "AUG",
-    "septembrio": "SEP", "septembr": "SEP",
+    "septembrio": "SEP",
+    "septembr": "SEP",
     "octobrio": "OCT",
     "novembrio": "NOV",
     "decembrio": "DEC",
@@ -402,14 +415,14 @@ MONTHS_SHORT = {
     "dec.": "DEC",
     # Typo / transposition forms
     "frb": "FEB",
-    "apil": "APR",   # transposition of APRIL
-    "naov": "NOV",   # transposition of NAOV→NOV
-    "niv": "NOV",    # typo (i instead of o); NIV.1915 etc.
-    "dac": "DEC",    # typo (a instead of e)
-    "dsc": "DEC",    # typo (s instead of e)
-    "ma": "MAY",     # truncation of MAJ/MAY
+    "apil": "APR",  # transposition of APRIL
+    "naov": "NOV",  # transposition of NAOV→NOV
+    "niv": "NOV",  # typo (i instead of o); NIV.1915 etc.
+    "dac": "DEC",  # typo (a instead of e)
+    "dsc": "DEC",  # typo (s instead of e)
+    "ma": "MAY",  # truncation of MAJ/MAY
     # Hebrew calendar month in Slavic transcription
-    "ašr": "OCT",    # Tishrei (תשרי) ≈ October; ת misread as A, ש→Š, ר→R
+    "ašr": "OCT",  # Tishrei (תשרי) ≈ October; ת misread as A, ש→Š, ר→R
     # Old Slovenian short forms
     "pros.": "JAN",
     "pros": "JAN",
@@ -441,34 +454,52 @@ MONTHS_SHORT = {
     "svg": "AUG",
     # Russian/Ukrainian month abbreviations in Latin transliteration
     # (В→B, Г→G; PKT likely OCR misread of OKT where О→P)
-    "abg": "AUG",    # рус. авг = август (August)
-    "pkt": "OCT",    # рус. окт = октябрь (October), O misread as P
+    "abg": "AUG",  # рус. авг = август (August)
+    "pkt": "OCT",  # рус. окт = октябрь (October), O misread as P
     # Typo variants
     "jjun": "JUN",
-    "jum": "JUN",    # typo for jun
-    "manj": "MAY",   # typo for "maj"
-    "eog": "AUG",    # garbled form of "avg"/"ago" (Slovenian/Italian August)
+    "jum": "JUN",  # typo for jun
+    "manj": "MAY",  # typo for "maj"
+    "eog": "AUG",  # garbled form of "avg"/"ago" (Slovenian/Italian August)
     # Latin short forms
-    "ian.": "JAN", "ian": "JAN",
-    "mart.": "MAR", "mart": "MAR",
+    "ian.": "JAN",
+    "ian": "JAN",
+    "mart.": "MAR",
+    "mart": "MAR",
     "maij": "MAY",  # old Latin genitive short form
-    "iun.": "JUN", "iun": "JUN",
-    "iul.": "JUL", "iul": "JUL",
-    "aug.": "AUG", "aug": "AUG",
+    "iun.": "JUN",
+    "iun": "JUN",
+    "iul.": "JUL",
+    "iul": "JUL",
+    "aug.": "AUG",
+    "aug": "AUG",
     "sept.": "SEP",
-    "oct.": "OCT", "oct": "OCT",
-    "xber": "DEC", "xbr": "DEC", "xbris": "DEC",  # X=10, old Latin December abbreviation
+    "oct.": "OCT",
+    "oct": "OCT",
+    "xber": "DEC",
+    "xbr": "DEC",
+    "xbris": "DEC",  # X=10, old Latin December abbreviation
     # Italian short forms
-    "gen.": "JAN", "gen": "JAN",
-    "genn.": "JAN", "genn": "JAN",
-    "febb.": "FEB", "febb": "FEB",
-    "mag.": "MAY", "mag": "MAY",
-    "giu.": "JUN", "giu": "JUN",
-    "lug.": "JUL", "lug": "JUL",
-    "ago.": "AUG", "ago": "AUG",
-    "set.": "SEP", "set": "SEP",
-    "ott.": "OCT", "ott": "OCT",
-    "dic.": "DEC", "dic": "DEC",
+    "gen.": "JAN",
+    "gen": "JAN",
+    "genn.": "JAN",
+    "genn": "JAN",
+    "febb.": "FEB",
+    "febb": "FEB",
+    "mag.": "MAY",
+    "mag": "MAY",
+    "giu.": "JUN",
+    "giu": "JUN",
+    "lug.": "JUL",
+    "lug": "JUL",
+    "ago.": "AUG",
+    "ago": "AUG",
+    "set.": "SEP",
+    "set": "SEP",
+    "ott.": "OCT",
+    "ott": "OCT",
+    "dic.": "DEC",
+    "dic": "DEC",
 }
 
 MONTHS_MULTI = {
@@ -494,9 +525,9 @@ PREFIX_MAP = {
     "abt": "ABT",
     "abtt": "ABT",  # typo for abt (double t)
     "abtg": "ABT",  # typo for abt (stray g)
-    "1bt": "ABT",   # typo for abt (1 instead of a)
+    "1bt": "ABT",  # typo for abt (1 instead of a)
     "~": "ABT",
-    "'": "ABT",   # leading apostrophe = circa (genealogy convention)
+    "'": "ABT",  # leading apostrophe = circa (genealogy convention)
     "<": "BEF",
     ">": "AFT",
     "before": "BEF",
@@ -513,28 +544,27 @@ PREFIX_MAP = {
     "okoli": "ABT",
     "okrog": "ABT",
     "približno": "ABT",
-    "priblizno": "ABT",   # without diacritic
-    "priblixno": "ABT",   # legacy encoding mangling of približno (ž → x)
-
-    "od": "FROM",     # Slovenian "od" (from)
-    "cir.": "ABT",   # circa
+    "priblizno": "ABT",  # without diacritic
+    "priblixno": "ABT",  # legacy encoding mangling of približno (ž → x)
+    "od": "FROM",  # Slovenian "od" (from)
+    "cir.": "ABT",  # circa
     "cir": "ABT",
-    "videno": "ABT",       # Slovenian "videno" (seen/observed — implies estimated)
-    "izračunano": "ABT",   # Slovenian "izračunano" (calculated)
-    "izracunano": "ABT",   # without diacritic
-    "oli": "ABT",     # truncated "okoli" (approximately)
+    "videno": "ABT",  # Slovenian "videno" (seen/observed — implies estimated)
+    "izračunano": "ABT",  # Slovenian "izračunano" (calculated)
+    "izracunano": "ABT",  # without diacritic
+    "oli": "ABT",  # truncated "okoli" (approximately)
     "olkrog": "ABT",  # typo for "okrog" (L instead of K)
-    "orog": "ABT",    # typo for "okrog" (missing k)
-    "krog": "ABT",    # truncation of "okrog" (missing leading o)
+    "orog": "ABT",  # typo for "okrog" (missing k)
+    "krog": "ABT",  # truncation of "okrog" (missing leading o)
     "recimo": "ABT",  # Slovenian "recimo" = "let's say" (approximate)
     "around": "ABT",  # English "around"
-    "say": "ABT",     # English "say" = approximately
-    "etu": "ABT",     # garbled/truncated approximation prefix
-    "og": "ABT",      # truncation of "okrog"
-    "org": "ABT",     # truncation of "okrog" (variant)
-    "okorg": "ABT",   # compound typo for "okrog"
+    "say": "ABT",  # English "say" = approximately
+    "etu": "ABT",  # garbled/truncated approximation prefix
+    "og": "ABT",  # truncation of "okrog"
+    "org": "ABT",  # truncation of "okrog" (variant)
+    "okorg": "ABT",  # compound typo for "okrog"
     "estimated": "ABT",
-    "abg": "ABT",     # Russian авг without day = approximately (with day handled as AUG month)
+    "abg": "ABT",  # Russian авг without day = approximately (with day handled as AUG month)
     "okr.": "ABT",
     "okr": "ABT",
     "ok.": "ABT",
@@ -542,29 +572,29 @@ PREFIX_MAP = {
     "ca.": "ABT",
     "ca": "ABT",
     # Garbled "cca" (circa) variants — C/CC/CCC etc. with OCR/encoding corruption
-    "çca": "ABT",   # cedilla-c variant
+    "çca": "ABT",  # cedilla-c variant
     "žcca": "ABT",  # diacritic corruption
     "ccca": "ABT",  # quadruple-c garble
     "ccac": "ABT",  # transposition/corruption
     "cvca": "ABT",  # v-corruption
-    "ccc": "ABT",   # triple-c garble
-    "cc": "ABT",    # double-c garble (must come after longer forms)
-    "c": "ABT",       # single-letter circa (must come after "ca"/"ca." to not shadow them)
+    "ccc": "ABT",  # triple-c garble
+    "cc": "ABT",  # double-c garble (must come after longer forms)
+    "c": "ABT",  # single-letter circa (must come after "ca"/"ca." to not shadow them)
     "pred": "BEF",
     "prred": "BEF",  # typo for "pred" (double r)
     "prd": "BEF",
     "vor": "BEF",
     "po": "AFT",
     "ˇ": "ABT",  # modifier letter caron (U+02C7) used as ABT in some apps
-    "l.": "",    # Slovenian/German "Leto/Jahr" (year) — strip prefix, keep year
+    "l.": "",  # Slovenian/German "Leto/Jahr" (year) — strip prefix, keep year
     "l": "",
     "letu": "",  # Slovenian "v letu" (in the year) — strip, keep year
-    "letom": "", # Slovenian "letom" (in the year)
+    "letom": "",  # Slovenian "letom" (in the year)
     "est.": "EST",
     "est": "EST",
     "ges.": "EST",
-    "ges": "EST",    # German "geschätzt" (estimated)
-    "act": "EST",    # Latin "actum" (dated/recorded on)
+    "ges": "EST",  # German "geschätzt" (estimated)
+    "act": "EST",  # Latin "actum" (dated/recorded on)
     "pribl.": "ABT",
     "pribl": "ABT",
     "wft est.": "ABT",
@@ -594,7 +624,9 @@ DATE_PATTERNS = [
     # YYYY-MM-DD  (ISO — must come before generic numeric to avoid wrong group assignment)
     re.compile(r"^(?P<year>\d{4})-(?P<monthnum>\d{1,2})-(?P<day>\d{1,2})$"),
     # DD MM YYYY  — numeric month, any mix of separators (including mixed like "31 05.1756")
-    re.compile(rf"^(?P<day>\d{{1,2}}){_SEP}(?P<monthnum>\d{{1,2}}){_SEP}(?P<year>\d{{3,4}})$"),
+    re.compile(
+        rf"^(?P<day>\d{{1,2}}){_SEP}(?P<monthnum>\d{{1,2}}){_SEP}(?P<year>\d{{3,4}})$"
+    ),
     # DD.MMYYYY  — separator after day, no separator between 2-digit month and 4-digit year
     re.compile(r"^(?P<day>\d{1,2})[.,/\-:](?P<monthnum>\d{2})(?P<year>\d{4})$"),
     # DDMM.YYYY or DDMM YYYY  — no separator between day and month, separator before year
@@ -668,7 +700,7 @@ def _parse_date_value(value: str) -> tuple[str | None, str | None]:
         if mw in vl:
             abbr = MONTHS_MULTI[mw]
             idx = vl.index(mw)
-            v = v[:idx] + abbr + v[idx + len(mw):]
+            v = v[:idx] + abbr + v[idx + len(mw) :]
             vl = v.lower()
             break
 
@@ -736,7 +768,9 @@ def _parse_date_value(value: str) -> tuple[str | None, str | None]:
     return None, f"unrecognised date format '{value}'"
 
 
-_PLACEHOLDER_RE = re.compile(r"_+|[-]{2,}|<>|(?<!\d)<(?!\d{3,4})")  # _ / __ or -- or <> or bare < (not BEF prefix)
+_PLACEHOLDER_RE = re.compile(
+    r"_+|[-]{2,}|<>|(?<!\d)<(?!\d{3,4})"
+)  # _ / __ or -- or <> or bare < (not BEF prefix)
 
 
 def _handle_placeholder(value: str) -> tuple[str, None] | None:
@@ -864,11 +898,16 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
         return "", None
 
     # N / NN / NNN / NO / NE / DA / Y / NOT MARRIED / +++ etc. — unknown/irrelevant markers
-    if (re.match(r"^[N+]+$", v, re.IGNORECASE)
-            or v.upper() in ("NO", "NE", "DA", "Y", "NOT MARRIED",
-                             "HITRO", "UMRL",      # Slovenian "quickly"/"died" in date field
-                             "CIVILNA",             # Slovenian "civil" (marriage type)
-                             )):
+    if re.match(r"^[N+]+$", v, re.IGNORECASE) or v.upper() in (
+        "NO",
+        "NE",
+        "DA",
+        "Y",
+        "NOT MARRIED",
+        "HITRO",
+        "UMRL",  # Slovenian "quickly"/"died" in date field
+        "CIVILNA",  # Slovenian "civil" (marriage type)
+    ):
         return "", None
 
     # Bare 2-digit number (e.g. "17", "18", "19") — century prefix without year, too ambiguous
@@ -891,7 +930,9 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
         v = v_no_hour
 
     # Inline x/X/y/Y/? placeholders within numeric tokens (e.g. "195x", "19xx", "197Y", "2?") → replace with 0, mark ABT
-    v_norm, n_subs = re.subn(r"(?<=\d)[xXyY?]+|[xXyY?]+(?=\d)", lambda m: "0" * len(m.group()), v)
+    v_norm, n_subs = re.subn(
+        r"(?<=\d)[xXyY?]+|[xXyY?]+(?=\d)", lambda m: "0" * len(m.group()), v
+    )
     if n_subs:
         v = v_norm
         uncertain = True
@@ -976,9 +1017,9 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     # _MONTH regex only matches letters, so these must be expanded before pattern matching.
     _NUMERIC_MONTHS = (
         (r"\b10br(?:is)?\b|\b10ber\b", "DEC"),
-        (r"\b9br(?:is)?\b|\b9ber\b",   "NOV"),
-        (r"\b8br(?:is)?\b|\b8ber\b",   "OCT"),
-        (r"\b7br(?:is)?\b|\b7ber\b",   "SEP"),
+        (r"\b9br(?:is)?\b|\b9ber\b", "NOV"),
+        (r"\b8br(?:is)?\b|\b8ber\b", "OCT"),
+        (r"\b7br(?:is)?\b|\b7ber\b", "SEP"),
     )
     for pat, repl in _NUMERIC_MONTHS:
         v = re.sub(pat, repl, v, flags=re.IGNORECASE)
@@ -1035,7 +1076,7 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
                     prefix_canon = canon
                 elif canon:
                     prefix_canon = canon
-                v = v[len(variant):].strip()
+                v = v[len(variant) :].strip()
                 matched = True
                 break
         if not matched:
@@ -1102,30 +1143,58 @@ def clean_place_placeholder(raw: str) -> tuple[str, None]:
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Cleaner: plac_slovenia
+# Cleaner: place_slovenia_rm
 # ---------------------------------------------------------------------------
 
 # Matches ", Slovenia" or ", Slovenija" (with optional surrounding whitespace) as a
 # comma-separated segment anywhere in a place string.
-_PLAC_SLOVENIA_RE = re.compile(r",?\s*Sloveni(?:ja|a)\b.*", re.IGNORECASE | re.DOTALL)
+_PLACE_SLOVENIA_RM_RE = re.compile(
+    r",?\s*Sloveni(?:ja|a)\b.*", re.IGNORECASE | re.DOTALL
+)
 
 
-def clean_plac_slovenia(raw: str) -> tuple[str, None]:
+def clean_place_slovenia_rm(raw: str) -> tuple[str, None]:
     """
     Remove 'Slovenia' / 'Slovenija' and everything following it from a PLAC value.
     Returns (cleaned, None).
     """
-    v = _PLAC_SLOVENIA_RE.sub("", raw).strip(", ")
+    v = _PLACE_SLOVENIA_RM_RE.sub("", raw).strip(", ")
     if v == raw:
         return raw, None
     return v, None
+
+
+# ---------------------------------------------------------------------------
+# Cleaner: place_duplicate_rm
+# ---------------------------------------------------------------------------
+
+
+def clean_place_duplicate_rm(raw: str) -> tuple[str, None]:
+    """
+    Split the place string by commas and remove adjacent duplicate components.
+    Returns (cleaned, None).
+    """
+    if not raw:
+        return raw, None
+
+    cleaned_parts = []
+    for part in raw.split(","):
+        p = part.strip()
+        if not cleaned_parts or p.lower() != cleaned_parts[-1].lower():
+            cleaned_parts.append(p)
+
+    cleaned = ", ".join(cleaned_parts)
+    if cleaned == raw:
+        return raw, None
+    return cleaned, None
 
 
 CLEANERS = {
     "dd_mmm_yyyy": clean_date_dd_mmm_yyyy,
     "name_placeholder": clean_name_placeholder,
     "place_placeholder": clean_place_placeholder,
-    "plac_slovenia": clean_plac_slovenia,
+    "place_slovenia_rm": clean_place_slovenia_rm,
+    "place_duplicate_rm": clean_place_duplicate_rm,
 }
 
 
@@ -1150,8 +1219,8 @@ STRIPPERS: dict[str, StripSpec | None] = {
     ),  # coords on ADDR unsupported by webtrees (direct or via MAP)
     # Post-strippers (run after all cleaners and transformers):
     "noname_indi": None,  # remove INDI records whose every NAME value is empty
-    "noname_fam": None,   # remove FAM records where all HUSB/WIFE INDIs are nameless
-    "living": None,       # remove INDI records of people likely still alive, and their FAMs
+    "noname_fam": None,  # remove FAM records where all HUSB/WIFE INDIs are nameless
+    "living": None,  # remove INDI records of people likely still alive, and their FAMs
 }
 
 
@@ -1195,12 +1264,17 @@ PRESETS: dict[str, dict[str, list[str]]] = {
         "transform": ["fid_fsftid", "latr_even"],
     },
     "mft_sgi": {
-        "clean": ["plac_slovenia"],
+        "clean": ["place_slovenia_rm"],
         "strip": ["living"],
         "transform": ["addr_to_plac"],
     },
     "srd_index_cleanup": {
-        "clean": ["dd_mmm_yyyy", "name_placeholder", "place_placeholder"],
+        "clean": [
+            "dd_mmm_yyyy",
+            "name_placeholder",
+            "place_placeholder",
+            "place_duplicate_rm",
+        ],
         "strip": ["living", "noname_indi", "noname_fam"],
         "transform": [],
     },
@@ -1339,15 +1413,15 @@ def process_file(
                     print(f"  [place_placeholder] {raw!r} -> (cleared)")
                 element.set_value("")
 
-    if "plac_slovenia" in cleaners:
-        s = stats["plac_slovenia"]
+    if "place_slovenia_rm" in cleaners:
+        s = stats["place_slovenia_rm"]
         current_label = None
         for element in parser.get_element_list():
             if element.get_tag() != gedcom.tags.GEDCOM_TAG_PLACE:
                 continue
             raw = element.get_value()
             s.processed += 1
-            cleaned, _ = clean_plac_slovenia(raw)
+            cleaned, _ = clean_place_slovenia_rm(raw)
             if cleaned != raw:
                 s.fixed += 1
                 if verbose:
@@ -1355,7 +1429,26 @@ def process_file(
                     if label != current_label:
                         print(label)
                         current_label = label
-                    print(f"  [plac_slovenia] {raw!r} -> {cleaned!r}")
+                    print(f"  [place_slovenia_rm] {raw!r} -> {cleaned!r}")
+                element.set_value(cleaned)
+
+    if "place_duplicate_rm" in cleaners:
+        s = stats["place_duplicate_rm"]
+        current_label = None
+        for element in parser.get_element_list():
+            if element.get_tag() != gedcom.tags.GEDCOM_TAG_PLACE:
+                continue
+            raw = element.get_value()
+            s.processed += 1
+            cleaned, _ = clean_place_duplicate_rm(raw)
+            if cleaned != raw:
+                s.fixed += 1
+                if verbose:
+                    label = _record_label(element)
+                    if label != current_label:
+                        print(label)
+                        current_label = label
+                    print(f"  [place_duplicate_rm] {raw!r} -> {cleaned!r}")
                 element.set_value(cleaned)
 
     for name in transformers:
@@ -1410,7 +1503,9 @@ def process_file(
             if not addr_val:
                 continue
             ts.processed += 1
-            plac_els = [ch for ch in children if ch.get_tag() == gedcom.tags.GEDCOM_TAG_PLACE]
+            plac_els = [
+                ch for ch in children if ch.get_tag() == gedcom.tags.GEDCOM_TAG_PLACE
+            ]
             if plac_els:
                 old_plac = plac_els[0].get_value()
                 new_plac = addr_val + ", " + old_plac if old_plac.strip() else addr_val
@@ -1418,8 +1513,12 @@ def process_file(
             else:
                 # No PLAC — create one at the same level as ADDR
                 new_el = Element(
-                    addr_els[0].get_level(), "", gedcom.tags.GEDCOM_TAG_PLACE, addr_val,
-                    "\n", multi_line=False,
+                    addr_els[0].get_level(),
+                    "",
+                    gedcom.tags.GEDCOM_TAG_PLACE,
+                    addr_val,
+                    "\n",
+                    multi_line=False,
                 )
                 new_el.set_parent_element(element)
                 # Insert before ADDR
@@ -1436,7 +1535,9 @@ def process_file(
                 if label != current_label:
                     print(label)
                     current_label = label
-                print(f"  [transform:addr_to_plac] ADDR {addr_val!r} + PLAC {old_plac!r} -> PLAC {new_plac!r}")
+                print(
+                    f"  [transform:addr_to_plac] ADDR {addr_val!r} + PLAC {old_plac!r} -> PLAC {new_plac!r}"
+                )
 
     # Regular tag-based strippers (run after cleaners and transformers)
     for name in strippers:
@@ -1485,7 +1586,8 @@ def process_file(
 
         def _indi_is_nameless(indi_el) -> bool:
             names = [
-                ch for ch in indi_el.get_child_elements()
+                ch
+                for ch in indi_el.get_child_elements()
                 if ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME
             ]
             return not names or all(ch.get_value().strip() == "" for ch in names)
@@ -1493,7 +1595,8 @@ def process_file(
     if "noname_indi" in strippers:
         ss = strip_stats["noname_indi"]
         indi_list = [
-            el for el in parser.get_root_child_elements()
+            el
+            for el in parser.get_root_child_elements()
             if el.get_tag() == gedcom.tags.GEDCOM_TAG_INDIVIDUAL
         ]
         ss.processed = len(indi_list)
@@ -1508,7 +1611,8 @@ def process_file(
     if "noname_fam" in strippers:
         ss = strip_stats["noname_fam"]
         fam_list = [
-            el for el in parser.get_root_child_elements()
+            el
+            for el in parser.get_root_child_elements()
             if el.get_tag() == gedcom.tags.GEDCOM_TAG_FAMILY
         ]
         ss.processed = len(fam_list)
@@ -1516,9 +1620,8 @@ def process_file(
             refs = [
                 ch.get_value().strip()
                 for ch in fam.get_child_elements()
-                if ch.get_tag() in (
-                    gedcom.tags.GEDCOM_TAG_HUSBAND, gedcom.tags.GEDCOM_TAG_WIFE
-                )
+                if ch.get_tag()
+                in (gedcom.tags.GEDCOM_TAG_HUSBAND, gedcom.tags.GEDCOM_TAG_WIFE)
             ]
             # A FAM with no HUSB/WIFE, or where every referenced INDI is nameless
             # (or already stripped), is considered nameless.
@@ -1534,7 +1637,10 @@ def process_file(
 
     if "living" in strippers:
         import datetime
-        _cutoff_year = datetime.date.today().year - 110  # born after this → may still be living
+
+        _cutoff_year = (
+            datetime.date.today().year - 110
+        )  # born after this → may still be living
 
         def _indi_is_living(indi_el) -> bool:
             """Return True if this INDI is likely still alive.
@@ -1550,7 +1656,9 @@ def process_file(
                 if ch.get_tag() == gedcom.tags.GEDCOM_TAG_BIRTH:
                     for gch in ch.get_child_elements():
                         if gch.get_tag() == gedcom.tags.GEDCOM_TAG_DATE:
-                            m = re.search(r"\b(1[0-9]{3}|20[0-2][0-9])\b", gch.get_value())
+                            m = re.search(
+                                r"\b(1[0-9]{3}|20[0-2][0-9])\b", gch.get_value()
+                            )
                             if m:
                                 birth_year = int(m.group(1))
             # If born before cutoff, they are almost certainly dead even without a DEAT record
@@ -1563,7 +1671,11 @@ def process_file(
 
         # Collect living INDIs
         living_ptrs: set[str] = set()
-        indi_list = [el for el in root_elements if el.get_tag() == gedcom.tags.GEDCOM_TAG_INDIVIDUAL]
+        indi_list = [
+            el
+            for el in root_elements
+            if el.get_tag() == gedcom.tags.GEDCOM_TAG_INDIVIDUAL
+        ]
         ss.processed = len(indi_list)
         for el in indi_list:
             if _indi_is_living(el):
@@ -1578,19 +1690,21 @@ def process_file(
 
         # Remove FAMs where ALL referenced spouses are living (or already removed)
         remaining_ptrs = {el.get_pointer() for el in root_elements if el.get_pointer()}
-        fam_list = [el for el in root_elements if el.get_tag() == gedcom.tags.GEDCOM_TAG_FAMILY]
+        fam_list = [
+            el for el in root_elements if el.get_tag() == gedcom.tags.GEDCOM_TAG_FAMILY
+        ]
         fams_to_remove = []
         for fam in fam_list:
             spouse_ptrs = [
                 ch.get_value().strip()
                 for ch in fam.get_child_elements()
-                if ch.get_tag() in (gedcom.tags.GEDCOM_TAG_HUSBAND, gedcom.tags.GEDCOM_TAG_WIFE)
+                if ch.get_tag()
+                in (gedcom.tags.GEDCOM_TAG_HUSBAND, gedcom.tags.GEDCOM_TAG_WIFE)
             ]
             if not spouse_ptrs:
                 continue  # no spouses — leave for noname_fam to handle
             any_living = any(
-                ptr not in remaining_ptrs or ptr in living_ptrs
-                for ptr in spouse_ptrs
+                ptr not in remaining_ptrs or ptr in living_ptrs for ptr in spouse_ptrs
             )
             if any_living:
                 fams_to_remove.append(fam)
