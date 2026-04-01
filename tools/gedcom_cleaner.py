@@ -1281,8 +1281,7 @@ PRESETS: dict[str, dict[str, list[str]]] = {
     },
     "mft_sgi": {
         "clean": ["place_slovenia_rm"],
-        "strip": ["living"],
-        "transform": ["addr_to_plac"],
+        "transform": ["addr_to_plac", "living_private"],
     },
     "srd_index_cleanup": {
         "clean": [
@@ -1578,21 +1577,19 @@ def process_file(
                 is_private = True
             else:
                 has_death = False
-                death_year = None
                 birth_year = None
                 for ch in element.get_child_elements():
                     tag = ch.get_tag()
-                    if tag in ("DEAT", "BURI"):
-                        has_death = True
+                    if tag in ("DEAT", "BURI", "CREM"):
+                        if ch.get_value().strip().upper() != "N":
+                            has_death = True
+                    elif tag == "EVEN":
                         for gch in ch.get_child_elements():
-                            if gch.get_tag() == gedcom.tags.GEDCOM_TAG_DATE:
-                                m = re.search(
-                                    r"\b(1[0-9]{3}|20[0-2][0-9])\b", gch.get_value()
-                                )
-                                if m:
-                                    year = int(m.group(1))
-                                    if death_year is None or year > death_year:
-                                        death_year = year
+                            if (
+                                gch.get_tag() == "TYPE"
+                                and "death" in gch.get_value().lower()
+                            ):
+                                has_death = True
                     elif tag == "BIRT":
                         for gch in ch.get_child_elements():
                             if gch.get_tag() == gedcom.tags.GEDCOM_TAG_DATE:
@@ -1602,10 +1599,7 @@ def process_file(
                                 if m:
                                     birth_year = int(m.group(1))
 
-                if has_death:
-                    if death_year is not None and (curr_year - death_year) < 20:
-                        is_private = True
-                else:
+                if not has_death:
                     if birth_year is None or (curr_year - birth_year) < 100:
                         is_private = True
 
@@ -1763,9 +1757,18 @@ def process_file(
             Criteria: no DEAT or BURI event, AND birth year is after cutoff (or unknown).
             """
             for ch in indi_el.get_child_elements():
-                if ch.get_tag() in ("DEAT", "BURI"):
-                    # Any death/burial record (even bare "DEAT" with no date) = confirmed dead
-                    return False
+                tag = ch.get_tag()
+                if tag in ("DEAT", "BURI", "CREM"):
+                    # Any death/burial record (except 'DEAT N') = confirmed dead
+                    if ch.get_value().strip().upper() != "N":
+                        return False
+                elif tag == "EVEN":
+                    for gch in ch.get_child_elements():
+                        if (
+                            gch.get_tag() == "TYPE"
+                            and "death" in gch.get_value().lower()
+                        ):
+                            return False
             # No death evidence — check birth year
             birth_year = None
             for ch in indi_el.get_child_elements():
