@@ -772,8 +772,6 @@ def _parse_range(value: str) -> tuple[str | None, str | None, bool]:
     """
     v = value.strip()
 
-    _qualifier_re = re.compile(r"^(ABT|EST|CAL|BEF|AFT)\s+", re.IGNORECASE)
-
     def _parse_part(d: str) -> tuple[str | None, str | None]:
         """Full clean of an inner date part (handles stacked prefixes like 'ABT OG 1784')."""
         result, warn = clean_date_dd_mmm_yyyy(d)
@@ -1103,10 +1101,31 @@ def clean_place_placeholder(raw: str) -> tuple[str, None]:
 # Registry
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Cleaner: plac_slovenia
+# ---------------------------------------------------------------------------
+
+# Matches ", Slovenia" or ", Slovenija" (with optional surrounding whitespace) as a
+# comma-separated segment anywhere in a place string.
+_PLAC_SLOVENIA_RE = re.compile(r",?\s*Sloveni(?:ja|a)\b.*", re.IGNORECASE | re.DOTALL)
+
+
+def clean_plac_slovenia(raw: str) -> tuple[str, None]:
+    """
+    Remove 'Slovenia' / 'Slovenija' and everything following it from a PLAC value.
+    Returns (cleaned, None).
+    """
+    v = _PLAC_SLOVENIA_RE.sub("", raw).strip(", ")
+    if v == raw:
+        return raw, None
+    return v, None
+
+
 CLEANERS = {
     "dd_mmm_yyyy": clean_date_dd_mmm_yyyy,
     "name_placeholder": clean_name_placeholder,
     "place_placeholder": clean_place_placeholder,
+    "plac_slovenia": clean_plac_slovenia,
 }
 
 
@@ -1152,13 +1171,16 @@ class TagTransform:
 
 
 # Each transformer maps source tag → str (simple rename) or TagTransform (rename + add children).
+# A None value marks a custom transformer handled separately in the processing loop.
 # Note: python-gedcom has no set_tag(); we write to the private _Element__tag
 # attribute via name mangling — this is a deliberate workaround.
-TRANSFORMERS: dict[str, dict[str, str | TagTransform]] = {
+TRANSFORMERS: dict[str, dict[str, str | TagTransform] | None] = {
     "fid_fsftid": {"_FID": "_FSFTID"},
     "latr_even": {
         "LATR": TagTransform(rename="EVEN", add_children=[("TYPE", "Land Transaction")])
     },
+    # Custom transformers (None = handled separately):
+    "addr_to_plac": None,  # merge ADDR value into PLAC (prepend with ", ") for event elements
 }
 
 
@@ -1171,6 +1193,11 @@ PRESETS: dict[str, dict[str, list[str]]] = {
         "clean": ["dd_mmm_yyyy", "name_placeholder"],
         "strip": ["ste", "stf", "addr_longlati"],
         "transform": ["fid_fsftid", "latr_even"],
+    },
+    "mft_sgi": {
+        "clean": ["plac_slovenia"],
+        "strip": ["living"],
+        "transform": ["addr_to_plac"],
     },
     "srd_index_cleanup": {
         "clean": ["dd_mmm_yyyy", "name_placeholder", "place_placeholder"],
@@ -1312,7 +1339,28 @@ def process_file(
                     print(f"  [place_placeholder] {raw!r} -> (cleared)")
                 element.set_value("")
 
+    if "plac_slovenia" in cleaners:
+        s = stats["plac_slovenia"]
+        current_label = None
+        for element in parser.get_element_list():
+            if element.get_tag() != gedcom.tags.GEDCOM_TAG_PLACE:
+                continue
+            raw = element.get_value()
+            s.processed += 1
+            cleaned, _ = clean_plac_slovenia(raw)
+            if cleaned != raw:
+                s.fixed += 1
+                if verbose:
+                    label = _record_label(element)
+                    if label != current_label:
+                        print(label)
+                        current_label = label
+                    print(f"  [plac_slovenia] {raw!r} -> {cleaned!r}")
+                element.set_value(cleaned)
+
     for name in transformers:
+        if TRANSFORMERS[name] is None:
+            continue  # custom transformer — handled separately below
         ts = transform_stats[name]
         tag_map = TRANSFORMERS[name]
         current_label = None
@@ -1349,6 +1397,46 @@ def process_file(
                 print(
                     f"  [transform:{name}] {old_tag} -> {new_tag}  {element.get_value()!r}"
                 )
+
+    if "addr_to_plac" in transformers:
+        ts = transform_stats["addr_to_plac"]
+        current_label = None
+        for element in parser.get_element_list():
+            children = element.get_child_elements()
+            addr_els = [ch for ch in children if ch.get_tag() == "ADDR"]
+            if not addr_els:
+                continue
+            addr_val = addr_els[0].get_value().strip()
+            if not addr_val:
+                continue
+            ts.processed += 1
+            plac_els = [ch for ch in children if ch.get_tag() == gedcom.tags.GEDCOM_TAG_PLACE]
+            if plac_els:
+                old_plac = plac_els[0].get_value()
+                new_plac = addr_val + ", " + old_plac if old_plac.strip() else addr_val
+                plac_els[0].set_value(new_plac)
+            else:
+                # No PLAC — create one at the same level as ADDR
+                new_el = Element(
+                    addr_els[0].get_level(), "", gedcom.tags.GEDCOM_TAG_PLACE, addr_val,
+                    "\n", multi_line=False,
+                )
+                new_el.set_parent_element(element)
+                # Insert before ADDR
+                addr_idx = children.index(addr_els[0])
+                children.insert(addr_idx, new_el)
+                new_plac = addr_val
+                old_plac = ""
+            # Remove all ADDR children from this event
+            for addr_el in addr_els:
+                children.remove(addr_el)
+            ts.transformed += 1
+            if verbose:
+                label = _record_label(element)
+                if label != current_label:
+                    print(label)
+                    current_label = label
+                print(f"  [transform:addr_to_plac] ADDR {addr_val!r} + PLAC {old_plac!r} -> PLAC {new_plac!r}")
 
     # Regular tag-based strippers (run after cleaners and transformers)
     for name in strippers:
