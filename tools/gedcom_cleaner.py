@@ -1254,6 +1254,7 @@ TRANSFORMERS: dict[str, dict[str, str | TagTransform] | None] = {
     "latr_even": {
         "LATR": TagTransform(rename="EVEN", add_children=[("TYPE", "Land Transaction")])
     },
+    "mise_milt": {"MISE": "MILT"},
     # Custom transformers (None = handled separately):
     "addr_to_plac": None,  # merge ADDR value into PLAC (prepend with ", ") for event elements
 }
@@ -1276,7 +1277,7 @@ PRESETS: dict[str, dict[str, list[str]]] = {
             "bkm",
             "sto",
         ],
-        "transform": ["fid_fsftid", "latr_even"],
+        "transform": ["fid_fsftid", "latr_even", "mise_milt"],
     },
     "mft_sgi": {
         "clean": ["place_slovenia_rm"],
