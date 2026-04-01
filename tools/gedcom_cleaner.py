@@ -1209,6 +1209,7 @@ class StripSpec:
     parent_tag: str | None = (
         None  # None = level-0 records; str = children of that parent tag
     )
+    level: int | None = None  # None = any level; int = exact level match
 
 
 STRIPPERS: dict[str, StripSpec | None] = {
@@ -1217,6 +1218,9 @@ STRIPPERS: dict[str, StripSpec | None] = {
     "addr_longlati": StripSpec(
         tags={"LATI", "LONG", "MAP"}, parent_tag="ADDR"
     ),  # coords on ADDR unsupported by webtrees (direct or via MAP)
+    "indi_race": StripSpec(tags={"RACE"}, parent_tag="INDI"),
+    "change_date": StripSpec(tags={"CHAN"}, level=2),
+    "create_date": StripSpec(tags={"CREA"}, level=2),
     # Post-strippers (run after all cleaners and transformers):
     "noname_indi": None,  # remove INDI records whose every NAME value is empty
     "noname_fam": None,  # remove FAM records where all HUSB/WIFE INDIs are nameless
@@ -1260,7 +1264,14 @@ TRANSFORMERS: dict[str, dict[str, str | TagTransform] | None] = {
 PRESETS: dict[str, dict[str, list[str]]] = {
     "mft_webtrees": {
         "clean": ["dd_mmm_yyyy", "name_placeholder"],
-        "strip": ["ste", "stf", "addr_longlati"],
+        "strip": [
+            "ste",
+            "stf",
+            "addr_longlati",
+            "change_date",
+            "create_date",
+            "indi_race",
+        ],
         "transform": ["fid_fsftid", "latr_even"],
     },
     "mft_sgi": {
@@ -1545,7 +1556,7 @@ def process_file(
         if spec is None:
             continue  # noname strippers handled below
         ss = strip_stats[name]
-        if spec.parent_tag is None:
+        if spec.parent_tag is None and spec.level is None:
             candidates = parser.get_root_child_elements()
             ss.processed = len(candidates)
             to_remove = [el for el in candidates if el.get_tag() in spec.tags]
@@ -1558,22 +1569,34 @@ def process_file(
                 candidates.remove(element)
         else:
             all_elements = parser.get_element_list()
-            to_remove = [
-                el
-                for el in all_elements
-                if el.get_tag() in spec.tags
-                and el.get_parent_element() is not None
-                and el.get_parent_element().get_tag() == spec.parent_tag
-            ]
+            to_remove = []
+            for el in all_elements:
+                if el.get_tag() not in spec.tags:
+                    continue
+                if spec.parent_tag is not None:
+                    if (
+                        el.get_parent_element() is None
+                        or el.get_parent_element().get_tag() != spec.parent_tag
+                    ):
+                        continue
+                if spec.level is not None:
+                    if el.get_level() != spec.level:
+                        continue
+                to_remove.append(el)
+
             ss.processed = len(to_remove)
             for element in to_remove:
                 ss.removed += 1
                 if verbose:
                     label = _record_label(element)
-                    print(
-                        f"  [strip:{name}] removing {element.get_tag()} under {spec.parent_tag}  — {label}"
-                    )
-                element.get_parent_element().get_child_elements().remove(element)
+                    msg = f"  [strip:{name}] removing {element.get_tag()}"
+                    if spec.parent_tag:
+                        msg += f" under {spec.parent_tag}"
+                    msg += f"  — {label}"
+                    print(msg)
+                parent = element.get_parent_element()
+                if parent and element in parent.get_child_elements():
+                    parent.get_child_elements().remove(element)
 
     # Post-strippers: noname_indi and noname_fam (must run last, after cleaners have emptied names)
     _run_noname = "noname_indi" in strippers or "noname_fam" in strippers
