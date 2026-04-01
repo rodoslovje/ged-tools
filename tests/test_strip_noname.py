@@ -141,3 +141,95 @@ def test_noname_fam_without_noname_indi():
     finally:
         os.unlink(inp)
         os.unlink(out)
+
+
+# ---------------------------------------------------------------------------
+# living stripper tests
+# ---------------------------------------------------------------------------
+
+import datetime
+
+_CURRENT_YEAR = datetime.date.today().year
+_OLD_YEAR = _CURRENT_YEAR - 115   # definitely dead
+_NEW_YEAR = _CURRENT_YEAR - 30    # definitely living
+
+
+def _living_sample(old_year=_OLD_YEAR, new_year=_NEW_YEAR) -> str:
+    return textwrap.dedent(f"""\
+        0 HEAD
+        1 CHAR UTF-8
+        0 @I1@ INDI
+        1 NAME Old /Dead/
+        1 BIRT
+        2 DATE {old_year}
+        1 DEAT
+        2 DATE {old_year + 70}
+        0 @I2@ INDI
+        1 NAME Young /Living/
+        1 BIRT
+        2 DATE {new_year}
+        0 @I3@ INDI
+        1 NAME No /Birth/
+        0 @I4@ INDI
+        1 NAME Old /NoDeat/
+        1 BIRT
+        2 DATE {old_year}
+        0 @F1@ FAM
+        1 HUSB @I1@
+        1 WIFE @I2@
+        0 @F2@ FAM
+        1 HUSB @I2@
+        1 WIFE @I3@
+        0 @F3@ FAM
+        1 HUSB @I1@
+        1 WIFE @I4@
+        0 TRLR
+    """)
+
+
+def test_living_strips_recent_and_unknown_birth():
+    inp = _write_tmp(_living_sample())
+    out = _write_tmp("")
+    try:
+        _, strip_stats, _ = process_file(
+            inp, out,
+            cleaners=[],
+            strippers=["living"],
+            transformers=[],
+            warn=False,
+        )
+        content = open(out, encoding="utf-8").read()
+        # I1: old birth + DEAT → kept (confirmed dead)
+        assert "0 @I1@ INDI" in content
+        # I2: recent birth, no DEAT → removed (living)
+        assert "0 @I2@ INDI" not in content
+        # I3: no birth, no DEAT → removed (unknown = assume living)
+        assert "0 @I3@ INDI" not in content
+        # I4: old birth, no DEAT → kept (born before cutoff = presumed dead)
+        assert "0 @I4@ INDI" in content
+    finally:
+        os.unlink(inp)
+        os.unlink(out)
+
+
+def test_living_strips_fam_with_any_living_spouse():
+    inp = _write_tmp(_living_sample())
+    out = _write_tmp("")
+    try:
+        _, strip_stats, _ = process_file(
+            inp, out,
+            cleaners=[],
+            strippers=["living"],
+            transformers=[],
+            warn=False,
+        )
+        content = open(out, encoding="utf-8").read()
+        # F1: I1(dead) + I2(living) → removed (any living spouse = GDPR risk)
+        assert "@F1@" not in content
+        # F2: I2(living) + I3(living) → removed (all living)
+        assert "@F2@" not in content
+        # F3: I1(dead) + I4(old, presumed dead) → kept (no living spouse)
+        assert "@F3@" in content
+    finally:
+        os.unlink(inp)
+        os.unlink(out)

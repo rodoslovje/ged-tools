@@ -1132,6 +1132,7 @@ STRIPPERS: dict[str, StripSpec | None] = {
     # Post-strippers (run after all cleaners and transformers):
     "noname_indi": None,  # remove INDI records whose every NAME value is empty
     "noname_fam": None,   # remove FAM records where all HUSB/WIFE INDIs are nameless
+    "living": None,       # remove INDI records of people likely still alive, and their FAMs
 }
 
 
@@ -1173,7 +1174,7 @@ PRESETS: dict[str, dict[str, list[str]]] = {
     },
     "srd_index_cleanup": {
         "clean": ["dd_mmm_yyyy", "name_placeholder", "place_placeholder"],
-        "strip": ["noname_indi", "noname_fam"],
+        "strip": ["living", "noname_indi", "noname_fam"],
         "transform": [],
     },
 }
@@ -1442,6 +1443,74 @@ def process_file(
                 if verbose:
                     print(f"  [strip:noname_fam] removing {fam.get_pointer()}")
                 parser.get_root_child_elements().remove(fam)
+
+    if "living" in strippers:
+        import datetime
+        _cutoff_year = datetime.date.today().year - 110  # born after this → may still be living
+
+        def _indi_is_living(indi_el) -> bool:
+            """Return True if this INDI is likely still alive.
+            Criteria: no DEAT or BURI event, AND birth year is after cutoff (or unknown).
+            """
+            for ch in indi_el.get_child_elements():
+                if ch.get_tag() in ("DEAT", "BURI"):
+                    # Any death/burial record (even bare "DEAT" with no date) = confirmed dead
+                    return False
+            # No death evidence — check birth year
+            birth_year = None
+            for ch in indi_el.get_child_elements():
+                if ch.get_tag() == gedcom.tags.GEDCOM_TAG_BIRTH:
+                    for gch in ch.get_child_elements():
+                        if gch.get_tag() == gedcom.tags.GEDCOM_TAG_DATE:
+                            m = re.search(r"\b(1[0-9]{3}|20[0-2][0-9])\b", gch.get_value())
+                            if m:
+                                birth_year = int(m.group(1))
+            # If born before cutoff, they are almost certainly dead even without a DEAT record
+            if birth_year is not None and birth_year <= _cutoff_year:
+                return False
+            return True  # no death record + recent/unknown birth = treat as living
+
+        ss = strip_stats["living"]
+        root_elements = parser.get_root_child_elements()
+
+        # Collect living INDIs
+        living_ptrs: set[str] = set()
+        indi_list = [el for el in root_elements if el.get_tag() == gedcom.tags.GEDCOM_TAG_INDIVIDUAL]
+        ss.processed = len(indi_list)
+        for el in indi_list:
+            if _indi_is_living(el):
+                ss.removed += 1
+                living_ptrs.add(el.get_pointer())
+                if verbose:
+                    print(f"  [strip:living] removing INDI {el.get_pointer()}")
+        for ptr in living_ptrs:
+            el = next((e for e in root_elements if e.get_pointer() == ptr), None)
+            if el:
+                root_elements.remove(el)
+
+        # Remove FAMs where ALL referenced spouses are living (or already removed)
+        remaining_ptrs = {el.get_pointer() for el in root_elements if el.get_pointer()}
+        fam_list = [el for el in root_elements if el.get_tag() == gedcom.tags.GEDCOM_TAG_FAMILY]
+        fams_to_remove = []
+        for fam in fam_list:
+            spouse_ptrs = [
+                ch.get_value().strip()
+                for ch in fam.get_child_elements()
+                if ch.get_tag() in (gedcom.tags.GEDCOM_TAG_HUSBAND, gedcom.tags.GEDCOM_TAG_WIFE)
+            ]
+            if not spouse_ptrs:
+                continue  # no spouses — leave for noname_fam to handle
+            any_living = any(
+                ptr not in remaining_ptrs or ptr in living_ptrs
+                for ptr in spouse_ptrs
+            )
+            if any_living:
+                fams_to_remove.append(fam)
+        for fam in fams_to_remove:
+            ss.removed += 1
+            if verbose:
+                print(f"  [strip:living] removing FAM {fam.get_pointer()}")
+            root_elements.remove(fam)
 
     parser.invalidate_cache()
     try:
