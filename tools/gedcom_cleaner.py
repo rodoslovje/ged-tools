@@ -54,6 +54,24 @@ _GEDCOM_CHAR_MAP = {
 }
 
 
+def _is_disguised_cp1250(raw: bytes) -> bool:
+    """
+    Check if raw bytes contain Windows-1250 Slovenian characters in positions
+    that are mathematically impossible for valid UTF-8.
+    - 0x9A (š), 0x9E (ž), 0x8A (Š), 0x8E (Ž) are continuation bytes in UTF-8.
+      If preceded by ASCII (<128), they are definitely not UTF-8.
+    - 0xE8 (č), 0xC8 (Č) are start bytes in UTF-8.
+      If followed by ASCII (<128), the sequence is definitely not UTF-8.
+    """
+    for i in range(1, len(raw)):
+        if raw[i] in (0x9A, 0x9E, 0x8A, 0x8E) and raw[i - 1] < 128:
+            return True
+    for i in range(len(raw) - 1):
+        if raw[i] in (0xE8, 0xC8) and raw[i + 1] < 128:
+            return True
+    return False
+
+
 def _detect_encoding(file_path: str) -> str:
     """Detect encoding of a GEDCOM file. Returns a Python codec name."""
     with open(file_path, "rb") as f:
@@ -82,11 +100,14 @@ def _detect_encoding(file_path: str) -> str:
         confidence = detected.get("confidence") or 0
         if enc and confidence >= 0.2 and enc.lower() not in ("mac_roman", "ascii"):
             # chardet often misidentifies Windows-1250 as Windows-1252 or ISO-8859-1.
-            if enc.lower() in ("windows-1252", "cp1252", "iso-8859-1", "iso-8859-2"):
-                if any(
-                    b in raw
-                    for b in (b"\x9a", b"\x9e", b"\xc8", b"\xe8", b"\x8a", b"\x8e")
-                ):
+            if enc.lower() in (
+                "windows-1252",
+                "cp1252",
+                "iso-8859-1",
+                "iso-8859-2",
+                "utf-8",
+            ):
+                if _is_disguised_cp1250(raw):
                     return "windows-1250"
             return enc
 
@@ -105,44 +126,46 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
 
     encoding = _detect_encoding(input_path)
 
-    # If detected as utf-8/utf-8-sig, verify it actually decodes cleanly.
-    # chardet can misidentify cp1250/cp1252 as utf-8 when the file has few
-    # high bytes — a failed decode means we must re-detect without that assumption.
     norm = encoding.lower().replace("-", "").replace("_", "")
     if norm in ("utf8", "utf8sig"):
-        try:
-            raw.decode(encoding)
-            return input_path, False  # genuine UTF-8 — pass through unchanged
-        except UnicodeDecodeError:
-            # File claims to be UTF-8 but contains some invalid bytes.
-            # Check if it's mostly valid UTF-8 with minor corruption.
-            test_decode = raw.decode(encoding, errors="replace")
-            if test_decode.count("\ufffd") < max(10, len(raw) // 1000):
-                fd, tmp_path = tempfile.mkstemp(suffix=".ged")
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    f.write(test_decode)
-                return tmp_path, True
+        if _is_disguised_cp1250(raw):
+            encoding = "windows-1250"
+        else:
+            try:
+                raw.decode(encoding)
+                return input_path, False  # genuine UTF-8 — pass through unchanged
+            except UnicodeDecodeError:
+                # File claims to be UTF-8 but contains some invalid bytes.
+                # Check if it's mostly valid UTF-8 with minor corruption.
+                test_decode = raw.decode(encoding, errors="replace")
+                if test_decode.count("\ufffd") < max(10, len(raw) // 1000):
+                    fd, tmp_path = tempfile.mkstemp(suffix=".ged")
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        f.write(test_decode)
+                    return tmp_path, True
 
-            # Too many bad bytes: fall back to chardet.
-            detected = chardet.detect(raw)
-            enc = (detected.get("encoding") or "") if detected else ""
-            confidence = (detected.get("confidence") or 0) if detected else 0
-            if enc and confidence >= 0.2 and enc.lower() not in ("mac_roman", "ascii"):
-                encoding = enc
-            else:
-                encoding = "windows-1250"
-
-            if encoding.lower() in (
-                "windows-1252",
-                "cp1252",
-                "iso-8859-1",
-                "iso-8859-2",
-            ):
-                if any(
-                    b in raw
-                    for b in (b"\x9a", b"\x9e", b"\xc8", b"\xe8", b"\x8a", b"\x8e")
+                # Too many bad bytes: fall back to chardet.
+                detected = chardet.detect(raw)
+                enc = (detected.get("encoding") or "") if detected else ""
+                confidence = (detected.get("confidence") or 0) if detected else 0
+                if (
+                    enc
+                    and confidence >= 0.2
+                    and enc.lower() not in ("mac_roman", "ascii")
                 ):
+                    encoding = enc
+                else:
                     encoding = "windows-1250"
+
+                if encoding.lower() in (
+                    "windows-1252",
+                    "cp1252",
+                    "iso-8859-1",
+                    "iso-8859-2",
+                    "utf-8",
+                ):
+                    if _is_disguised_cp1250(raw):
+                        encoding = "windows-1250"
 
     try:
         text = raw.decode(encoding)
