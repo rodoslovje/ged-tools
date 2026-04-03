@@ -1248,14 +1248,14 @@ class StripSpec:
 STRIPPERS: dict[str, StripSpec | None] = {
     "ste": StripSpec(tags={"_STE"}),  # MacFamilyTree source-template entries (level-0)
     "stf": StripSpec(tags={"_STF"}),  # MacFamilyTree source-template fields (level-0)
+    "sto": StripSpec(tags={"_STO"}, level=1),
+    "bkm": StripSpec(tags={"_BKM"}, level=1),
     "addr_longlati": StripSpec(
         tags={"LATI", "LONG", "MAP"}, parent_tag="ADDR"
     ),  # coords on ADDR unsupported by webtrees (direct or via MAP)
     "indi_race": StripSpec(tags={"RACE"}, parent_tag="INDI"),
     "change_date": StripSpec(tags={"CHAN"}, level=2),
     "create_date": StripSpec(tags={"CREA"}, level=2),
-    "bkm": StripSpec(tags={"_BKM"}),
-    "sto": StripSpec(tags={"_STO"}),
     # Post-strippers (run after all cleaners and transformers):
     "noname_indi": None,  # remove INDI records whose every NAME value is empty
     "noname_fam": None,  # remove FAM records where all HUSB/WIFE INDIs are nameless
@@ -1303,12 +1303,12 @@ PRESETS: dict[str, dict[str, list[str]]] = {
         "strip": [
             "ste",
             "stf",
+            "sto",
+            "bkm",
             "addr_longlati",
             "change_date",
             "create_date",
             "indi_race",
-            "bkm",
-            "sto",
         ],
         "transform": ["fid_fsftid", "latr_even"],
     },
@@ -1566,7 +1566,22 @@ def process_file(
             ]
             if plac_els:
                 old_plac = plac_els[0].get_value()
-                new_plac = addr_val + ", " + old_plac if old_plac.strip() else addr_val
+                old_plac_stripped = old_plac.strip()
+                if old_plac_stripped:
+                    plac_parts = [p.strip() for p in old_plac_stripped.split(",")]
+                    # Check if the first component of PLAC is a substring of ADDR (case-insensitive)
+                    if (
+                        plac_parts
+                        and plac_parts[0]
+                        and plac_parts[0].lower() in addr_val.lower()
+                    ):
+                        plac_parts.pop(0)
+                    if plac_parts:
+                        new_plac = addr_val + ", " + ", ".join(plac_parts)
+                    else:
+                        new_plac = addr_val
+                else:
+                    new_plac = addr_val
                 plac_els[0].set_value(new_plac)
             else:
                 # No PLAC — create one at the same level as ADDR

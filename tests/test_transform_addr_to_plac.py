@@ -15,7 +15,14 @@ def _run(gedcom_str: str) -> str:
     inp = _write_tmp(gedcom_str)
     out = _write_tmp("")
     try:
-        process_file(inp, out, cleaners=[], strippers=[], transformers=["addr_to_plac"], warn=False)
+        process_file(
+            inp,
+            out,
+            cleaners=[],
+            strippers=[],
+            transformers=["addr_to_plac"],
+            warn=False,
+        )
         return open(out, encoding="utf-8").read()
     finally:
         os.unlink(inp)
@@ -23,7 +30,9 @@ def _run(gedcom_str: str) -> str:
 
 
 def test_addr_prepended_to_existing_plac():
-    content = _run(textwrap.dedent("""\
+    content = _run(
+        textwrap.dedent(
+            """\
         0 HEAD
         1 CHAR UTF-8
         0 @I1@ INDI
@@ -32,13 +41,55 @@ def test_addr_prepended_to_existing_plac():
         2 ADDR Polje 31
         2 PLAC Ljubljana, Slovenija
         0 TRLR
-    """))
+    """
+        )
+    )
     assert "2 PLAC Polje 31, Ljubljana, Slovenija" in content
     assert "2 ADDR" not in content
 
 
+def test_addr_removes_overlapping_first_plac_component():
+    content = _run(
+        textwrap.dedent(
+            """\
+        0 HEAD
+        1 CHAR UTF-8
+        0 @I1@ INDI
+        1 BIRT
+        2 DATE 1 JAN 1900
+        2 ADDR Polje 31, Ljubljana
+        2 PLAC Ljubljana, Slovenija
+        0 TRLR
+    """
+        )
+    )
+    assert "2 PLAC Polje 31, Ljubljana, Slovenija" in content
+    assert "2 ADDR" not in content
+
+
+def test_addr_removes_overlapping_first_plac_component_case_insensitive():
+    content = _run(
+        textwrap.dedent(
+            """\
+        0 HEAD
+        1 CHAR UTF-8
+        0 @I1@ INDI
+        1 BIRT
+        2 DATE 1 JAN 1900
+        2 ADDR Polje 31, LJUBLJANA
+        2 PLAC Ljubljana, Slovenija
+        0 TRLR
+    """
+        )
+    )
+    assert "2 PLAC Polje 31, LJUBLJANA, Slovenija" in content
+    assert "2 ADDR" not in content
+
+
 def test_addr_becomes_plac_when_no_plac():
-    content = _run(textwrap.dedent("""\
+    content = _run(
+        textwrap.dedent(
+            """\
         0 HEAD
         1 CHAR UTF-8
         0 @I1@ INDI
@@ -46,13 +97,17 @@ def test_addr_becomes_plac_when_no_plac():
         2 DATE 3 OCT 1834
         2 ADDR Polje 31
         0 TRLR
-    """))
+    """
+        )
+    )
     assert "2 PLAC Polje 31" in content
     assert "2 ADDR" not in content
 
 
 def test_empty_addr_left_alone():
-    content = _run(textwrap.dedent("""\
+    content = _run(
+        textwrap.dedent(
+            """\
         0 HEAD
         1 CHAR UTF-8
         0 @I1@ INDI
@@ -61,13 +116,17 @@ def test_empty_addr_left_alone():
         2 ADDR
         2 PLAC Ljubljana
         0 TRLR
-    """))
+    """
+        )
+    )
     # empty ADDR should not modify PLAC
     assert "2 PLAC Ljubljana" in content
 
 
 def test_no_addr_unchanged():
-    content = _run(textwrap.dedent("""\
+    content = _run(
+        textwrap.dedent(
+            """\
         0 HEAD
         1 CHAR UTF-8
         0 @I1@ INDI
@@ -75,6 +134,8 @@ def test_no_addr_unchanged():
         2 DATE 1900
         2 PLAC Ljubljana
         0 TRLR
-    """))
+    """
+        )
+    )
     assert "2 PLAC Ljubljana" in content
     assert "ADDR" not in content
