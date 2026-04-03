@@ -3,11 +3,44 @@
 gedcom-cleaner: Read a GEDCOM file and save it in a cleaned format.
 
 Usage:
-    python tools/gedcom_cleaner.py <input.ged> <output.ged> --clean <c1,c2,...> [--warn]
+    python tools/gedcom_cleaner.py <input.ged> <output.ged> [OPTIONS]
 
-Available cleaners:
-    dd_mmm_yyyy   Normalize all dates to DD MMM YYYY format (e.g. "15 JAN 1900").
-                  Genealogy prefixes Abt./Bef. are standardized.
+Options:
+    --preset PRESET                 Apply a predefined combination of processors
+    --clean CLEANER[,CLEANER...]    Apply specific formatting cleaners
+    --strip STRIPPER[,STRIPPER...]  Strip specific tags or records
+    --transform TRANS[,TRANS...]    Transform specific tags or structures
+    --warn                          Print warnings to stderr (e.g. unparsed dates)
+    --verbose                       Print every conversion performed
+    --stats                         Print summary statistics at the end
+
+Available Cleaners:
+    dd_mmm_yyyy          Normalize all dates to DD MMM YYYY format.
+    name_placeholder     Clear empty/placeholder names (e.g., "___", "???").
+    place_placeholder    Clear empty/placeholder places.
+    place_slovenia_rm    Remove "Slovenia" / "Slovenija" from places.
+    place_duplicate_rm   Remove adjacent duplicate components in places.
+
+Available Strippers:
+    ste, stf, sto, bkm   Strip proprietary app tags.
+    addr_longlati        Remove coordinates from addresses.
+    indi_race            Remove RACE tags.
+    change_date          Remove CHAN (change) tags.
+    create_date          Remove CREA (creation) tags.
+    noname_indi          Remove individuals with no valid name.
+    noname_fam           Remove families with no named spouses.
+    living               Remove individuals who are likely still living.
+
+Available Transformers:
+    fid_fsftid           Rename _FID to _FSFTID.
+    latr_even            Convert LATR to EVEN type="Land Transaction".
+    addr_to_plac         Merge ADDR values into event PLAC tags.
+    living_private       Anonymize names/events of living people to "private".
+
+Available Presets:
+    mft_webtrees         WebTrees compatibility for MacFamilyTree exports.
+    mft_sgi              Slovenian Genealogy formatting.
+    srd_index_cleanup    Full cleanup and anonymization for public indices.
 """
 
 import argparse
