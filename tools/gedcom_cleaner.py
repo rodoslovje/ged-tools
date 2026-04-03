@@ -964,8 +964,8 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     # Strip parentheses (e.g. "(1620)", ".-.(1740)")
     v = re.sub(r"[()]", "", v).strip()
 
-    # UNKNOWN / unknown — fully unknown date, treat as empty
-    if v.upper() == "UNKNOWN":
+    # UNKNOWN / XXX-TEMPLATE — fully unknown date, treat as empty
+    if v.upper() in ("UNKNOWN", "XXX-TEMPLATE"):
         return "", None
 
     # Collapse multiple leading dots/spaces/hyphens to a single dot (e.g. "..1920", ".-. 1740")

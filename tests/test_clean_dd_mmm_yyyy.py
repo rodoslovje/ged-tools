@@ -2,519 +2,442 @@ import pytest
 from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
 
 
-@pytest.mark.parametrize("raw, expected", [
-    # Date ranges — FROM/TO
-    ("FROM 1767 TO 1770",               "FROM 1767 TO 1770"),
-    ("from 1767 to 1770",               "FROM 1767 TO 1770"),
-    ("FROM 15 JAN 1800 TO 20 MAR 1810", "FROM 15 JAN 1800 TO 20 MAR 1810"),
-    ("FROM JAN 1800 TO MAR 1810",       "FROM JAN 1800 TO MAR 1810"),
-    ("FROM 1900",                        "FROM 1900"),
-    ("TO 1900",                          "TO 1900"),
-
-    # Date ranges — BET/BETWEEN
-    ("BET 1856 AND 1881",               "BET 1856 AND 1881"),
-    ("BETWEEN 1856 AND 1881",           "BET 1856 AND 1881"),
-    ("between 1856 and 1881",           "BET 1856 AND 1881"),
-    ("BETWEEN 1856-1881",               "BET 1856 AND 1881"),
-    ("BET 15 JAN 1800 AND 20 MAR 1810", "BET 15 JAN 1800 AND 20 MAR 1810"),
-
-    # Date ranges — DO (Slovenian/German "to")
-    ("1920 DO 1945",          "FROM 1920 TO 1945"),
-    ("FROM 1920 DO 1945",     "FROM 1920 TO 1945"),
-
-    # Implicit year ranges (YYYY-YYYY) — kept as-is, spaces around hyphen allowed
-    ("1856-1881",   "1856-1881"),
-    ("1979-1980",   "1979-1980"),
-    ("1941 - 1945", "1941-1945"),
-
-    # Multiple leading dots/spaces as placeholder (unknown day/month)
-    ("..1920",       "1920"),
-    ("...1964",      "1964"),
-    (".....1714",    "1714"),
-    (".  .1993",     "1993"),
-    (".  .1666",     "1666"),
-    ("..MAJ 1945",   "MAY 1945"),
-
-    # Placeholder dates — partial (year known), underscore and hyphen variants
-    (".__.1933",    "1933"),
-    ("__.__.1933",  "1933"),
-    ("__.1933",     "1933"),
-    (".--.1968",    "1968"),
-    (".<>.1750",    "1750"),
-    (".<>.1850",    "1850"),
-    ("--.--1933",   "1933"),
-    ("._.1894",     "1894"),
-    ("._.1966",     "1966"),
-
-    # .MM.YYYY (unknown day, leading dot placeholder)
-    (".11.1952",  "NOV 1952"),
-    (".03.1947",  "MAR 1947"),
-    (".03.1970",  "MAR 1970"),
-
-    # Trailing punctuation (dot, apostrophe, asterisk, slash) or " ?" (uncertain)
-    ("12.09.1945.",      "12 SEP 1945"),
-    ("06.11.1920'",      "6 NOV 1920"),
-    ("08.03.1739*/",     "8 MAR 1739"),
-    ("26.10.1903 ?",     "ABT 26 OCT 1903"),
-    ("26.10.1903 ??",    "ABT 26 OCT 1903"),
-    ("09.01.1958 ?",     "ABT 9 JAN 1958"),
-    ("1720?",            "ABT 1720"),
-    ("1720??",           "ABT 1720"),
-
-    # MM.DD.YYYY fallback when month > 12
-    ("04.14.1902",   "14 APR 1902"),
-    ("06.31.1800",   "31 JUN 1800"),
-
-    # Both day and month > 12 — unresolvable, keep year only
-    ("15.13.1900",   "1900"),
-    ("16.18.1840",   "1840"),
-
-    # Leading junk characters stripped (e.g. "=)=)1840")
-    ("=)=)1840",     "1840"),
-    ("=1840",        "1840"),
-
-    # Trailing dot
-    ("01.09.1978.",  "1 SEP 1978"),
-
-    # Numeric date with extra/missing delimiters
-    ("16.07. 1947",  "16 JUL 1947"),
-    ("17.11 1930",   "17 NOV 1930"),
-
-    # Slovenian format (D. M. YYYY)
-    ("31. 3. 1931",  "31 MAR 1931"),
-    ("1. 1. 1900",   "1 JAN 1900"),
-    ("5. 12. 2000",  "5 DEC 2000"),
-
-    # MMM.YYYY (dot separator)
-    ("FEB.1922",  "FEB 1922"),
-    ("DEC.1944",  "DEC 1944"),
-
-    # Already canonical
-    ("15 JAN 1900",     "15 JAN 1900"),
-    ("1 MAR 2001",      "1 MAR 2001"),
-    ("MAY 1845",        "MAY 1845"),
-    ("1923",            "1923"),
-
-    # Numeric month + year only (no day)
-    ("04 1883",  "APR 1883"),
-    ("03 1818",  "MAR 1818"),
-
-    # Slovenian genitive month forms
-    ("30. APRILA 1998",  "30 APR 1998"),
-    ("28. MAJA 1893",    "28 MAY 1893"),
-    ("10. APRILA 1863",  "10 APR 1863"),
-
-    # FEBR. abbreviation
-    ("27. FEBR. 1923",  "27 FEB 1923"),
-    ("1. FEBR. 1915",   "1 FEB 1915"),
-
-    # Month name variants — English
-    ("15 January 1900", "15 JAN 1900"),
-    ("15 january 1900", "15 JAN 1900"),
-    ("Jan 15, 1900",    "15 JAN 1900"),
-    ("Jan 15 1900",     "15 JAN 1900"),
-
-    # German long month names
-    ("15 Januar 1900",   "15 JAN 1900"),
-    ("15 März 1900",     "15 MAR 1900"),
-    ("15 Maerz 1900",    "15 MAR 1900"),
-    ("15 Mai 1900",      "15 MAY 1900"),
-    ("15 Oktober 1900",  "15 OCT 1900"),
-    ("15 Dezember 1900", "15 DEC 1900"),
-
-    # German short month names
-    ("15 Okt 1900",  "15 OCT 1900"),
-    ("15 Okt. 1900", "15 OCT 1900"),
-    ("15 Dez 1900",  "15 DEC 1900"),
-    ("15 Dez. 1900", "15 DEC 1900"),
-    ("15 Mär 1900",  "15 MAR 1900"),
-    ("15 Mär. 1900", "15 MAR 1900"),
-    ("15 Mrz 1900",  "15 MAR 1900"),
-
-    # Slovenian long month names
-    ("15 Marec 1900",    "15 MAR 1900"),
-    ("15 Maj 1900",      "15 MAY 1900"),
-    ("15 Junij 1900",    "15 JUN 1900"),
-    ("15 Julij 1900",    "15 JUL 1900"),
-    ("15 Avgust 1900",   "15 AUG 1900"),
-    ("15 Oktober 1900",  "15 OCT 1900"),
-
-    # Slovenian short month names
-    ("15 Avg 1900",  "15 AUG 1900"),
-    ("15 Avg. 1900", "15 AUG 1900"),
-
-    # Separators
-    ("15-JAN-1900",     "15 JAN 1900"),
-    ("15/JAN/1900",     "15 JAN 1900"),
-
-    # ISO / numeric month
-    ("1900-01-15",      "15 JAN 1900"),
-    ("15.01.1900",      "15 JAN 1900"),
-    ("15/01/1900",      "15 JAN 1900"),
-
-    # Extra spaces between tokens
-    ("24   MRZ 1975",  "24 MAR 1975"),
-    ("29   MRZ 1975",  "29 MAR 1975"),
-    ("15   JAN  1900", "15 JAN 1900"),
-
-    # Mixed delimiters and spaces between numeric day/month/year
-    ("11. 09.1960",  "11 SEP 1960"),
-    ("20.01,1722",   "20 JAN 1722"),
-    ("31 05.1756",   "31 MAY 1756"),
-
-    # Colon as delimiter
-    ("25:NOV.1850",  "25 NOV 1850"),
-
-    # Separator before month, none between month and year
-    ("18.FEB1732",   "18 FEB 1732"),
-    ("23.FEB1930",   "23 FEB 1930"),
-
-    # No separator between day and month name
-    ("11FEB.1694",   "11 FEB 1694"),
-
-    # Spurious leading separator before DD.MM.YYYY (stripped)
-    (".24.03.1892",  "24 MAR 1892"),
-
-    # Leading dot/comma placeholder with named month
-    (".MAJ.1693",    "MAY 1693"),
-    (",MAJ 1945",    "MAY 1945"),
-
-    # DDMM.YYYY or DDMM YYYY — no separator between day and month
-    ("0208.1902",    "2 AUG 1902"),
-    ("0702 1729",    "7 FEB 1729"),
-
-    # Tilde as separator within date (e.g. "08.01~1938")
-    ("08.01~1938",   "8 JAN 1938"),
-
-    # Tilde prefix with dot separator in date
-    ("~APR.1967",    "ABT APR 1967"),
-    (">.1746",       "AFT 1746"),
-    ("ˇ1790",        "ABT 1790"),
-    ("ˇ1925",        "ABT 1925"),
-
-    # YYYY/Y … YYYY/YYYY — dual dating, kept as-is
-    ("1846/7",      "1846/7"),
-    ("1801/2",      "1801/2"),
-    ("1814/15",     "1814/15"),
-    ("1820/21",     "1820/21"),
-    ("1878/9",      "1878/9"),
-    ("1807/8",      "1807/8"),
-    ("1814/5",      "1814/5"),
-    ("1820/1",      "1820/1"),
-    ("1954/1955",   "1954/1955"),
-
-    # .MMYYYY — no separator between month and year
-    (".051948",  "MAY 1948"),
-
-    # .MM-YYYY / .MM YYYY — dash or space as separator
-    (".02-2012",  "FEB 2012"),
-    (".08 1947",  "AUG 1947"),
-    (".06 2006",  "JUN 2006"),
-
-    # No separator between month name and year
-    ("NOV1839",      "NOV 1839"),
-    ("JAN1900",      "JAN 1900"),
-
-    # Letter O misread as digit 0 (OCR/typo) — word boundary, between digits, or trailing
-    ("O6 FEB 1918",   "6 FEB 1918"),
-    ("09.06.19O6",    "9 JUN 1906"),
-    ("182O",          "1820"),
-
-    # Missing delimiter between month and year (DD.MMYYYY)
-    ("21.041831",     "21 APR 1831"),
-    ("30.051694",     "30 MAY 1694"),
-
-    # Parentheses stripped — plain year treated as-is, uncertain context as ABT
-    ("(1620)",        "1620"),
-    (".-.(1740)",     "1740"),
-    (".-. (1775)",    "1775"),
-
-    # L. / L prefix (Slovenian/German "Leto/Jahr" = year) → strip, keep year
-    ("L.1610",   "1610"),
-    ("L.1880",   "1880"),
-    ("L 1880",   "1880"),
-
-    # Leading dot with placeholder characters for unknown day/month
-    (".<,1820",  "1820"),
-
-    # Leading = stripped (exact date marker, no GEDCOM equivalent)
-    ("=1971",   "1971"),
-    ("=1840",   "1840"),
-
-    # Trailing ? → ABT
-    ("1964?",   "ABT 1964"),
-    ("1917?",   "ABT 1917"),
-
-    # Inline x/? placeholders in numeric tokens → replace with 0, mark ABT
-    ("26.12.195x",   "ABT 26 DEC 1950"),
-    ("17.3.19xx",    "ABT 17 MAR 1900"),
-    ("2?.12.1929",   "ABT 20 DEC 1929"),
-
-    # Leading comma placeholder (unknown day)
-    (",06.1590",  "JUN 1590"),
-
-    # OKR / OK / CA prefixes → ABT
-    ("OKR. 1700",  "ABT 1700"),
-    ("OKR. 1733",  "ABT 1733"),
-    ("okr 1850",   "ABT 1850"),
-    ("OK.1890",    "ABT 1890"),
-    ("OK.1910",    "ABT 1910"),
-    ("CA 1972",    "ABT 1972"),
-    ("CA 1780",    "ABT 1780"),
-    ("ca. 1865",   "ABT 1865"),
-
-    # Prefixes — normalised to GEDCOM canonical prefix
-    ("Abt 15 JAN 1900",   "ABT 15 JAN 1900"),
-    ("Abt. 15 JAN 1900",  "ABT 15 JAN 1900"),
-    ("abt. 15 JAN 1900",  "ABT 15 JAN 1900"),
-    ("About 15 JAN 1900", "ABT 15 JAN 1900"),
-    ("about 15 jan 1900", "ABT 15 JAN 1900"),
-    ("~ 15 JAN 1900",     "ABT 15 JAN 1900"),
-    ("~1875",             "ABT 1875"),
-    ("~15 JAN 1900",      "ABT 15 JAN 1900"),
-    ("<1734",             "BEF 1734"),
-    ("<1900",             "BEF 1900"),
-    (">1900",             "AFT 1900"),
-    ("> 1900",            "AFT 1900"),
-    ("Bef. 1900",         "BEF 1900"),
-    ("Bef 1900",          "BEF 1900"),
-    ("before 1900",       "BEF 1900"),
-    ("Pred 1900",         "BEF 1900"),
-    ("pred 1900",         "BEF 1900"),
-    ("PRD 1905",          "BEF 1905"),
-    ("prd 1870",          "BEF 1870"),
-    ("Vor 1900",          "BEF 1900"),
-    ("vor 1900",          "BEF 1900"),
-    ("After 1900",        "AFT 1900"),
-    ("Aft. MAR 1900",     "AFT MAR 1900"),
-    ("PO 1736",           "AFT 1736"),
-    ("PO MAJU 1875",      "AFT MAY 1875"),
-    ("~~ 1968",           "ABT 1968"),
-
-    ("Est. 1900",         "EST 1900"),
-    ("Circa 1900",        "ABT 1900"),
-    ("Cca. 1340",         "ABT 1340"),
-    ("cca 994",           "ABT 1994"),
-    ("CCA 1250",          "ABT 1250"),
-    ("okoli 1850",        "ABT 1850"),
-    ("OKOLI 1700",        "ABT 1700"),
-    ("PRIBLIXNO 1973",    "ABT 1973"),
-    ("PRIBLIXNO 1885",    "ABT 1885"),
-    ("PRIBLIŽNO 1900",    "ABT 1900"),
-    ("PRIBLIZNO 1900",    "ABT 1900"),
-
-    # PRIBL. / PRIBL prefix → ABT
-    ("pribl. 1900",  "ABT 1900"),
-    ("pribl 1870",   "ABT 1870"),
-    ("PRIBL. 1740",  "ABT 1740"),
-
-    # WFT EST. prefix → ABT
-    ("WFT EST. 1900",  "ABT 1900"),
-    ("WFT EST 1850",   "ABT 1850"),
-    ("wft est. 1920",  "ABT 1920"),
-
-    # ˇ~ compound prefix → ABT
-    ("ˇ~1955",  "ABT 1955"),
-    ("ˇ~1820",  "ABT 1820"),
-
-    # ABT (or other prefix) alone → empty
-    ("ABT",   ""),
-    ("BEF",   ""),
-    ("AFT",   ""),
-
-    # PRIVATE passthrough (no change, no warning)
-    ("PRIVATE",  "PRIVATE"),
-    ("private",  "private"),
-
-    # YYYY-N trailing sequence number → year only
-    ("1863-1",   "1863"),
-    ("1927-2",   "1927"),
-    ("1874-1",   "1874"),
-
-    # Old Slovenian short month names
-    ("17.kim 1888",      "17 OCT 1888"),
-    ("15 vel. 1890",     "15 FEB 1890"),
-    ("10.srpan 1850",    "10 JUL 1850"),
-    ("5.pros. 1900",     "5 JAN 1900"),
-    ("3.sveč 1901",      "3 FEB 1901"),
-    ("7.suš. 1902",      "7 MAR 1902"),
-    ("2.rožn. 1903",     "2 JUN 1903"),
-    ("8.kim. 1904",      "8 OCT 1904"),
-    ("9.kos. 1905",      "9 SEP 1905"),
-    ("11.vin. 1906",     "11 OCT 1906"),
-    ("12.list. 1907",    "12 NOV 1907"),
-    ("13.grud. 1908",    "13 DEC 1908"),
-
-    # Old Slovenian long month names
-    ("5 prosinec 1900",   "5 JAN 1900"),
-    ("3 svečan 1901",     "3 FEB 1901"),
-    ("7 sušec 1902",      "7 MAR 1902"),
-    ("2 rožnik 1903",     "2 JUN 1903"),
-    ("10 srpan 1850",     "10 JUL 1850"),
-    ("8 kimovec 1904",    "8 OCT 1904"),
-    ("9 kosec 1905",      "9 SEP 1905"),
-    ("11 vinotok 1906",   "11 OCT 1906"),
-    ("12 listopad 1907",  "12 NOV 1907"),
-    ("13 gruden 1908",    "13 DEC 1908"),
-
-    # Old Slovenian multi-word month names
-    ("17.vel. srpan 1888",   "17 AUG 1888"),
-    ("5 mali traven 1900",   "5 APR 1900"),
-    ("6 veliki traven 1901", "6 MAY 1901"),
-    ("3 mali srpan 1870",    "3 JUL 1870"),
-    ("4 veliki srpan 1880",  "4 AUG 1880"),
-    ("7 v.srpan 1900",       "7 AUG 1900"),
-
-    # 00.00.YYYY → year only
-    ("00.00.1965",  "1965"),
-    ("00.00.1842",  "1842"),
-
-    # 00.MM.YYYY → month + year only
-    ("00.05.1970",  "MAY 1970"),
-    ("00.03.1885",  "MAR 1885"),
-
-    # DD.00.YYYY → year only (day and month unknown)
-    ("15.00.1900",  "1900"),
-
-    # 00.05.197Y → ABT + month + year (Y placeholder)
-    ("00.05.197Y",  "ABT MAY 1970"),
-    ("00.07.196Y",  "ABT JUL 1960"),
-
-    # X.X.YYYY → year only (X as day/month placeholder)
-    ("X.X.1965",  "1965"),
-    ("X.X.1842",  "1842"),
-
-    # Birth hour stripping
-    ("05.07.1913    7",   "5 JUL 1913"),
-    ("04.05.1915   2H",   "4 MAY 1915"),
-    ("12.03.1900  10H",   "12 MAR 1900"),
-
-    # MED date - date (Slovenian "between")
-    ("MED 1900 - 1910",           "FROM 1900 TO 1910"),
-    ("MED 15.01.1900 - 20.3.1910", "FROM 15 JAN 1900 TO 20 MAR 1910"),
-    ("med 1850 - 1860",            "FROM 1850 TO 1860"),
-
-    # DD MMM YYYY/YY dual dating
-    ("4 JAN 1718/19",   "4 JAN 1718/19"),
-    ("15 MAR 1700/01",  "15 MAR 1700/01"),
-    ("1 FEB 1800/1801", "1 FEB 1800/1801"),
-
-    # Old Latin/Italian June (common in old church records)
-    ("iûno 1900",      "JUN 1900"),
-    ("15 iunio 1856",  "15 JUN 1856"),
-    ("3 iugno 1802",   "3 JUN 1802"),
-
-    # Slovenian August variant svg
-    ("13 svg 1889",    "13 AUG 1889"),
-
-    # OLI prefix → ABT (truncated "okoli")
-    ("oli 1745",       "ABT 1745"),
-
-    # Typo: jjun → JUN
-    ("jjun 10 1799",   "10 JUN 1799"),
-
-    # XX day placeholder → month+year only
-    ("XX.05.2004",   "MAY 2004"),
-    ("XX.12.1899",   "DEC 1899"),
-
-    # Excessive leading separator before full 3-part date
-    (".04.05.1923",  "4 MAY 1923"),
-    (".31.12.1900",  "31 DEC 1900"),
-
-    # OD → FROM (Slovenian "od" = from)
-    ("OD 2005",      "FROM 2005"),
-    ("od 1950",      "FROM 1950"),
-
-    # CIR / CIR. → ABT (circa)
-    ("CIR 1774",     "ABT 1774"),
-    ("cir. 1850",    "ABT 1850"),
-
-    # videno / Izračunano → ABT (Slovenian "seen" / "calculated")
-    ("videno: 1762",       "ABT 1762"),
-    ("Izračunano: 1717",   "ABT 1717"),
-    ("izracunano: 1800",   "ABT 1800"),
-
-    # Typo variants from real files
-    ("22 manj 1922",   "22 MAY 1922"),   # typo for maj
-    ("eog 1785",       "AUG 1785"),      # garbled avg/ago
-    ("OLkrog 1886",    "ABT 1886"),      # typo for okrog
-    ("Prred 1815",     "BEF 1815"),      # typo for pred (double r)
-
-    # Latin full forms (church records)
-    ("15 Januarii 1750",   "15 JAN 1750"),
-    ("3 Martii 1800",      "3 MAR 1800"),
-    ("10 Augusti 1785",    "10 AUG 1785"),
-    ("5 Septembris 1722",  "5 SEP 1722"),
-    ("20 Decembris 1840",  "20 DEC 1840"),
-    ("7 Iunio 1700",       "7 JUN 1700"),
-    ("4 Iulii 1765",       "4 JUL 1765"),
-
-    # Latin short forms
-    ("15 ian. 1750",   "15 JAN 1750"),
-    ("3 mart. 1800",   "3 MAR 1800"),
-    ("10 aug. 1785",   "10 AUG 1785"),
-    ("5 iun. 1722",    "5 JUN 1722"),
-    ("4 iul. 1765",    "4 JUL 1765"),
-    ("20 xber 1840",   "20 DEC 1840"),   # X=10 old Latin December
-
-    # Numeric Latin forms (7bris=SEP, 8ber=OCT, 9bris=NOV, 10ber=DEC)
-    ("15 7bris 1750",  "15 SEP 1750"),
-    ("3 8ber 1780",    "3 OCT 1780"),
-    ("10 9bris 1800",  "10 NOV 1800"),
-    ("5 10ber 1820",   "5 DEC 1820"),
-    ("20 7ber 1755",   "20 SEP 1755"),
-
-    # Italian full forms
-    ("15 gennaio 1900",   "15 JAN 1900"),
-    ("10 agosto 1800",    "10 AUG 1800"),
-    ("3 ottobre 1780",    "3 OCT 1780"),
-    ("5 dicembre 1850",   "5 DEC 1850"),
-    ("7 giugno 1923",     "7 JUN 1923"),
-    ("12 luglio 1891",    "12 JUL 1891"),
-
-    # Italian short forms
-    ("5 mag. 1850",    "5 MAY 1850"),
-    ("12 ago. 1891",   "12 AUG 1891"),
-    ("7 lug. 1923",    "7 JUL 1923"),
-    ("3 ott. 1780",    "3 OCT 1780"),
-    ("5 giu. 1850",    "5 JUN 1850"),
-    ("20 dic. 1840",   "20 DEC 1840"),
-
-    # Garbled circa variants (CC/CCC/CCAC/CVCA/ŽCCA/ÇCA = corrupted "cca")
-    ("CC 1785",    "ABT 1785"),
-    ("CCC 1814",   "ABT 1814"),
-    ("CCCA 1850",  "ABT 1850"),
-    ("CCAC 1780",  "ABT 1780"),
-    ("CVCA 1800",  "ABT 1800"),
-    ("ŽCCA 1860",  "ABT 1860"),
-    ("ÇCA 1948",   "ABT 1948"),
-
-    # Truncated decade: "184-" → ABT 1840
-    ("184-",   "ABT 1840"),
-    ("185-",   "ABT 1850"),
-])
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        # Date ranges — FROM/TO
+        ("FROM 1767 TO 1770", "FROM 1767 TO 1770"),
+        ("from 1767 to 1770", "FROM 1767 TO 1770"),
+        ("FROM 15 JAN 1800 TO 20 MAR 1810", "FROM 15 JAN 1800 TO 20 MAR 1810"),
+        ("FROM JAN 1800 TO MAR 1810", "FROM JAN 1800 TO MAR 1810"),
+        ("FROM 1900", "FROM 1900"),
+        ("TO 1900", "TO 1900"),
+        # Date ranges — BET/BETWEEN
+        ("BET 1856 AND 1881", "BET 1856 AND 1881"),
+        ("BETWEEN 1856 AND 1881", "BET 1856 AND 1881"),
+        ("between 1856 and 1881", "BET 1856 AND 1881"),
+        ("BETWEEN 1856-1881", "BET 1856 AND 1881"),
+        ("BET 15 JAN 1800 AND 20 MAR 1810", "BET 15 JAN 1800 AND 20 MAR 1810"),
+        # Date ranges — DO (Slovenian/German "to")
+        ("1920 DO 1945", "FROM 1920 TO 1945"),
+        ("FROM 1920 DO 1945", "FROM 1920 TO 1945"),
+        # Implicit year ranges (YYYY-YYYY) — kept as-is, spaces around hyphen allowed
+        ("1856-1881", "1856-1881"),
+        ("1979-1980", "1979-1980"),
+        ("1941 - 1945", "1941-1945"),
+        # Multiple leading dots/spaces as placeholder (unknown day/month)
+        ("..1920", "1920"),
+        ("...1964", "1964"),
+        (".....1714", "1714"),
+        (".  .1993", "1993"),
+        (".  .1666", "1666"),
+        ("..MAJ 1945", "MAY 1945"),
+        # Placeholder dates — partial (year known), underscore and hyphen variants
+        (".__.1933", "1933"),
+        ("__.__.1933", "1933"),
+        ("__.1933", "1933"),
+        (".--.1968", "1968"),
+        (".<>.1750", "1750"),
+        (".<>.1850", "1850"),
+        ("--.--1933", "1933"),
+        ("._.1894", "1894"),
+        ("._.1966", "1966"),
+        # .MM.YYYY (unknown day, leading dot placeholder)
+        (".11.1952", "NOV 1952"),
+        (".03.1947", "MAR 1947"),
+        (".03.1970", "MAR 1970"),
+        # Trailing punctuation (dot, apostrophe, asterisk, slash) or " ?" (uncertain)
+        ("12.09.1945.", "12 SEP 1945"),
+        ("06.11.1920'", "6 NOV 1920"),
+        ("08.03.1739*/", "8 MAR 1739"),
+        ("26.10.1903 ?", "ABT 26 OCT 1903"),
+        ("26.10.1903 ??", "ABT 26 OCT 1903"),
+        ("09.01.1958 ?", "ABT 9 JAN 1958"),
+        ("1720?", "ABT 1720"),
+        ("1720??", "ABT 1720"),
+        # MM.DD.YYYY fallback when month > 12
+        ("04.14.1902", "14 APR 1902"),
+        ("06.31.1800", "31 JUN 1800"),
+        # Both day and month > 12 — unresolvable, keep year only
+        ("15.13.1900", "1900"),
+        ("16.18.1840", "1840"),
+        # Leading junk characters stripped (e.g. "=)=)1840")
+        ("=)=)1840", "1840"),
+        ("=1840", "1840"),
+        # Trailing dot
+        ("01.09.1978.", "1 SEP 1978"),
+        # Numeric date with extra/missing delimiters
+        ("16.07. 1947", "16 JUL 1947"),
+        ("17.11 1930", "17 NOV 1930"),
+        # Slovenian format (D. M. YYYY)
+        ("31. 3. 1931", "31 MAR 1931"),
+        ("1. 1. 1900", "1 JAN 1900"),
+        ("5. 12. 2000", "5 DEC 2000"),
+        # MMM.YYYY (dot separator)
+        ("FEB.1922", "FEB 1922"),
+        ("DEC.1944", "DEC 1944"),
+        # Already canonical
+        ("15 JAN 1900", "15 JAN 1900"),
+        ("1 MAR 2001", "1 MAR 2001"),
+        ("MAY 1845", "MAY 1845"),
+        ("1923", "1923"),
+        # Numeric month + year only (no day)
+        ("04 1883", "APR 1883"),
+        ("03 1818", "MAR 1818"),
+        # Slovenian genitive month forms
+        ("30. APRILA 1998", "30 APR 1998"),
+        ("28. MAJA 1893", "28 MAY 1893"),
+        ("10. APRILA 1863", "10 APR 1863"),
+        # FEBR. abbreviation
+        ("27. FEBR. 1923", "27 FEB 1923"),
+        ("1. FEBR. 1915", "1 FEB 1915"),
+        # Month name variants — English
+        ("15 January 1900", "15 JAN 1900"),
+        ("15 january 1900", "15 JAN 1900"),
+        ("Jan 15, 1900", "15 JAN 1900"),
+        ("Jan 15 1900", "15 JAN 1900"),
+        # German long month names
+        ("15 Januar 1900", "15 JAN 1900"),
+        ("15 März 1900", "15 MAR 1900"),
+        ("15 Maerz 1900", "15 MAR 1900"),
+        ("15 Mai 1900", "15 MAY 1900"),
+        ("15 Oktober 1900", "15 OCT 1900"),
+        ("15 Dezember 1900", "15 DEC 1900"),
+        # German short month names
+        ("15 Okt 1900", "15 OCT 1900"),
+        ("15 Okt. 1900", "15 OCT 1900"),
+        ("15 Dez 1900", "15 DEC 1900"),
+        ("15 Dez. 1900", "15 DEC 1900"),
+        ("15 Mär 1900", "15 MAR 1900"),
+        ("15 Mär. 1900", "15 MAR 1900"),
+        ("15 Mrz 1900", "15 MAR 1900"),
+        # Slovenian long month names
+        ("15 Marec 1900", "15 MAR 1900"),
+        ("15 Maj 1900", "15 MAY 1900"),
+        ("15 Junij 1900", "15 JUN 1900"),
+        ("15 Julij 1900", "15 JUL 1900"),
+        ("15 Avgust 1900", "15 AUG 1900"),
+        ("15 Oktober 1900", "15 OCT 1900"),
+        # Slovenian short month names
+        ("15 Avg 1900", "15 AUG 1900"),
+        ("15 Avg. 1900", "15 AUG 1900"),
+        # Separators
+        ("15-JAN-1900", "15 JAN 1900"),
+        ("15/JAN/1900", "15 JAN 1900"),
+        # ISO / numeric month
+        ("1900-01-15", "15 JAN 1900"),
+        ("15.01.1900", "15 JAN 1900"),
+        ("15/01/1900", "15 JAN 1900"),
+        # Extra spaces between tokens
+        ("24   MRZ 1975", "24 MAR 1975"),
+        ("29   MRZ 1975", "29 MAR 1975"),
+        ("15   JAN  1900", "15 JAN 1900"),
+        # Mixed delimiters and spaces between numeric day/month/year
+        ("11. 09.1960", "11 SEP 1960"),
+        ("20.01,1722", "20 JAN 1722"),
+        ("31 05.1756", "31 MAY 1756"),
+        # Colon as delimiter
+        ("25:NOV.1850", "25 NOV 1850"),
+        # Separator before month, none between month and year
+        ("18.FEB1732", "18 FEB 1732"),
+        ("23.FEB1930", "23 FEB 1930"),
+        # No separator between day and month name
+        ("11FEB.1694", "11 FEB 1694"),
+        # Spurious leading separator before DD.MM.YYYY (stripped)
+        (".24.03.1892", "24 MAR 1892"),
+        # Leading dot/comma placeholder with named month
+        (".MAJ.1693", "MAY 1693"),
+        (",MAJ 1945", "MAY 1945"),
+        # DDMM.YYYY or DDMM YYYY — no separator between day and month
+        ("0208.1902", "2 AUG 1902"),
+        ("0702 1729", "7 FEB 1729"),
+        # Tilde as separator within date (e.g. "08.01~1938")
+        ("08.01~1938", "8 JAN 1938"),
+        # Tilde prefix with dot separator in date
+        ("~APR.1967", "ABT APR 1967"),
+        (">.1746", "AFT 1746"),
+        ("ˇ1790", "ABT 1790"),
+        ("ˇ1925", "ABT 1925"),
+        # YYYY/Y … YYYY/YYYY — dual dating, kept as-is
+        ("1846/7", "1846/7"),
+        ("1801/2", "1801/2"),
+        ("1814/15", "1814/15"),
+        ("1820/21", "1820/21"),
+        ("1878/9", "1878/9"),
+        ("1807/8", "1807/8"),
+        ("1814/5", "1814/5"),
+        ("1820/1", "1820/1"),
+        ("1954/1955", "1954/1955"),
+        # .MMYYYY — no separator between month and year
+        (".051948", "MAY 1948"),
+        # .MM-YYYY / .MM YYYY — dash or space as separator
+        (".02-2012", "FEB 2012"),
+        (".08 1947", "AUG 1947"),
+        (".06 2006", "JUN 2006"),
+        # No separator between month name and year
+        ("NOV1839", "NOV 1839"),
+        ("JAN1900", "JAN 1900"),
+        # Letter O misread as digit 0 (OCR/typo) — word boundary, between digits, or trailing
+        ("O6 FEB 1918", "6 FEB 1918"),
+        ("09.06.19O6", "9 JUN 1906"),
+        ("182O", "1820"),
+        # Missing delimiter between month and year (DD.MMYYYY)
+        ("21.041831", "21 APR 1831"),
+        ("30.051694", "30 MAY 1694"),
+        # Parentheses stripped — plain year treated as-is, uncertain context as ABT
+        ("(1620)", "1620"),
+        (".-.(1740)", "1740"),
+        (".-. (1775)", "1775"),
+        # L. / L prefix (Slovenian/German "Leto/Jahr" = year) → strip, keep year
+        ("L.1610", "1610"),
+        ("L.1880", "1880"),
+        ("L 1880", "1880"),
+        # Leading dot with placeholder characters for unknown day/month
+        (".<,1820", "1820"),
+        # Leading = stripped (exact date marker, no GEDCOM equivalent)
+        ("=1971", "1971"),
+        ("=1840", "1840"),
+        # Trailing ? → ABT
+        ("1964?", "ABT 1964"),
+        ("1917?", "ABT 1917"),
+        # Inline x/? placeholders in numeric tokens → replace with 0, mark ABT
+        ("26.12.195x", "ABT 26 DEC 1950"),
+        ("17.3.19xx", "ABT 17 MAR 1900"),
+        ("2?.12.1929", "ABT 20 DEC 1929"),
+        # Leading comma placeholder (unknown day)
+        (",06.1590", "JUN 1590"),
+        # OKR / OK / CA prefixes → ABT
+        ("OKR. 1700", "ABT 1700"),
+        ("OKR. 1733", "ABT 1733"),
+        ("okr 1850", "ABT 1850"),
+        ("OK.1890", "ABT 1890"),
+        ("OK.1910", "ABT 1910"),
+        ("CA 1972", "ABT 1972"),
+        ("CA 1780", "ABT 1780"),
+        ("ca. 1865", "ABT 1865"),
+        # Prefixes — normalised to GEDCOM canonical prefix
+        ("Abt 15 JAN 1900", "ABT 15 JAN 1900"),
+        ("Abt. 15 JAN 1900", "ABT 15 JAN 1900"),
+        ("abt. 15 JAN 1900", "ABT 15 JAN 1900"),
+        ("About 15 JAN 1900", "ABT 15 JAN 1900"),
+        ("about 15 jan 1900", "ABT 15 JAN 1900"),
+        ("~ 15 JAN 1900", "ABT 15 JAN 1900"),
+        ("~1875", "ABT 1875"),
+        ("~15 JAN 1900", "ABT 15 JAN 1900"),
+        ("<1734", "BEF 1734"),
+        ("<1900", "BEF 1900"),
+        (">1900", "AFT 1900"),
+        ("> 1900", "AFT 1900"),
+        ("Bef. 1900", "BEF 1900"),
+        ("Bef 1900", "BEF 1900"),
+        ("before 1900", "BEF 1900"),
+        ("Pred 1900", "BEF 1900"),
+        ("pred 1900", "BEF 1900"),
+        ("PRD 1905", "BEF 1905"),
+        ("prd 1870", "BEF 1870"),
+        ("Vor 1900", "BEF 1900"),
+        ("vor 1900", "BEF 1900"),
+        ("After 1900", "AFT 1900"),
+        ("Aft. MAR 1900", "AFT MAR 1900"),
+        ("PO 1736", "AFT 1736"),
+        ("PO MAJU 1875", "AFT MAY 1875"),
+        ("~~ 1968", "ABT 1968"),
+        ("Est. 1900", "EST 1900"),
+        ("Circa 1900", "ABT 1900"),
+        ("Cca. 1340", "ABT 1340"),
+        ("cca 994", "ABT 1994"),
+        ("CCA 1250", "ABT 1250"),
+        ("okoli 1850", "ABT 1850"),
+        ("OKOLI 1700", "ABT 1700"),
+        ("PRIBLIXNO 1973", "ABT 1973"),
+        ("PRIBLIXNO 1885", "ABT 1885"),
+        ("PRIBLIŽNO 1900", "ABT 1900"),
+        ("PRIBLIZNO 1900", "ABT 1900"),
+        # PRIBL. / PRIBL prefix → ABT
+        ("pribl. 1900", "ABT 1900"),
+        ("pribl 1870", "ABT 1870"),
+        ("PRIBL. 1740", "ABT 1740"),
+        # WFT EST. prefix → ABT
+        ("WFT EST. 1900", "ABT 1900"),
+        ("WFT EST 1850", "ABT 1850"),
+        ("wft est. 1920", "ABT 1920"),
+        # ˇ~ compound prefix → ABT
+        ("ˇ~1955", "ABT 1955"),
+        ("ˇ~1820", "ABT 1820"),
+        # ABT (or other prefix) alone → empty
+        ("ABT", ""),
+        ("BEF", ""),
+        ("AFT", ""),
+        # PRIVATE passthrough (no change, no warning)
+        ("PRIVATE", "PRIVATE"),
+        ("private", "private"),
+        # YYYY-N trailing sequence number → year only
+        ("1863-1", "1863"),
+        ("1927-2", "1927"),
+        ("1874-1", "1874"),
+        # Old Slovenian short month names
+        ("17.kim 1888", "17 OCT 1888"),
+        ("15 vel. 1890", "15 FEB 1890"),
+        ("10.srpan 1850", "10 JUL 1850"),
+        ("5.pros. 1900", "5 JAN 1900"),
+        ("3.sveč 1901", "3 FEB 1901"),
+        ("7.suš. 1902", "7 MAR 1902"),
+        ("2.rožn. 1903", "2 JUN 1903"),
+        ("8.kim. 1904", "8 OCT 1904"),
+        ("9.kos. 1905", "9 SEP 1905"),
+        ("11.vin. 1906", "11 OCT 1906"),
+        ("12.list. 1907", "12 NOV 1907"),
+        ("13.grud. 1908", "13 DEC 1908"),
+        # Old Slovenian long month names
+        ("5 prosinec 1900", "5 JAN 1900"),
+        ("3 svečan 1901", "3 FEB 1901"),
+        ("7 sušec 1902", "7 MAR 1902"),
+        ("2 rožnik 1903", "2 JUN 1903"),
+        ("10 srpan 1850", "10 JUL 1850"),
+        ("8 kimovec 1904", "8 OCT 1904"),
+        ("9 kosec 1905", "9 SEP 1905"),
+        ("11 vinotok 1906", "11 OCT 1906"),
+        ("12 listopad 1907", "12 NOV 1907"),
+        ("13 gruden 1908", "13 DEC 1908"),
+        # Old Slovenian multi-word month names
+        ("17.vel. srpan 1888", "17 AUG 1888"),
+        ("5 mali traven 1900", "5 APR 1900"),
+        ("6 veliki traven 1901", "6 MAY 1901"),
+        ("3 mali srpan 1870", "3 JUL 1870"),
+        ("4 veliki srpan 1880", "4 AUG 1880"),
+        ("7 v.srpan 1900", "7 AUG 1900"),
+        # 00.00.YYYY → year only
+        ("00.00.1965", "1965"),
+        ("00.00.1842", "1842"),
+        # 00.MM.YYYY → month + year only
+        ("00.05.1970", "MAY 1970"),
+        ("00.03.1885", "MAR 1885"),
+        # DD.00.YYYY → year only (day and month unknown)
+        ("15.00.1900", "1900"),
+        # 00.05.197Y → ABT + month + year (Y placeholder)
+        ("00.05.197Y", "ABT MAY 1970"),
+        ("00.07.196Y", "ABT JUL 1960"),
+        # X.X.YYYY → year only (X as day/month placeholder)
+        ("X.X.1965", "1965"),
+        ("X.X.1842", "1842"),
+        # Birth hour stripping
+        ("05.07.1913    7", "5 JUL 1913"),
+        ("04.05.1915   2H", "4 MAY 1915"),
+        ("12.03.1900  10H", "12 MAR 1900"),
+        # MED date - date (Slovenian "between")
+        ("MED 1900 - 1910", "FROM 1900 TO 1910"),
+        ("MED 15.01.1900 - 20.3.1910", "FROM 15 JAN 1900 TO 20 MAR 1910"),
+        ("med 1850 - 1860", "FROM 1850 TO 1860"),
+        # DD MMM YYYY/YY dual dating
+        ("4 JAN 1718/19", "4 JAN 1718/19"),
+        ("15 MAR 1700/01", "15 MAR 1700/01"),
+        ("1 FEB 1800/1801", "1 FEB 1800/1801"),
+        # Old Latin/Italian June (common in old church records)
+        ("iûno 1900", "JUN 1900"),
+        ("15 iunio 1856", "15 JUN 1856"),
+        ("3 iugno 1802", "3 JUN 1802"),
+        # Slovenian August variant svg
+        ("13 svg 1889", "13 AUG 1889"),
+        # OLI prefix → ABT (truncated "okoli")
+        ("oli 1745", "ABT 1745"),
+        # Typo: jjun → JUN
+        ("jjun 10 1799", "10 JUN 1799"),
+        # XX day placeholder → month+year only
+        ("XX.05.2004", "MAY 2004"),
+        ("XX.12.1899", "DEC 1899"),
+        # Excessive leading separator before full 3-part date
+        (".04.05.1923", "4 MAY 1923"),
+        (".31.12.1900", "31 DEC 1900"),
+        # OD → FROM (Slovenian "od" = from)
+        ("OD 2005", "FROM 2005"),
+        ("od 1950", "FROM 1950"),
+        # CIR / CIR. → ABT (circa)
+        ("CIR 1774", "ABT 1774"),
+        ("cir. 1850", "ABT 1850"),
+        # videno / Izračunano → ABT (Slovenian "seen" / "calculated")
+        ("videno: 1762", "ABT 1762"),
+        ("Izračunano: 1717", "ABT 1717"),
+        ("izracunano: 1800", "ABT 1800"),
+        # Typo variants from real files
+        ("22 manj 1922", "22 MAY 1922"),  # typo for maj
+        ("eog 1785", "AUG 1785"),  # garbled avg/ago
+        ("OLkrog 1886", "ABT 1886"),  # typo for okrog
+        ("Prred 1815", "BEF 1815"),  # typo for pred (double r)
+        # Latin full forms (church records)
+        ("15 Januarii 1750", "15 JAN 1750"),
+        ("3 Martii 1800", "3 MAR 1800"),
+        ("10 Augusti 1785", "10 AUG 1785"),
+        ("5 Septembris 1722", "5 SEP 1722"),
+        ("20 Decembris 1840", "20 DEC 1840"),
+        ("7 Iunio 1700", "7 JUN 1700"),
+        ("4 Iulii 1765", "4 JUL 1765"),
+        # Latin short forms
+        ("15 ian. 1750", "15 JAN 1750"),
+        ("3 mart. 1800", "3 MAR 1800"),
+        ("10 aug. 1785", "10 AUG 1785"),
+        ("5 iun. 1722", "5 JUN 1722"),
+        ("4 iul. 1765", "4 JUL 1765"),
+        ("20 xber 1840", "20 DEC 1840"),  # X=10 old Latin December
+        # Numeric Latin forms (7bris=SEP, 8ber=OCT, 9bris=NOV, 10ber=DEC)
+        ("15 7bris 1750", "15 SEP 1750"),
+        ("3 8ber 1780", "3 OCT 1780"),
+        ("10 9bris 1800", "10 NOV 1800"),
+        ("5 10ber 1820", "5 DEC 1820"),
+        ("20 7ber 1755", "20 SEP 1755"),
+        # Italian full forms
+        ("15 gennaio 1900", "15 JAN 1900"),
+        ("10 agosto 1800", "10 AUG 1800"),
+        ("3 ottobre 1780", "3 OCT 1780"),
+        ("5 dicembre 1850", "5 DEC 1850"),
+        ("7 giugno 1923", "7 JUN 1923"),
+        ("12 luglio 1891", "12 JUL 1891"),
+        # Italian short forms
+        ("5 mag. 1850", "5 MAY 1850"),
+        ("12 ago. 1891", "12 AUG 1891"),
+        ("7 lug. 1923", "7 JUL 1923"),
+        ("3 ott. 1780", "3 OCT 1780"),
+        ("5 giu. 1850", "5 JUN 1850"),
+        ("20 dic. 1840", "20 DEC 1840"),
+        # Garbled circa variants (CC/CCC/CCAC/CVCA/ŽCCA/ÇCA = corrupted "cca")
+        ("CC 1785", "ABT 1785"),
+        ("CCC 1814", "ABT 1814"),
+        ("CCCA 1850", "ABT 1850"),
+        ("CCAC 1780", "ABT 1780"),
+        ("CVCA 1800", "ABT 1800"),
+        ("ŽCCA 1860", "ABT 1860"),
+        ("ÇCA 1948", "ABT 1948"),
+        # Truncated decade: "184-" → ABT 1840
+        ("184-", "ABT 1840"),
+        ("185-", "ABT 1850"),
+    ],
+)
 def test_clean_date_success(raw, expected):
     result, warning = clean_date_dd_mmm_yyyy(raw)
     assert warning is None, f"Unexpected warning for '{raw}': {warning}"
     assert result == expected
 
 
-@pytest.mark.parametrize("raw", [
-    ".__.____",
-    "__.__.____",
-    "__.____",
-    ".--.----",
-    "--.--",
-    "-",
-    "----",
-    "/",
-    "",    # empty — no warning, no value
-    "?",   # single unknown marker
-    "??",  # double unknown marker
-    "ABT", # prefix alone — treat as empty
-    "BEF",
-    "UNKNOWN",
-])
+@pytest.mark.parametrize(
+    "raw",
+    [
+        ".__.____",
+        "__.__.____",
+        "__.____",
+        ".--.----",
+        "--.--",
+        "-",
+        "----",
+        "/",
+        "",  # empty — no warning, no value
+        "?",  # single unknown marker
+        "??",  # double unknown marker
+        "ABT",  # prefix alone — treat as empty
+        "BEF",
+        "UNKNOWN",
+        "xxx-template",
+        "(xxx-template)",
+    ],
+)
 def test_clean_date_remove(raw):
     """Fully unknown placeholder dates return ('', None) — signal to remove the element."""
     result, warning = clean_date_dd_mmm_yyyy(raw)
@@ -522,11 +445,14 @@ def test_clean_date_remove(raw):
     assert result == ""
 
 
-@pytest.mark.parametrize("raw", [
-    "not a date",
-    "sometime",
-    "15 FOO 1900",   # bad month
-])
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "not a date",
+        "sometime",
+        "15 FOO 1900",  # bad month
+    ],
+)
 def test_clean_date_warns(raw):
     result, warning = clean_date_dd_mmm_yyyy(raw)
     assert warning is not None, f"Expected warning for '{raw}'"
