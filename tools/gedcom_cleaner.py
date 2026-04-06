@@ -1712,12 +1712,23 @@ def process_file(
                 is_private = True
             else:
                 has_death = False
+                death_year = None
                 birth_year = None
                 for ch in element.get_child_elements():
                     tag = ch.get_tag()
                     if tag in ("DEAT", "BURI", "CREM"):
                         if ch.get_value().strip().upper() != "N":
                             has_death = True
+                            for gch in ch.get_child_elements():
+                                if gch.get_tag() == gedcom.tags.GEDCOM_TAG_DATE:
+                                    m = re.search(
+                                        r"\b(1[0-9]{3}|20[0-2][0-9])\b",
+                                        gch.get_value(),
+                                    )
+                                    if m:
+                                        y = int(m.group(1))
+                                        if death_year is None or y < death_year:
+                                            death_year = y
                     elif tag == "EVEN":
                         for gch in ch.get_child_elements():
                             if (
@@ -1737,6 +1748,9 @@ def process_file(
                 if not has_death:
                     if birth_year is None or (curr_year - birth_year) < 100:
                         is_private = True
+                elif death_year is None or (curr_year - death_year) < 20:
+                    # ZVOP-2: protect personal data for 20 years after death
+                    is_private = True
 
             if is_private:
                 children = element.get_child_elements()
