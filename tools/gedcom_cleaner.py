@@ -1466,7 +1466,6 @@ def process_file(
     if "dd_mmm_yyyy" in cleaners:
         s = stats["dd_mmm_yyyy"]
         cleaner_fn = CLEANERS["dd_mmm_yyyy"]
-        current_label = None
         for element in parser.get_element_list():
             if element.get_tag() != gedcom.tags.GEDCOM_TAG_DATE:
                 continue
@@ -1486,25 +1485,16 @@ def process_file(
                 if cleaned == "":
                     s.fixed += 1
                     if verbose:
-                        label = _record_label(element)
-                        if label != current_label:
-                            print(label)
-                            current_label = label
-                        print(f"  [dd_mmm_yyyy] {raw!r} -> (removed)")
+                        print(f"  [clean:dd_mmm_yyyy] {raw!r} -> (removed)  — {_record_label(element)}")
                     element.get_parent_element().get_child_elements().remove(element)
                 elif cleaned != raw:
                     s.fixed += 1
                     if verbose:
-                        label = _record_label(element)
-                        if label != current_label:
-                            print(label)
-                            current_label = label
-                        print(f"  [dd_mmm_yyyy] {raw!r} -> {cleaned!r}")
+                        print(f"  [clean:dd_mmm_yyyy] {raw!r} -> {cleaned!r}  — {_record_label(element)}")
                     element.set_value(cleaned)
 
     if "name_placeholder" in cleaners:
         s = stats["name_placeholder"]
-        current_label = None
         _NAME_TAGS = (
             gedcom.tags.GEDCOM_TAG_NAME,
             "SURN",
@@ -1522,18 +1512,13 @@ def process_file(
             if cleaned != raw:
                 s.fixed += 1
                 if verbose:
-                    label = _record_label(element)
-                    if label != current_label:
-                        print(label)
-                        current_label = label
                     print(
-                        f"  [name_placeholder] {element.get_tag()} {raw!r} -> {cleaned!r}"
+                        f"  [clean:name_placeholder] {element.get_tag()} {raw!r} -> {cleaned!r}  — {_record_label(element)}"
                     )
                 element.set_value(cleaned)
 
     if "place_placeholder" in cleaners:
         s = stats["place_placeholder"]
-        current_label = None
         for element in parser.get_element_list():
             if element.get_tag() != gedcom.tags.GEDCOM_TAG_PLACE:
                 continue
@@ -1543,16 +1528,11 @@ def process_file(
             if cleaned != raw:
                 s.fixed += 1
                 if verbose:
-                    label = _record_label(element)
-                    if label != current_label:
-                        print(label)
-                        current_label = label
-                    print(f"  [place_placeholder] {raw!r} -> {cleaned!r}")
+                    print(f"  [clean:place_placeholder] {raw!r} -> {cleaned!r}  — {_record_label(element)}")
                 element.set_value(cleaned)
 
     if "place_slovenia_rm" in cleaners:
         s = stats["place_slovenia_rm"]
-        current_label = None
         for element in parser.get_element_list():
             if element.get_tag() != gedcom.tags.GEDCOM_TAG_PLACE:
                 continue
@@ -1562,16 +1542,11 @@ def process_file(
             if cleaned != raw:
                 s.fixed += 1
                 if verbose:
-                    label = _record_label(element)
-                    if label != current_label:
-                        print(label)
-                        current_label = label
-                    print(f"  [place_slovenia_rm] {raw!r} -> {cleaned!r}")
+                    print(f"  [clean:place_slovenia_rm] {raw!r} -> {cleaned!r}  — {_record_label(element)}")
                 element.set_value(cleaned)
 
     if "place_duplicate_rm" in cleaners:
         s = stats["place_duplicate_rm"]
-        current_label = None
         for element in parser.get_element_list():
             if element.get_tag() != gedcom.tags.GEDCOM_TAG_PLACE:
                 continue
@@ -1581,11 +1556,7 @@ def process_file(
             if cleaned != raw:
                 s.fixed += 1
                 if verbose:
-                    label = _record_label(element)
-                    if label != current_label:
-                        print(label)
-                        current_label = label
-                    print(f"  [place_duplicate_rm] {raw!r} -> {cleaned!r}")
+                    print(f"  [clean:place_duplicate_rm] {raw!r} -> {cleaned!r}  — {_record_label(element)}")
                 element.set_value(cleaned)
 
     for name in transformers:
@@ -1593,7 +1564,6 @@ def process_file(
             continue  # custom transformer — handled separately below
         ts = transform_stats[name]
         tag_map = TRANSFORMERS[name]
-        current_label = None
         for element in parser.get_element_list():
             old_tag = element.get_tag()
             if old_tag not in tag_map:
@@ -1620,17 +1590,12 @@ def process_file(
                 element._Element__tag = new_tag
             ts.transformed += 1
             if verbose:
-                label = _record_label(element)
-                if label != current_label:
-                    print(label)
-                    current_label = label
                 print(
-                    f"  [transform:{name}] {old_tag} -> {new_tag}  {element.get_value()!r}"
+                    f"  [transform:{name}] {old_tag} -> {new_tag}  {element.get_value()!r}  — {_record_label(element)}"
                 )
 
     if "addr_to_plac" in transformers:
         ts = transform_stats["addr_to_plac"]
-        current_label = None
         for element in parser.get_element_list():
             children = element.get_child_elements()
             addr_els = [ch for ch in children if ch.get_tag() == "ADDR"]
@@ -1683,12 +1648,8 @@ def process_file(
                 children.remove(addr_el)
             ts.transformed += 1
             if verbose:
-                label = _record_label(element)
-                if label != current_label:
-                    print(label)
-                    current_label = label
                 print(
-                    f"  [transform:addr_to_plac] ADDR {addr_val!r} + PLAC {old_plac!r} -> PLAC {new_plac!r}"
+                    f"  [transform:addr_to_plac] ADDR {addr_val!r} + PLAC {old_plac!r} -> PLAC {new_plac!r}  — {_record_label(element)}"
                 )
 
     if "living100y_private" in transformers:
