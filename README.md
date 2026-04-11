@@ -23,12 +23,12 @@ pip install -r requirements.txt
 
 ## Tools
 
-## gedcom_cleaner
+## gedcom-cleaner
 
 Cleans, strips, and transforms GEDCOM files. Processors are applied in order: **cleaners → transformers → strippers**.
 
 ```bash
-python tools/gedcom_cleaner.py <input.ged> <output.ged> [OPTIONS]
+python tools/gedcom-cleaner.py <input.ged> <output.ged> [OPTIONS]
 
 Options:
   --preset PRESET                 Apply a predefined combination of processors
@@ -103,13 +103,13 @@ A preset is a named combination of processors for a common use case. Can be comb
 
 ```bash
 # Apply a preset
-python tools/gedcom_cleaner.py family.ged out.ged --preset index_cleanup_sgi
+python tools/gedcom-cleaner.py family.ged out.ged --preset index_cleanup_sgi
 
 # Combine a preset with an extra stripper
-python tools/gedcom_cleaner.py family.ged out.ged --preset mft_webtrees --strip change_date
+python tools/gedcom-cleaner.py family.ged out.ged --preset mft_webtrees --strip change_date
 
 # Apply individual processors with verbose output
-python tools/gedcom_cleaner.py family.ged out.ged --clean dd_mmm_yyyy --transform living100y_private --verbose --stats
+python tools/gedcom-cleaner.py family.ged out.ged --clean dd_mmm_yyyy --transform living100y_private --verbose --stats
 ```
 
 ## Project Structure
