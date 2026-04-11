@@ -1265,12 +1265,18 @@ def main():
             ): filename
             for filename in gedcom_files
         }
+        pending = set(futures.values())
         for future in as_completed(futures):
+            pending.discard(futures[future])
             meta, log_lines = future.result()
             for line in log_lines:
                 print(line)
             if meta is not None:
                 metadata.append(meta)
+            if 0 < len(pending) <= args.workers:
+                print(f"Waiting for: {', '.join(sorted(pending, key=locale.strxfrm))}")
+
+    print("Completed!")
 
     # Write global metadata.json for the frontend
     metadata.sort(key=lambda x: locale.strxfrm(x.get("contributor", "")))
