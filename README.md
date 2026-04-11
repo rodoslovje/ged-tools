@@ -174,6 +174,16 @@ Example output:
 Košir: OK
 ```
 
+## reset-ged-mtime
+
+Sets the modification time of each `.ged`/`.GED` file in `data/input/` and `data/filtered/` to the date recorded in `data/output/metadata.json`. Useful after cloning or syncing files to restore mtimes so that `gedcom-to-json` incremental mode (`--mode update`) can skip unchanged files correctly.
+
+```bash
+python tools/reset-ged-mtime.py
+```
+
+Matching between JSON contributor names and GED filenames is done case-insensitively with Unicode NFC normalization.
+
 ## Project Structure
 
 ```
