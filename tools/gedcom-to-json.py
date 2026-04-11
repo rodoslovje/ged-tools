@@ -1,6 +1,7 @@
 # scripts/gedcom-to-json.py
 
 import argparse
+import locale
 import os
 import json
 import re
@@ -120,7 +121,7 @@ def safe_read_gedcom(filepath):
         try:
             with open(filepath, "r", encoding=enc) as f:
                 content = f.read()
-                print(f"  Successfully read {filepath} using {enc} encoding.")
+
                 return content
         except UnicodeDecodeError:
             continue  # Try the next encoding in the list
@@ -238,6 +239,28 @@ def _apply_page(url_template, page):
     return url_template
 
 
+def _full_text(element):
+    """Return the complete text of a GEDCOM element by joining CONT/CONC children.
+
+    CONC children are appended with no separator (direct concatenation).
+    CONT children are appended with a space separator (for URL-matching purposes).
+    When CONT/CONC children are present, only the first line of get_value() is
+    used as the base to avoid double-processing content that python-gedcom may
+    have already folded into get_value() with incorrect \\n separators.
+    """
+    val = element.get_value() or ""
+    cont_conc = [c for c in element.get_child_elements() if c.get_tag() in ("CONT", "CONC")]
+    if not cont_conc:
+        return val
+    parts = [val.split("\n")[0]]
+    for child in cont_conc:
+        if child.get_tag() == "CONC":
+            parts.append(child.get_value() or "")
+        else:
+            parts.append(" " + (child.get_value() or ""))
+    return "".join(parts)
+
+
 def _link_from_subelement(element, sources_dict):
     """
     Extract all known URLs (matricula, cemetery) from a GEDCOM sub-element.
@@ -255,19 +278,7 @@ def _link_from_subelement(element, sources_dict):
     val = element.get_value() or ""
 
     if tag == "NOTE":
-        # P2: plain URLs directly as NOTE value
-        urls = _find_all_links(val)
-        # P1: URLs buried in CONT/CONC continuation lines (may be HTML-wrapped)
-        # CONC = concatenate directly (no separator), CONT = new line (space separator)
-        full = val
-        for cont in element.get_child_elements():
-            sep = "" if cont.get_tag() == "CONC" else " "
-            full += sep + (cont.get_value() or "")
-        if full != val:
-            for url in _find_all_links(full):
-                if url not in urls:
-                    urls.append(url)
-        return urls
+        return _find_all_links(_full_text(element))
 
     if tag == "SOUR":
         # P8: URL stored directly as SOUR value (ODAR.GED pattern: "2 SOUR https://...")
@@ -292,13 +303,13 @@ def _link_from_subelement(element, sources_dict):
         urls = []
         for sour_child in element.get_child_elements():
             if sour_child.get_tag() == "PAGE":
-                for url in _find_all_links(sour_child.get_value() or ""):
+                for url in _find_all_links(_full_text(sour_child)):
                     if url not in urls:
                         urls.append(url)
             elif sour_child.get_tag() == "DATA":
                 for data_child in sour_child.get_child_elements():
                     if data_child.get_tag() in ("TEXT", "WWW"):
-                        for url in _find_all_links(data_child.get_value() or ""):
+                        for url in _find_all_links(_full_text(data_child)):
                             if url not in urls:
                                 urls.append(url)
         return urls
@@ -329,31 +340,37 @@ def _indi_level_link(element, sources_dict, obje_dict=None):
 
 
 _URL_CACHE = {}
-_ERROR_CACHE = set()
+_ERROR_CACHE = set()   # transient fetch failures (not persisted)
+_BROKEN_CACHE = set() # persisted 404s — not re-fetched until "broken" entry removed from cache
 
 
 def load_url_cache():
-    global _URL_CACHE
+    global _URL_CACHE, _BROKEN_CACHE
     if os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE, "r", encoding="utf-8") as f:
                 raw_cache = json.load(f)
                 for k, v in raw_cache.items():
-                    # Drop bad cache entries to self-heal (forces 1 re-fetch per run)
-                    if isinstance(v, list) and (len(v) == 0 or len(v) >= 3):
+                    if v == "broken":
+                        _BROKEN_CACHE.add(k)
                         continue
+                    # Drop legacy "unknown" sentinel — outdated format
                     if v == "unknown":
                         continue
                     _URL_CACHE[k] = v
         except Exception as e:
             print(f"Warning: Could not load URL cache: {e}")
             _URL_CACHE = {}
+            _BROKEN_CACHE = set()
 
 
 def save_url_cache():
     try:
+        combined = dict(_URL_CACHE)
+        for url in _BROKEN_CACHE:
+            combined[url] = "broken"
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(_URL_CACHE, f, indent=4)
+            json.dump(combined, f, indent=4)
     except Exception as e:
         print(f"Warning: Could not save URL cache: {e}")
 
@@ -370,6 +387,20 @@ def _determine_link_type(url, context=None):
 
     # Strip query parameters (like ?pg=N) to cache and fetch at the book level
     base_url = url.split("?")[0]
+
+    # Fast path: detect type from Slovenian civil-registry abbreviations in the URL path.
+    # MKR/MKK = Matična knjiga rojenih/krščenih (births), MKP = porok (marriage),
+    # MKU = umrlih (deaths). These are standardised and reliable.
+    _url_upper = base_url.upper()
+    if "MKP" in _url_upper:
+        return ["marriage"]
+    if "MKU" in _url_upper:
+        return ["death"]
+    if "MKR" in _url_upper or "MKK" in _url_upper:
+        return ["birth"]
+
+    if base_url in _BROKEN_CACHE:
+        return []
 
     if base_url in _URL_CACHE:
         val = _URL_CACHE[base_url]
@@ -427,6 +458,20 @@ def _determine_link_type(url, context=None):
 
                 _URL_CACHE[base_url] = types
                 return types
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                ctx_str = f" (person: {context})" if context else ""
+                print(f"  [!] 404 Not Found (broken link) — cached: {base_url}{ctx_str}")
+                _BROKEN_CACHE.add(base_url)
+                return []
+            if attempt < 2:
+                time.sleep(1 * (attempt + 1))
+            else:
+                ctx_str = f" (person: {context})" if context else ""
+                display_url = url if url != base_url else base_url
+                print(f"  [!] Failed to fetch {display_url}{ctx_str} after 3 attempts: {e}")
+                _ERROR_CACHE.add(base_url)
+                return []
         except Exception as e:
             if attempt < 2:
                 time.sleep(1 * (attempt + 1))
@@ -601,7 +646,7 @@ def get_event_data(element, event_tag, sources_dict=None, obje_dict=None):
             continue
         date, place = "", ""
         # P6: URL stored directly as the event tag value (RENKO.GED pattern)
-        links = _find_all_links(child.get_value() or "")
+        links = _find_all_links(_full_text(child))
         for subchild in child.get_child_elements():
             if subchild.get_tag() == "DATE":
                 date = subchild.get_value()
@@ -675,7 +720,6 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
         and not needs_processing(input_path, births_output_path, families_output_path)
         and not needs_processing(input_path, deaths_output_path, deaths_output_path)
     ):
-        log.append(f"Skipping: {filename} (JSON is up to date).")
         try:
             with open(births_output_path, encoding="utf-8") as f:
                 births_data_skip = json.load(f)
@@ -698,6 +742,8 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                 )
                 + sum(1 for r in families_data_skip if r.get("links"))
                 + sum(1 for r in deaths_data_skip if r.get("links")),
+                "filtered_count": 0,
+                "skipped": True,
                 "last_modified": ged_mtime,
                 "url": contributor_urls.get(contributor_id),
             }
@@ -705,7 +751,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
             meta = None
         return meta, log
 
-    log.append(f"\nProcessing: {filename} (Contributor: {contributor_id})")
+    print(f"Processing: {filename}")
 
     # Initialize lists to hold extracted records for this file.
     births_data = []
@@ -718,9 +764,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
 
         fixed = fix_cp1252_as_cp1250(gedcom_content)
         if fixed is not gedcom_content:
-            log.append(
-                f"  WARNING: cp1252→cp1250 encoding fix applied (è→č etc.) for {filename}"
-            )
+            print(f"  WARNING: cp1252→cp1250 encoding fix applied (è→č etc.) for {filename}")
             gedcom_content = fixed
 
         gedcom_content = re.sub(
@@ -735,7 +779,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
 
         os.remove(temp_path)
     except Exception as e:
-        log.append(f"  ERROR: Could not parse {filename}. Skipping file. Reason: {e}")
+        print(f"  ERROR: Could not parse {filename}. Skipping file. Reason: {e}")
         if os.path.exists(temp_path):
             os.remove(temp_path)
         return None, log
@@ -1094,11 +1138,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
     filtered_births = births_before - len(births_data)
     filtered_families = families_before - len(families_data)
     filtered_deaths = deaths_before - len(deaths_data)
-    if filtered_births or filtered_families or filtered_deaths:
-        log.append(
-            f"  Filtered {filtered_births} recent birth(s), {filtered_families} recent family/families, "
-            f"{filtered_deaths} recent death(s)."
-        )
+    filtered_count = filtered_births + filtered_families + filtered_deaths
 
     # --- 4. Write Output JSON Files ---
     ged_mtime = os.path.getmtime(input_path)
@@ -1131,23 +1171,14 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
     with open(births_output_path, "w", encoding="utf-8") as f:
         json.dump(births_data, f, ensure_ascii=False, indent=4)
     os.utime(births_output_path, (ged_mtime, ged_mtime))
-    log.append(
-        f"  -> Successfully created '{births_output_path}' with {len(births_data)} birth records."
-    )
 
     with open(families_output_path, "w", encoding="utf-8") as f:
         json.dump(families_data, f, ensure_ascii=False, indent=4)
     os.utime(families_output_path, (ged_mtime, ged_mtime))
-    log.append(
-        f"  -> Successfully created '{families_output_path}' with {len(families_data)} family records."
-    )
 
     with open(deaths_output_path, "w", encoding="utf-8") as f:
         json.dump(deaths_data, f, ensure_ascii=False, indent=4)
     os.utime(deaths_output_path, (ged_mtime, ged_mtime))
-    log.append(
-        f"  -> Successfully created '{deaths_output_path}' with {len(deaths_data)} death records."
-    )
 
     links_count = (
         sum(1 for r in births_data if r.get("links"))
@@ -1160,6 +1191,8 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
         "families_count": len(families_data),
         "deaths_count": len(deaths_data),
         "links_count": links_count,
+        "filtered_count": filtered_count,
+        "skipped": False,
         "last_modified": datetime.fromtimestamp(ged_mtime).isoformat(),
         "url": contributor_urls.get(contributor_id),
     }
@@ -1182,9 +1215,9 @@ def main():
     parser.add_argument(
         "--workers",
         type=int,
-        default=8,
+        default=16,
         metavar="N",
-        help="Number of parallel workers (default: 8).",
+        help="Number of parallel workers (default: 16).",
     )
     args = parser.parse_args()
     full_mode = args.mode == "full"
@@ -1207,8 +1240,13 @@ def main():
 
     # --- File Processing Loop ---
     # Find all files ending with .ged in the input directory.
+    try:
+        locale.setlocale(locale.LC_COLLATE, ("sl_SI", "UTF-8"))
+    except locale.Error:
+        locale.setlocale(locale.LC_COLLATE, "")
     gedcom_files = sorted(
-        [f for f in os.listdir(INPUT_DIR) if f.lower().endswith(".ged")]
+        [f for f in os.listdir(INPUT_DIR) if f.lower().endswith(".ged")],
+        key=locale.strxfrm,
     )
 
     if not gedcom_files:
@@ -1235,16 +1273,41 @@ def main():
                 metadata.append(meta)
 
     # Write global metadata.json for the frontend
-    metadata.sort(key=lambda x: x.get("contributor", ""))
+    metadata.sort(key=lambda x: locale.strxfrm(x.get("contributor", "")))
     metadata_output_path = os.path.join(OUTPUT_DIR, "metadata.json")
+    metadata_out = [{k: v for k, v in m.items() if k not in ("filtered_count", "skipped")} for m in metadata]
     with open(metadata_output_path, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, ensure_ascii=False, indent=4)
-    print(f"\n  -> Successfully created metadata file: {metadata_output_path}")
+        json.dump(metadata_out, f, ensure_ascii=False, indent=4)
 
     save_url_cache()
 
-    print("\nExtraction process finished successfully.")
+    # --- Summary table ---
+    col_w = max((len(m["contributor"]) for m in metadata), default=10)
+    header = f"{'File':<{col_w}}  {'Births':>7}  {'Families':>8}  {'Deaths':>7}  {'Links':>6}  {'Filtered':>8}  {'Status'}"
+    print(f"\n{header}")
+    print("-" * len(header))
+    for m in metadata:
+        status = "skipped" if m.get("skipped") else "updated"
+        print(
+            f"{m['contributor']:<{col_w}}  "
+            f"{m['births_count']:>7}  "
+            f"{m['families_count']:>8}  "
+            f"{m['deaths_count']:>7}  "
+            f"{m['links_count']:>6}  "
+            f"{m.get('filtered_count', 0):>8}  "
+            f"{status}"
+        )
+    total_b = sum(m["births_count"] for m in metadata)
+    total_f = sum(m["families_count"] for m in metadata)
+    total_d = sum(m["deaths_count"] for m in metadata)
+    total_l = sum(m["links_count"] for m in metadata)
+    total_fi = sum(m.get("filtered_count", 0) for m in metadata)
+    print("-" * len(header))
+    print(f"{'TOTAL':<{col_w}}  {total_b:>7}  {total_f:>8}  {total_d:>7}  {total_l:>6}  {total_fi:>8}")
 
 
 if __name__ == "__main__":
     main()
+    # Force immediate exit — os._exit() bypasses atexit/threading._shutdown()
+    # which otherwise blocks on lingering urllib/SSL keep-alive connections.
+    os._exit(0)
