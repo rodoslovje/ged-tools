@@ -8,6 +8,7 @@ import time
 import urllib.request
 import unicodedata
 import ssl
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from gedcom.parser import Parser
 
@@ -357,6 +358,7 @@ def save_url_cache():
         print(f"Warning: Could not save URL cache: {e}")
 
 
+
 def _determine_link_type(url, context=None):
     if not url:
         return []
@@ -441,35 +443,29 @@ def _determine_link_type(url, context=None):
 
 def sanitize_links(links, expected_type, context=None):
     """
-    Keeps links that match the expected type (or unknown),
-    and removes those that are strictly of another type.
+    Keeps links explicitly placed on an event (always preserved),
+    and also queues them for cross-routing if the detected type differs.
     """
     sanitized = []
     misplaced = []
     for url in links:
+        # Always keep the link where the user explicitly placed it
+        if url not in sanitized:
+            sanitized.append(url)
+
         if _find_cemetery_url(url):
-            # Cemetery links explicitly cited on an event should stay there
-            # (as gravestones often verify birth dates), but we also copy them to 'death'.
-            if url not in sanitized:
-                sanitized.append(url)
             if expected_type != "death":
                 misplaced.append((url, ["death"]))
             continue
 
         if _find_census_url(url):
-            # Census links explicitly cited on an event should stay there,
-            # but we also copy them to 'birth'.
-            if url not in sanitized:
-                sanitized.append(url)
             if expected_type != "birth":
                 misplaced.append((url, ["birth"]))
             continue
 
         types = _determine_link_type(url, context=context)
-        if not types or expected_type in types:
-            if url not in sanitized:
-                sanitized.append(url)
-        else:
+        if types and expected_type not in types:
+            # Also route to the detected type(s), but keep on the original event
             misplaced.append((url, types))
     return sanitized, misplaced
 
@@ -653,6 +649,523 @@ def needs_processing(input_path, births_path, families_path):
     return False
 
 
+def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_dir):
+    """Process a single GED file. Returns (metadata_entry_or_None, log_lines).
+
+    All output is collected into log_lines instead of printed directly, so
+    callers can print it without interleaving with other workers.
+    """
+    log = []
+
+    contributor_id = unicodedata.normalize(
+        "NFC",
+        "-".join(
+            part.lower().capitalize()
+            for part in os.path.splitext(filename)[0].split("-")
+        ),
+    )
+    input_path = os.path.join(input_dir, filename)
+    births_output_path = os.path.join(output_dir, f"{contributor_id}-births.json")
+    families_output_path = os.path.join(output_dir, f"{contributor_id}-families.json")
+    deaths_output_path = os.path.join(output_dir, f"{contributor_id}-deaths.json")
+
+    # --- Update mode: skip if JSON is already up to date ---
+    if (
+        not full_mode
+        and not needs_processing(input_path, births_output_path, families_output_path)
+        and not needs_processing(input_path, deaths_output_path, deaths_output_path)
+    ):
+        log.append(f"Skipping: {filename} (JSON is up to date).")
+        try:
+            with open(births_output_path, encoding="utf-8") as f:
+                births_data_skip = json.load(f)
+            with open(families_output_path, encoding="utf-8") as f:
+                families_data_skip = json.load(f)
+            deaths_data_skip = []
+            if os.path.exists(deaths_output_path):
+                with open(deaths_output_path, encoding="utf-8") as f:
+                    deaths_data_skip = json.load(f)
+            ged_mtime = datetime.fromtimestamp(
+                os.path.getmtime(input_path)
+            ).isoformat()
+            meta = {
+                "contributor": contributor_id,
+                "births_count": len(births_data_skip),
+                "families_count": len(families_data_skip),
+                "deaths_count": len(deaths_data_skip),
+                "links_count": sum(
+                    1 for r in births_data_skip if r.get("links")
+                )
+                + sum(1 for r in families_data_skip if r.get("links"))
+                + sum(1 for r in deaths_data_skip if r.get("links")),
+                "last_modified": ged_mtime,
+                "url": contributor_urls.get(contributor_id),
+            }
+        except Exception:
+            meta = None
+        return meta, log
+
+    log.append(f"\nProcessing: {filename} (Contributor: {contributor_id})")
+
+    # Initialize lists to hold extracted records for this file.
+    births_data = []
+    families_data = []
+
+    # --- Parsing ---
+    temp_path = f"{input_path}.utf8.tmp"
+    try:
+        gedcom_content = safe_read_gedcom(input_path)
+
+        fixed = fix_cp1252_as_cp1250(gedcom_content)
+        if fixed is not gedcom_content:
+            log.append(
+                f"  WARNING: cp1252→cp1250 encoding fix applied (è→č etc.) for {filename}"
+            )
+            gedcom_content = fixed
+
+        gedcom_content = re.sub(
+            r"^1 CHAR .*$", "1 CHAR UTF-8", gedcom_content, flags=re.MULTILINE
+        )
+
+        with open(temp_path, "w", encoding="utf-8") as tmp_file:
+            tmp_file.write(gedcom_content)
+
+        gedcom_parser = Parser()
+        gedcom_parser.parse_file(temp_path, strict=False)
+
+        os.remove(temp_path)
+    except Exception as e:
+        log.append(f"  ERROR: Could not parse {filename}. Skipping file. Reason: {e}")
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        return None, log
+
+    individuals_dict = {}
+    family_elements = []
+    deaths_data = []
+
+    root_elements = list(gedcom_parser.get_root_child_elements())
+    obje_dict = build_obje_dict(root_elements)
+    sources_dict = build_sources_dict(root_elements, obje_dict)
+
+    for element in root_elements:
+        tag = element.get_tag()
+
+        if tag == "INDI":
+            pointer = element.get_pointer()
+            name, surname = get_name_surname(element)
+            birth_date, birth_place, raw_birth_links = get_event_data(
+                element, "BIRT", sources_dict, obje_dict
+            )
+            death_date, death_place, raw_death_links = get_event_data(
+                element, "DEAT", sources_dict, obje_dict
+            )
+            _, _, raw_buri_links = get_event_data(element, "BURI", sources_dict, obje_dict)
+            for url in raw_buri_links:
+                if url not in raw_death_links:
+                    raw_death_links.append(url)
+
+            person_context = f"{name} {surname} [{filename}]".strip()
+            birth_links, b_misplaced = sanitize_links(raw_birth_links, "birth", context=person_context)
+            death_links, d_misplaced = sanitize_links(raw_death_links, "death", context=person_context)
+
+            indi_b_links, indi_d_links, indi_m_links = _extract_indi_links(
+                element, sources_dict, obje_dict, context=person_context
+            )
+
+            marr_links = list(indi_m_links)
+            for url, types in b_misplaced + d_misplaced:
+                if "marriage" in types and url not in marr_links:
+                    marr_links.append(url)
+                if "birth" in types and url not in birth_links:
+                    birth_links.append(url)
+                if "death" in types and url not in death_links:
+                    death_links.append(url)
+
+            for url in indi_b_links:
+                if url not in birth_links:
+                    birth_links.append(url)
+            for url in indi_d_links:
+                if url not in death_links:
+                    death_links.append(url)
+
+            is_deceased_flag = any(
+                child.get_tag() in ("DEAT", "BURI")
+                for child in element.get_child_elements()
+            )
+
+            famc_pointers = [
+                child.get_value()
+                for child in element.get_child_elements()
+                if child.get_tag() == "FAMC"
+            ]
+
+            individuals_dict[pointer] = {
+                "name": name,
+                "surname": surname,
+                "birth_date": birth_date,
+                "is_deceased": is_deceased_flag,
+                "marr_links": marr_links,
+                "famc": famc_pointers,
+            }
+
+            if birth_date or birth_place:
+                record = {
+                    "name": name,
+                    "surname": surname,
+                    "date_of_birth": birth_date or "",
+                    "place_of_birth": birth_place or "",
+                    "_is_deceased": is_deceased_flag,
+                    "_ptr": pointer,
+                }
+                if birth_links:
+                    record["links"] = list(dict.fromkeys(birth_links))
+                births_data.append(record)
+
+            if death_date or death_place:
+                record = {
+                    "name": name,
+                    "surname": surname,
+                    "date_of_death": death_date or "",
+                    "place_of_death": death_place or "",
+                }
+                if death_links:
+                    record["links"] = list(dict.fromkeys(death_links))
+                deaths_data.append(record)
+
+        elif tag == "FAM":
+            family_elements.append(element)
+
+    birth_cutoff = datetime.now().year - 100
+
+    def is_empty(name, surname):
+        return not name.strip() and not surname.strip()
+
+    def is_private_name(name, surname):
+        return (
+            name.strip().lower() == "private"
+            or surname.strip().lower() == "private"
+        )
+
+    def is_person_recent(person_data, cutoff):
+        birth_date = person_data.get("birth_date") or ""
+        year = extract_year(birth_date)
+        if year is not None:
+            return year > cutoff
+        est_year = person_data.get("estimated_birth_year")
+        return est_year is not None and est_year > cutoff
+
+    family_dict = {}
+    for family in family_elements:
+        h_ptr, w_ptr = "", ""
+        for child in family.get_child_elements():
+            if child.get_tag() == "HUSB":
+                h_ptr = child.get_value()
+            elif child.get_tag() == "WIFE":
+                w_ptr = child.get_value()
+        family_dict[family.get_pointer()] = {"husb": h_ptr, "wife": w_ptr}
+
+    person_to_family_info = {}
+    for fam_el in family_elements:
+        fm_date, _, _ = get_event_data(fam_el, "MARR", sources_dict)
+        fh_ptr, fw_ptr = "", ""
+        fc_ptrs = []
+        for ch in fam_el.get_child_elements():
+            ctag = ch.get_tag()
+            if ctag == "HUSB":
+                fh_ptr = ch.get_value()
+            elif ctag == "WIFE":
+                fw_ptr = ch.get_value()
+            elif ctag == "CHIL":
+                fc_ptrs.append(ch.get_value())
+        for sp_ptr in (fh_ptr, fw_ptr):
+            if sp_ptr:
+                person_to_family_info.setdefault(sp_ptr, []).append(
+                    (fm_date, fc_ptrs)
+                )
+
+    for ptr, data in individuals_dict.items():
+        if data.get("birth_date") or data.get("is_deceased"):
+            continue
+        est_years = []
+        for fm_date, fc_ptrs in person_to_family_info.get(ptr, []):
+            fm_year = extract_year(fm_date)
+            if fm_year:
+                est_years.append(fm_year - 20)
+            for fc_ptr in fc_ptrs:
+                fc_data = individuals_dict.get(fc_ptr, {})
+                fc_year = extract_year(fc_data.get("birth_date"))
+                if fc_year:
+                    est_years.append(fc_year - 20)
+        for famc_ptr in data.get("famc", []):
+            fam_d = family_dict.get(famc_ptr, {})
+            for p_ptr in (fam_d.get("husb", ""), fam_d.get("wife", "")):
+                if not p_ptr:
+                    continue
+                p_d = individuals_dict.get(p_ptr, {})
+                p_year = extract_year(p_d.get("birth_date"))
+                if p_year:
+                    est_years.append(p_year + 40)
+        if est_years:
+            data["estimated_birth_year"] = max(est_years)
+
+    for family in family_elements:
+        marr_date, marr_place, raw_marr_links = get_event_data(
+            family, "MARR", sources_dict, obje_dict
+        )
+        for url in _indi_level_link(family, sources_dict, obje_dict):
+            if url not in raw_marr_links:
+                raw_marr_links.append(url)
+
+        husb_pointer, wife_pointer = "", ""
+        child_pointers = []
+        for child in family.get_child_elements():
+            if child.get_tag() == "HUSB":
+                husb_pointer = child.get_value()
+            elif child.get_tag() == "WIFE":
+                wife_pointer = child.get_value()
+            elif child.get_tag() == "CHIL":
+                child_pointers.append(child.get_value())
+
+        husb = individuals_dict.get(husb_pointer, {})
+        wife = individuals_dict.get(wife_pointer, {})
+
+        family_context = (" & ".join(filter(None, [
+            f"{husb.get('name', '')} {husb.get('surname', '')}".strip(),
+            f"{wife.get('name', '')} {wife.get('surname', '')}".strip(),
+        ])) or family.get_pointer()) + f" [{filename}]"
+        marr_links, _ = sanitize_links(raw_marr_links, "marriage", context=family_context)
+
+        if not marr_links:
+            marr_links = list(
+                husb.get("marr_links", []) or wife.get("marr_links", [])
+            )
+
+        def get_parents_list(person_data):
+            parents_list = []
+            if not person_data:
+                return parents_list
+            for famc_ptr in person_data.get("famc", []):
+                fam_data = family_dict.get(famc_ptr)
+                if fam_data:
+                    for p_ptr in (fam_data["husb"], fam_data["wife"]):
+                        if not p_ptr:
+                            continue
+                        p_data = individuals_dict.get(p_ptr)
+                        if p_data:
+                            p_is_deceased = p_data.get("is_deceased", False)
+                            is_private = (
+                                is_person_recent(p_data, birth_cutoff)
+                                and not p_is_deceased
+                            )
+                            if is_private:
+                                parents_list.append(
+                                    {"name": "private", "surname": "", "year": ""}
+                                )
+                            else:
+                                p_name = p_data.get("name", "")
+                                if not p_name:
+                                    p_name = "unknown"
+                                p_surname = p_data.get("surname", "")
+                                p_birth_year = extract_year(p_data.get("birth_date"))
+                                p_year_str = (
+                                    str(p_birth_year) if p_birth_year else ""
+                                )
+                                parents_list.append(
+                                    {
+                                        "name": p_name,
+                                        "surname": p_surname,
+                                        "year": p_year_str,
+                                    }
+                                )
+            return parents_list
+
+        husband_parents = get_parents_list(husb)
+        wife_parents = get_parents_list(wife)
+
+        children_info = []
+        children_list = []
+        for child_ptr in child_pointers:
+            child_data = individuals_dict.get(child_ptr)
+            if child_data:
+                child_birth_date = child_data.get("birth_date", "")
+                child_is_deceased = child_data.get("is_deceased", False)
+                is_private = (
+                    is_person_recent(child_data, birth_cutoff)
+                    and not child_is_deceased
+                )
+                if is_private:
+                    children_info.append("private")
+                    children_list.append(
+                        {"name": "private", "surname": "", "year": ""}
+                    )
+                else:
+                    child_name = child_data.get("name", "")
+                    if not child_name:
+                        child_name = "unknown"
+                    child_surname = child_data.get("surname", "")
+                    birth_year = extract_year(child_birth_date)
+                    year_str = str(birth_year) if birth_year else ""
+                    if birth_year:
+                        children_info.append(f"{child_name} *{birth_year}")
+                    else:
+                        children_info.append(child_name)
+                    children_list.append(
+                        {
+                            "name": child_name,
+                            "surname": child_surname,
+                            "year": year_str,
+                        }
+                    )
+        children_string = ", ".join(children_info)
+
+        record = {
+            "husband_name": husb.get("name", ""),
+            "husband_surname": husb.get("surname", ""),
+            "wife_name": wife.get("name", ""),
+            "wife_surname": wife.get("surname", ""),
+            "date_of_marriage": marr_date or "",
+            "place_of_marriage": marr_place or "",
+            "_husb_is_recent": is_person_recent(husb, birth_cutoff),
+            "_wife_is_recent": is_person_recent(wife, birth_cutoff),
+            "_husb_is_deceased": husb.get("is_deceased", False),
+            "_wife_is_deceased": wife.get("is_deceased", False),
+        }
+
+        if is_private_name(
+            record["husband_name"], record["husband_surname"]
+        ) or is_private_name(record["wife_name"], record["wife_surname"]):
+            continue
+
+        if is_empty(record["husband_name"], record["husband_surname"]) and is_empty(
+            record["wife_name"], record["wife_surname"]
+        ):
+            continue
+
+        if marr_links:
+            record["links"] = list(dict.fromkeys(marr_links))
+        if children_string:
+            record["children"] = children_string
+        if children_list:
+            record["children_list"] = children_list
+        if husband_parents:
+            record["husband_parents"] = husband_parents
+        if wife_parents:
+            record["wife_parents"] = wife_parents
+
+        families_data.append(record)
+
+    # --- 3. Filter recent records (privacy) ---
+
+    births_before = len(births_data)
+    families_before = len(families_data)
+    deaths_before = len(deaths_data)
+
+    births_data = [
+        r
+        for r in births_data
+        if (
+            not is_recent(r["date_of_birth"], birth_cutoff)
+            and not is_person_recent(
+                individuals_dict.get(r.get("_ptr"), {}), birth_cutoff
+            )
+        )
+        or r.get("_is_deceased", False)
+    ]
+    families_data = [
+        r
+        for r in families_data
+        if not (r.get("_husb_is_recent", False) and not r.get("_husb_is_deceased", False))
+        and not (r.get("_wife_is_recent", False) and not r.get("_wife_is_deceased", False))
+        and (
+            not is_recent(r["date_of_marriage"], birth_cutoff)
+            or r.get("_husb_is_deceased", False)
+            or r.get("_wife_is_deceased", False)
+        )
+    ]
+    for r in births_data:
+        r.pop("_is_deceased", None)
+        r.pop("_ptr", None)
+    for r in families_data:
+        r.pop("_husb_is_recent", None)
+        r.pop("_wife_is_recent", None)
+        r.pop("_husb_is_deceased", None)
+        r.pop("_wife_is_deceased", None)
+    filtered_births = births_before - len(births_data)
+    filtered_families = families_before - len(families_data)
+    filtered_deaths = deaths_before - len(deaths_data)
+    if filtered_births or filtered_families or filtered_deaths:
+        log.append(
+            f"  Filtered {filtered_births} recent birth(s), {filtered_families} recent family/families, "
+            f"{filtered_deaths} recent death(s)."
+        )
+
+    # --- 4. Write Output JSON Files ---
+    ged_mtime = os.path.getmtime(input_path)
+
+    births_data.sort(
+        key=lambda x: (
+            x.get("surname", "") or "",
+            x.get("name", "") or "",
+            x.get("date_of_birth", "") or "",
+            x.get("place_of_birth", "") or "",
+        )
+    )
+    families_data.sort(
+        key=lambda x: (
+            x.get("husband_surname", "") or "",
+            x.get("husband_name", "") or "",
+            x.get("date_of_marriage", "") or "",
+            x.get("place_of_marriage", "") or "",
+        )
+    )
+    deaths_data.sort(
+        key=lambda x: (
+            x.get("surname", "") or "",
+            x.get("name", "") or "",
+            x.get("date_of_death", "") or "",
+            x.get("place_of_death", "") or "",
+        )
+    )
+
+    with open(births_output_path, "w", encoding="utf-8") as f:
+        json.dump(births_data, f, ensure_ascii=False, indent=4)
+    os.utime(births_output_path, (ged_mtime, ged_mtime))
+    log.append(
+        f"  -> Successfully created '{births_output_path}' with {len(births_data)} birth records."
+    )
+
+    with open(families_output_path, "w", encoding="utf-8") as f:
+        json.dump(families_data, f, ensure_ascii=False, indent=4)
+    os.utime(families_output_path, (ged_mtime, ged_mtime))
+    log.append(
+        f"  -> Successfully created '{families_output_path}' with {len(families_data)} family records."
+    )
+
+    with open(deaths_output_path, "w", encoding="utf-8") as f:
+        json.dump(deaths_data, f, ensure_ascii=False, indent=4)
+    os.utime(deaths_output_path, (ged_mtime, ged_mtime))
+    log.append(
+        f"  -> Successfully created '{deaths_output_path}' with {len(deaths_data)} death records."
+    )
+
+    links_count = (
+        sum(1 for r in births_data if r.get("links"))
+        + sum(1 for r in families_data if r.get("links"))
+        + sum(1 for r in deaths_data if r.get("links"))
+    )
+    meta = {
+        "contributor": contributor_id,
+        "births_count": len(births_data),
+        "families_count": len(families_data),
+        "deaths_count": len(deaths_data),
+        "links_count": links_count,
+        "last_modified": datetime.fromtimestamp(ged_mtime).isoformat(),
+        "url": contributor_urls.get(contributor_id),
+    }
+    return meta, log
+
+
 def main():
     """
     Main function to process all GEDCOM files in the input directory,
@@ -666,10 +1179,17 @@ def main():
         help="update (default): skip files whose JSON is already up to date; "
         "full: process all files and overwrite existing JSON.",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=8,
+        metavar="N",
+        help="Number of parallel workers (default: 8).",
+    )
     args = parser.parse_args()
     full_mode = args.mode == "full"
 
-    print(f"Starting GEDCOM data extraction process (mode: {args.mode})...")
+    print(f"Starting GEDCOM data extraction process (mode: {args.mode}, workers: {args.workers})...")
 
     load_url_cache()
 
@@ -699,561 +1219,20 @@ def main():
     metadata = []
     contributor_urls = _load_contributor_urls()
 
-    # Process each file found.
-    total_files = len(gedcom_files)
-    for index, filename in enumerate(gedcom_files, start=1):
-        contributor_id = unicodedata.normalize(
-            "NFC",
-            "-".join(
-                part.lower().capitalize()
-                for part in os.path.splitext(filename)[0].split("-")
-            ),
-        )
-        input_path = os.path.join(INPUT_DIR, filename)
-        births_output_path = os.path.join(OUTPUT_DIR, f"{contributor_id}-births.json")
-        families_output_path = os.path.join(
-            OUTPUT_DIR, f"{contributor_id}-families.json"
-        )
-        deaths_output_path = os.path.join(OUTPUT_DIR, f"{contributor_id}-deaths.json")
-
-        # --- Update mode: skip if JSON is already up to date ---
-        if (
-            not full_mode
-            and not needs_processing(
-                input_path, births_output_path, families_output_path
-            )
-            and not needs_processing(input_path, deaths_output_path, deaths_output_path)
-        ):
-            print(
-                f"\nSkipping file {index}/{total_files}: {filename} (JSON is up to date)."
-            )
-            # Still include in metadata using the existing JSON counts
-            try:
-                with open(births_output_path, encoding="utf-8") as f:
-                    births_data_skip = json.load(f)
-                with open(families_output_path, encoding="utf-8") as f:
-                    families_data_skip = json.load(f)
-                deaths_data_skip = []
-                if os.path.exists(deaths_output_path):
-                    with open(deaths_output_path, encoding="utf-8") as f:
-                        deaths_data_skip = json.load(f)
-                ged_mtime = datetime.fromtimestamp(
-                    os.path.getmtime(input_path)
-                ).isoformat()
-                metadata.append(
-                    {
-                        "contributor": contributor_id,
-                        "births_count": len(births_data_skip),
-                        "families_count": len(families_data_skip),
-                        "deaths_count": len(deaths_data_skip),
-                        "links_count": sum(
-                            1 for r in births_data_skip if r.get("links")
-                        )
-                        + sum(1 for r in families_data_skip if r.get("links"))
-                        + sum(1 for r in deaths_data_skip if r.get("links")),
-                        "last_modified": ged_mtime,
-                        "url": contributor_urls.get(contributor_id),
-                    }
-                )
-            except Exception:
-                pass
-            continue
-
-        print(
-            f"\nProcessing file {index}/{total_files}: {filename} (Contributor: {contributor_id})"
-        )
-
-        # Initialize lists to hold extracted records for this file.
-        births_data = []
-        families_data = []
-
-        # --- Parsing ---
-        temp_path = f"{input_path}.utf8.tmp"
-        try:
-            # Decode the file using our fallback encodings
-            gedcom_content = safe_read_gedcom(input_path)
-
-            # Fix files that were incorrectly converted from cp1250 using cp1252/Latin-1
-            fixed = fix_cp1252_as_cp1250(gedcom_content)
-            if fixed is not gedcom_content:
-                print(
-                    f"  WARNING: cp1252→cp1250 encoding fix applied (è→č etc.) for {filename}"
-                )
-                gedcom_content = fixed
-
-            # Update the CHAR tag to UTF-8 so the parser doesn't get confused
-            # by a legacy encoding declaration in a file we just converted.
-            gedcom_content = re.sub(
-                r"^1 CHAR .*$", "1 CHAR UTF-8", gedcom_content, flags=re.MULTILINE
-            )
-
-            # Write the decoded content to a temporary UTF-8 file
-            # so the parser can reliably process it without encoding errors.
-            with open(temp_path, "w", encoding="utf-8") as tmp_file:
-                tmp_file.write(gedcom_content)
-
-            # Instantiate the parser and parse the file.
-            gedcom_parser = Parser()
-            gedcom_parser.parse_file(temp_path, strict=False)
-
-            # Clean up the temporary file on success
-            os.remove(temp_path)
-        except Exception as e:
-            print(f"  ERROR: Could not parse {filename}. Skipping file. Reason: {e}")
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-            continue  # Move to the next file
-
-        # --- 1. Extract Birth and Death Information ---
-        # Dictionary to cache individual names by their GEDCOM pointer (ID)
-        individuals_dict = {}
-        family_elements = []
-        deaths_data = []
-
-        root_elements = list(gedcom_parser.get_root_child_elements())
-        obje_dict = build_obje_dict(root_elements)
-        sources_dict = build_sources_dict(root_elements, obje_dict)
-
-        # First pass: Get all elements directly from the parser
-        for element in root_elements:
-            tag = element.get_tag()
-
-            # --- 1. Extract Birth Information ---
-            if tag == "INDI":
-                pointer = element.get_pointer()
-                name, surname = get_name_surname(element)
-                birth_date, birth_place, raw_birth_links = get_event_data(
-                    element, "BIRT", sources_dict, obje_dict
-                )
-                death_date, death_place, raw_death_links = get_event_data(
-                    element, "DEAT", sources_dict, obje_dict
-                )
-                # Cemetery links from BURI event → attach to death
-                _, _, raw_buri_links = get_event_data(element, "BURI", sources_dict, obje_dict)
-                for url in raw_buri_links:
-                    if url not in raw_death_links:
-                        raw_death_links.append(url)
-
-                person_context = f"{name} {surname}".strip()
-                birth_links, b_misplaced = sanitize_links(raw_birth_links, "birth", context=person_context)
-                death_links, d_misplaced = sanitize_links(raw_death_links, "death", context=person_context)
-
-                # Fallback: links at INDI level, routing by type (cemetery→death, matricula→fetched)
-                indi_b_links, indi_d_links, indi_m_links = _extract_indi_links(
-                    element, sources_dict, obje_dict, context=person_context
-                )
-
-                marr_links = list(indi_m_links)
-                for url, types in b_misplaced + d_misplaced:
-                    if "marriage" in types and url not in marr_links:
-                        marr_links.append(url)
-                    if "birth" in types and url not in birth_links:
-                        birth_links.append(url)
-                    if "death" in types and url not in death_links:
-                        death_links.append(url)
-
-                for url in indi_b_links:
-                    if url not in birth_links:
-                        birth_links.append(url)
-                for url in indi_d_links:
-                    if url not in death_links:
-                        death_links.append(url)
-
-                is_deceased_flag = any(
-                    child.get_tag() in ("DEAT", "BURI")
-                    for child in element.get_child_elements()
-                )
-
-                famc_pointers = [
-                    child.get_value()
-                    for child in element.get_child_elements()
-                    if child.get_tag() == "FAMC"
-                ]
-
-                # Store for marriage cross-referencing (include birth_date and is_deceased for privacy filter)
-                individuals_dict[pointer] = {
-                    "name": name,
-                    "surname": surname,
-                    "birth_date": birth_date,
-                    "is_deceased": is_deceased_flag,
-                    "marr_links": marr_links,
-                    "famc": famc_pointers,
-                }
-
-                if birth_date or birth_place:
-                    record = {
-                        "name": name,
-                        "surname": surname,
-                        "date_of_birth": birth_date or "",
-                        "place_of_birth": birth_place or "",
-                        "_is_deceased": is_deceased_flag,
-                        "_ptr": pointer,
-                    }
-                    if birth_links:
-                        record["links"] = list(dict.fromkeys(birth_links))
-                    births_data.append(record)
-
-                if death_date or death_place:
-                    record = {
-                        "name": name,
-                        "surname": surname,
-                        "date_of_death": death_date or "",
-                        "place_of_death": death_place or "",
-                    }
-                    if death_links:
-                        record["links"] = list(dict.fromkeys(death_links))
-                    deaths_data.append(record)
-
-            elif tag == "FAM":
-                family_elements.append(element)
-
-        # --- 2. Extract Family (Marriage) Information ---
-        # Births/families: exclude if within last 100 years, unless the person is deceased.
-        # Deaths: no limit.
-        birth_cutoff = datetime.now().year - 100
-
-        def is_empty(name, surname):
-            return not name.strip() and not surname.strip()
-
-        def is_private_name(name, surname):
-            return (
-                name.strip().lower() == "private"
-                or surname.strip().lower() == "private"
-            )
-
-        def is_person_recent(person_data, cutoff):
-            """Returns True if person is estimated to have been born within the last 100 years.
-            Uses actual birth date first; falls back to estimated_birth_year if no birth date."""
-            birth_date = person_data.get("birth_date") or ""
-            year = extract_year(birth_date)
-            if year is not None:
-                return year > cutoff
-            est_year = person_data.get("estimated_birth_year")
-            return est_year is not None and est_year > cutoff
-
-        family_dict = {}
-        for family in family_elements:
-            h_ptr, w_ptr = "", ""
-            for child in family.get_child_elements():
-                if child.get_tag() == "HUSB":
-                    h_ptr = child.get_value()
-                elif child.get_tag() == "WIFE":
-                    w_ptr = child.get_value()
-            family_dict[family.get_pointer()] = {"husb": h_ptr, "wife": w_ptr}
-
-        # Estimate birth year for people with no birth date and no death record.
-        # Uses marriage date (person was ~20), children's birth dates (person was ~20),
-        # and parents' birth dates (person was born ~40 years after parent).
-        # Takes the latest (most conservative) estimate to avoid hiding living people.
-        person_to_family_info = {}  # ptr -> list of (marr_date, [child_ptrs])
-        for fam_el in family_elements:
-            fm_date, _, _ = get_event_data(fam_el, "MARR", sources_dict)
-            fh_ptr, fw_ptr = "", ""
-            fc_ptrs = []
-            for ch in fam_el.get_child_elements():
-                ctag = ch.get_tag()
-                if ctag == "HUSB":
-                    fh_ptr = ch.get_value()
-                elif ctag == "WIFE":
-                    fw_ptr = ch.get_value()
-                elif ctag == "CHIL":
-                    fc_ptrs.append(ch.get_value())
-            for sp_ptr in (fh_ptr, fw_ptr):
-                if sp_ptr:
-                    person_to_family_info.setdefault(sp_ptr, []).append(
-                        (fm_date, fc_ptrs)
-                    )
-
-        for ptr, data in individuals_dict.items():
-            if data.get("birth_date") or data.get("is_deceased"):
-                continue
-            est_years = []
-            for fm_date, fc_ptrs in person_to_family_info.get(ptr, []):
-                fm_year = extract_year(fm_date)
-                if fm_year:
-                    est_years.append(fm_year - 20)
-                for fc_ptr in fc_ptrs:
-                    fc_data = individuals_dict.get(fc_ptr, {})
-                    fc_year = extract_year(fc_data.get("birth_date"))
-                    if fc_year:
-                        est_years.append(fc_year - 20)
-            for famc_ptr in data.get("famc", []):
-                fam_d = family_dict.get(famc_ptr, {})
-                for p_ptr in (fam_d.get("husb", ""), fam_d.get("wife", "")):
-                    if not p_ptr:
-                        continue
-                    p_d = individuals_dict.get(p_ptr, {})
-                    p_year = extract_year(p_d.get("birth_date"))
-                    if p_year:
-                        est_years.append(p_year + 40)
-            if est_years:
-                data["estimated_birth_year"] = max(est_years)
-
-        for family in family_elements:
-            marr_date, marr_place, raw_marr_links = get_event_data(
-                family, "MARR", sources_dict, obje_dict
-            )
-            # Fallback: links at FAM level (e.g. KOŠIR.GED stores NOTE on FAM, not inside MARR)
-            for url in _indi_level_link(family, sources_dict, obje_dict):
-                if url not in raw_marr_links:
-                    raw_marr_links.append(url)
-
-            husb_pointer, wife_pointer = "", ""
-            child_pointers = []
-            for child in family.get_child_elements():
-                if child.get_tag() == "HUSB":
-                    husb_pointer = child.get_value()
-                elif child.get_tag() == "WIFE":
-                    wife_pointer = child.get_value()
-                elif child.get_tag() == "CHIL":
-                    child_pointers.append(child.get_value())
-
-            husb = individuals_dict.get(husb_pointer, {})
-            wife = individuals_dict.get(wife_pointer, {})
-
-            family_context = " & ".join(filter(None, [
-                f"{husb.get('name', '')} {husb.get('surname', '')}".strip(),
-                f"{wife.get('name', '')} {wife.get('surname', '')}".strip(),
-            ])) or family.get_pointer()
-            marr_links, _ = sanitize_links(raw_marr_links, "marriage", context=family_context)
-
-            # Use INDI-level marriage links if FAM-level is missing
-            if not marr_links:
-                marr_links = list(
-                    husb.get("marr_links", []) or wife.get("marr_links", [])
-                )
-
-            def get_parents_list(person_data):
-                parents_list = []
-                if not person_data:
-                    return parents_list
-                for famc_ptr in person_data.get("famc", []):
-                    fam_data = family_dict.get(famc_ptr)
-                    if fam_data:
-                        for p_ptr in (fam_data["husb"], fam_data["wife"]):
-                            if not p_ptr:
-                                continue
-                            p_data = individuals_dict.get(p_ptr)
-                            if p_data:
-                                p_is_deceased = p_data.get("is_deceased", False)
-                                is_private = (
-                                    is_person_recent(p_data, birth_cutoff)
-                                    and not p_is_deceased
-                                )
-                                if is_private:
-                                    parents_list.append(
-                                        {"name": "private", "surname": "", "year": ""}
-                                    )
-                                else:
-                                    p_name = p_data.get("name", "")
-                                    if not p_name:
-                                        p_name = "unknown"
-                                    p_surname = p_data.get("surname", "")
-                                    p_birth_year = extract_year(p_data.get("birth_date"))
-                                    p_year_str = (
-                                        str(p_birth_year) if p_birth_year else ""
-                                    )
-                                    parents_list.append(
-                                        {
-                                            "name": p_name,
-                                            "surname": p_surname,
-                                            "year": p_year_str,
-                                        }
-                                    )
-                return parents_list
-
-            husband_parents = get_parents_list(husb)
-            wife_parents = get_parents_list(wife)
-
-            children_info = []
-            children_list = []
-            for child_ptr in child_pointers:
-                child_data = individuals_dict.get(child_ptr)
-                if child_data:
-                    child_birth_date = child_data.get("birth_date", "")
-                    child_is_deceased = child_data.get("is_deceased", False)
-
-                    # A child is considered private if they were born (or estimated born)
-                    # in the last 100 years AND they are not known to be deceased.
-                    is_private = (
-                        is_person_recent(child_data, birth_cutoff)
-                        and not child_is_deceased
-                    )
-
-                    if is_private:
-                        children_info.append("private")
-                        children_list.append(
-                            {"name": "private", "surname": "", "year": ""}
-                        )
-                    else:
-                        child_name = child_data.get("name", "")
-                        if not child_name:
-                            child_name = "unknown"
-                        child_surname = child_data.get("surname", "")
-                        birth_year = extract_year(child_birth_date)
-                        year_str = str(birth_year) if birth_year else ""
-                        if birth_year:
-                            children_info.append(f"{child_name} *{birth_year}")
-                        else:
-                            children_info.append(child_name)
-                        children_list.append(
-                            {
-                                "name": child_name,
-                                "surname": child_surname,
-                                "year": year_str,
-                            }
-                        )
-            children_string = ", ".join(children_info)
-
-            record = {
-                "husband_name": husb.get("name", ""),
-                "husband_surname": husb.get("surname", ""),
-                "wife_name": wife.get("name", ""),
-                "wife_surname": wife.get("surname", ""),
-                "date_of_marriage": marr_date or "",
-                "place_of_marriage": marr_place or "",
-                "_husb_is_recent": is_person_recent(husb, birth_cutoff),
-                "_wife_is_recent": is_person_recent(wife, birth_cutoff),
-                "_husb_is_deceased": husb.get("is_deceased", False),
-                "_wife_is_deceased": wife.get("is_deceased", False),
-            }
-
-            if is_private_name(
-                record["husband_name"], record["husband_surname"]
-            ) or is_private_name(record["wife_name"], record["wife_surname"]):
-                continue
-
-            if is_empty(record["husband_name"], record["husband_surname"]) and is_empty(
-                record["wife_name"], record["wife_surname"]
-            ):
-                continue
-
-            if marr_links:
-                record["links"] = list(dict.fromkeys(marr_links))
-            if children_string:
-                record["children"] = children_string
-            if children_list:
-                record["children_list"] = children_list
-            if husband_parents:
-                record["husband_parents"] = husband_parents
-            if wife_parents:
-                record["wife_parents"] = wife_parents
-
-            families_data.append(record)
-
-        # --- 3. Filter recent records (privacy) ---
-
-        births_before = len(births_data)
-        families_before = len(families_data)
-        deaths_before = len(deaths_data)
-
-        births_data = [
-            r
-            for r in births_data
-            if (
-                not is_recent(r["date_of_birth"], birth_cutoff)
-                and not is_person_recent(
-                    individuals_dict.get(r.get("_ptr"), {}), birth_cutoff
-                )
-            )
-            or r.get("_is_deceased", False)
-        ]
-        families_data = [
-            r
-            for r in families_data
-            if not (r.get("_husb_is_recent", False) and not r.get("_husb_is_deceased", False))
-            and not (r.get("_wife_is_recent", False) and not r.get("_wife_is_deceased", False))
-            and (
-                not is_recent(r["date_of_marriage"], birth_cutoff)
-                or r.get("_husb_is_deceased", False)
-                or r.get("_wife_is_deceased", False)
-            )
-        ]
-        # Strip internal fields before writing
-        for r in births_data:
-            r.pop("_is_deceased", None)
-            r.pop("_ptr", None)
-        for r in families_data:
-            r.pop("_husb_is_recent", None)
-            r.pop("_wife_is_recent", None)
-            r.pop("_husb_is_deceased", None)
-            r.pop("_wife_is_deceased", None)
-        filtered_births = births_before - len(births_data)
-        filtered_families = families_before - len(families_data)
-        filtered_deaths = deaths_before - len(deaths_data)
-        if filtered_births or filtered_families or filtered_deaths:
-            print(
-                f"  Filtered {filtered_births} recent birth(s), {filtered_families} recent family/families, "
-                f"{filtered_deaths} recent death(s)."
-            )
-
-        # --- 4. Write Output JSON Files ---
-        ged_mtime = os.path.getmtime(input_path)
-
-        # Sort the extracted data to ensure stable and deterministic JSON output
-        births_data.sort(
-            key=lambda x: (
-                x.get("surname", "") or "",
-                x.get("name", "") or "",
-                x.get("date_of_birth", "") or "",
-                x.get("place_of_birth", "") or "",
-            )
-        )
-        families_data.sort(
-            key=lambda x: (
-                x.get("husband_surname", "") or "",
-                x.get("husband_name", "") or "",
-                x.get("date_of_marriage", "") or "",
-                x.get("place_of_marriage", "") or "",
-            )
-        )
-        deaths_data.sort(
-            key=lambda x: (
-                x.get("surname", "") or "",
-                x.get("name", "") or "",
-                x.get("date_of_death", "") or "",
-                x.get("place_of_death", "") or "",
-            )
-        )
-
-        with open(births_output_path, "w", encoding="utf-8") as f:
-            json.dump(births_data, f, ensure_ascii=False, indent=4)
-        os.utime(births_output_path, (ged_mtime, ged_mtime))
-        print(
-            f"  -> Successfully created '{births_output_path}' with {len(births_data)} birth records."
-        )
-
-        with open(families_output_path, "w", encoding="utf-8") as f:
-            json.dump(families_data, f, ensure_ascii=False, indent=4)
-        os.utime(families_output_path, (ged_mtime, ged_mtime))
-        print(
-            f"  -> Successfully created '{families_output_path}' with {len(families_data)} family records."
-        )
-
-        with open(deaths_output_path, "w", encoding="utf-8") as f:
-            json.dump(deaths_data, f, ensure_ascii=False, indent=4)
-        os.utime(deaths_output_path, (ged_mtime, ged_mtime))
-        print(
-            f"  -> Successfully created '{deaths_output_path}' with {len(deaths_data)} death records."
-        )
-
-        # Add to metadata
-        links_count = (
-            sum(1 for r in births_data if r.get("links"))
-            + sum(1 for r in families_data if r.get("links"))
-            + sum(1 for r in deaths_data if r.get("links"))
-        )
-        metadata.append(
-            {
-                "contributor": contributor_id,
-                "births_count": len(births_data),
-                "families_count": len(families_data),
-                "deaths_count": len(deaths_data),
-                "links_count": links_count,
-                "last_modified": datetime.fromtimestamp(ged_mtime).isoformat(),
-                "url": contributor_urls.get(contributor_id),
-            }
-        )
+    # Process files in parallel; print each file's output as its future completes.
+    with ThreadPoolExecutor(max_workers=args.workers) as executor:
+        futures = {
+            executor.submit(
+                _process_one_file, filename, full_mode, contributor_urls, INPUT_DIR, OUTPUT_DIR
+            ): filename
+            for filename in gedcom_files
+        }
+        for future in as_completed(futures):
+            meta, log_lines = future.result()
+            for line in log_lines:
+                print(line)
+            if meta is not None:
+                metadata.append(meta)
 
     # Write global metadata.json for the frontend
     metadata.sort(key=lambda x: x.get("contributor", ""))
