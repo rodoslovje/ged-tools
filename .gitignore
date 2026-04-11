@@ -2,10 +2,7 @@
 .todo
 
 # Data folders (user files, not tracked)
-data/input/*
-data/output/*
-!data/input/.gitkeep
-!data/output/.gitkeep
+data
 
 # Virtual environments
 .venv/
