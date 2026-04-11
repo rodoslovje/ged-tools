@@ -69,8 +69,9 @@ Available Transformers:
                          years ago and no death record: set name to "private" and
                          remove all events. Uses birth, baptism, or christening
                          date. Complies with ZVOP-2 for living persons.
-    living100y_name_only Same detection as living100y_private but keeps the full
-                         name and surname. All events are still removed.
+    living100y_name_only Same detection as living100y_private but keeps surname and
+                         shortens given/middle names to initials (e.g. Luka Renko
+                         -> L. Renko). All events are still removed.
     died20y_private      Anonymize individuals whose death, burial, or cremation
                          was recorded within the last 20 years (date must be
                          present). Complies with ZVOP-2 post-mortem protection.
@@ -1955,6 +1956,30 @@ def process_file(
                     if birth_year is not None and (_curr_year2 - birth_year) < 100:
                         is_name_only = True
 
+            def _initials(given: str) -> str:
+                """Shorten each given/middle name word to its first letter and a dot."""
+                return " ".join(w[0].upper() + "." for w in given.split() if w)
+
+            def _shorten_name_value(val: str) -> str:
+                """Shorten given names in a GEDCOM NAME value (surname between slashes).
+
+                'Luka /Renko/' -> 'L. /Renko/'
+                'Ronja Sofija /Renko/' -> 'R. S. /Renko/'
+                """
+                m = re.match(r"^(.*?)(/[^/]*/)(.*?)$", val.strip())
+                if m:
+                    given_part = m.group(1).strip()
+                    surn_part = m.group(2)
+                    suffix = m.group(3).strip()
+                    short_given = _initials(given_part) if given_part else ""
+                    parts = [p for p in [short_given, surn_part, suffix] if p]
+                    return " ".join(parts)
+                # No surname slashes — shorten all but the last word (treat last as surname)
+                words = val.split()
+                if len(words) <= 1:
+                    return val
+                return _initials(" ".join(words[:-1])) + " " + words[-1]
+
             if is_name_only:
                 children = element.get_child_elements()
                 to_keep = []
@@ -1962,7 +1987,10 @@ def process_file(
                     if ch.get_tag() in ("FAMC", "FAMS", "SEX"):
                         to_keep.append(ch)
                     elif ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME:
-                        # Keep name tags (with GIVN/SURN sub-elements) unchanged
+                        ch.set_value(_shorten_name_value(ch.get_value()))
+                        for gch in ch.get_child_elements():
+                            if gch.get_tag() == "GIVN":
+                                gch.set_value(_initials(gch.get_value()))
                         to_keep.append(ch)
 
                 children.clear()

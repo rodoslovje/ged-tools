@@ -26,14 +26,20 @@ def extract_links(path: str) -> list[str]:
     return _URL_RE.findall(text)
 
 
+def two_level_domain(netloc: str) -> str:
+    """Reduce a hostname to its last two components (e.g. www.familysearch.org -> familysearch.org)."""
+    parts = netloc.lower().split(".")
+    return ".".join(parts[-2:]) if len(parts) >= 2 else netloc.lower()
+
+
 def domain_key(url: str) -> str:
-    return urlparse(url).netloc.lower()
+    return two_level_domain(urlparse(url).netloc)
 
 
 def domain_path_key(url: str, levels: int = 1) -> str:
     p = urlparse(url)
     segments = [s for s in p.path.strip("/").split("/") if s][:levels]
-    domain = p.netloc.lower()
+    domain = p.netloc.lower()  # full domain for path stats
     return "/".join([domain] + segments) if segments else domain
 
 
@@ -53,12 +59,14 @@ def main():
     parser.add_argument("files", nargs="+", metavar="FILE", help="Input GEDCOM file(s)")
     parser.add_argument("--top", type=int, default=None, metavar="N", help="Show only top N entries per stat group")
     parser.add_argument("--levels", type=int, default=1, metavar="N", help="Number of path segments to include in domain+path stats (default: 1)")
+    parser.add_argument("--verbose", action="store_true", help="Print per-file link counts")
     args = parser.parse_args()
 
     all_links: list[str] = []
     for path in args.files:
         links = extract_links(path)
-        print(f"{path}: {len(links)} links found")
+        if args.verbose:
+            print(f"{path}: {len(links)} links found")
         all_links.extend(links)
 
     if not all_links:

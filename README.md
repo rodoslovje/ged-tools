@@ -85,7 +85,7 @@ Options:
 | `latr_even` | Convert LATR to EVEN type="Land Transaction". |
 | `addr_to_plac` | Merge ADDR values into event PLAC tags. |
 | `living100y_private` | Anonymize individuals with a known birth year under 100 years ago and no death record: set name to `private` and remove all events. Uses birth, baptism, or christening date. Complies with ZVOP-2 for living persons. |
-| `living100y_name_only` | Same detection as `living100y_private` but keeps the full name and surname. All events are still removed. |
+| `living100y_name_only` | Same detection as `living100y_private` but keeps surname and shortens given/middle names to initials (e.g. `Luka Renko` → `L. Renko`). All events are still removed. |
 | `died20y_private` | Anonymize individuals whose death, burial, or cremation was recorded within the last 20 years (date must be present). Complies with ZVOP-2 post-mortem protection. |
 
 ### Presets
