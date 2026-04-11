@@ -44,9 +44,14 @@ Available Cleaners:
     place_placeholder    Clear empty/placeholder places.
     place_slovenia_rm    Remove "Slovenia" / "Slovenija" suffix from places.
     place_duplicate_rm   Remove adjacent duplicate components in places.
+    place_country_only   Reduce place to two parts: place, country.
 
 Available Strippers:
     ste, stf, sto, bkm   Strip proprietary MacFamilyTree / other app tags.
+    labl                 Remove _LABL (label) tags.
+    place_tran           Remove TRAN (translation) entries under PLAC tags.
+    mise                 Remove MISE tags.
+    object_crop          Remove CROP entries under OBJE tags.
     addr_longlati        Remove coordinates (LATI/LONG) from addresses.
     indi_race            Remove RACE tags.
     change_date          Remove CHAN (change date) tags.
@@ -56,6 +61,7 @@ Available Strippers:
     living               Remove individuals who are likely still living.
 
 Available Transformers:
+    secg_givn            Append NAME:SECG content to NAME:GIVN and remove the SECG tag.
     fid_fsftid           Rename _FID to _FSFTID (FamilySearch ID tag fix).
     latr_even            Convert LATR to EVEN type="Land Transaction".
     addr_to_plac         Merge ADDR values into event PLAC tags.
@@ -63,6 +69,8 @@ Available Transformers:
                          years ago and no death record: set name to "private" and
                          remove all events. Uses birth, baptism, or christening
                          date. Complies with ZVOP-2 for living persons.
+    living100y_name_only Same detection as living100y_private but keeps the full
+                         name and surname. All events are still removed.
     died20y_private      Anonymize individuals whose death, burial, or cremation
                          was recorded within the last 20 years (date must be
                          present). Complies with ZVOP-2 post-mortem protection.
@@ -70,12 +78,15 @@ Available Transformers:
 Available Presets:
     mft_webtrees         WebTrees compatibility for MacFamilyTree exports.
                          Cleaners: dd_mmm_yyyy, name_placeholder.
-                         Strippers: ste, stf, sto, bkm, addr_longlati,
+                         Strippers: ste, stf, sto, bkm, labl, addr_longlati, place_tran, mise, object_crop,
                            change_date, create_date, indi_race.
-                         Transformers: fid_fsftid, latr_even.
+                         Transformers: secg_givn, fid_fsftid, latr_even.
     mft_sgi              Slovenian Genealogy Institute formatting.
                          Cleaners: place_slovenia_rm.
                          Transformers: addr_to_plac, living100y_private.
+    mft_public           Public sharing from MacFamilyTree exports.
+                         Cleaners: place_country_only.
+                         Transformers: living100y_name_only.
     index_cleanup_sgi    Full cleanup and anonymization for public indices.
                          Cleaners: dd_mmm_yyyy, name_placeholder,
                            place_placeholder, place_duplicate_rm.
@@ -1349,12 +1360,34 @@ def clean_place_duplicate_rm(raw: str) -> tuple[str, None]:
     return cleaned, None
 
 
+# ---------------------------------------------------------------------------
+# Cleaner: place_country_only
+# ---------------------------------------------------------------------------
+
+
+def clean_place_country_only(raw: str) -> tuple[str, None]:
+    """
+    Reduce a comma-separated place string to at most two parts: place, country.
+    Takes the first component as the place and the last as the country.
+    If there is only one component, it is returned unchanged.
+    Returns (cleaned, None).
+    """
+    if not raw:
+        return raw, None
+    parts = [p.strip() for p in raw.split(",")]
+    if len(parts) <= 2:
+        return raw, None
+    cleaned = f"{parts[0]}, {parts[-1]}"
+    return cleaned, None
+
+
 CLEANERS = {
     "dd_mmm_yyyy": clean_date_dd_mmm_yyyy,
     "name_placeholder": clean_name_placeholder,
     "place_placeholder": clean_place_placeholder,
     "place_slovenia_rm": clean_place_slovenia_rm,
     "place_duplicate_rm": clean_place_duplicate_rm,
+    "place_country_only": clean_place_country_only,
 }
 
 
@@ -1369,6 +1402,7 @@ class StripSpec:
     parent_tag: str | None = (
         None  # None = level-0 records; str = children of that parent tag
     )
+    grandparent_tag: str | None = None  # if set, parent's parent must match this tag
     level: int | None = None  # None = any level; int = exact level match
 
 
@@ -1377,9 +1411,13 @@ STRIPPERS: dict[str, StripSpec | None] = {
     "stf": StripSpec(tags={"_STF"}),  # MacFamilyTree source-template fields (level-0)
     "sto": StripSpec(tags={"_STO"}, level=1),
     "bkm": StripSpec(tags={"_BKM"}, level=1),
+    "labl": StripSpec(tags={"_LABL"}, level=1),  # MacFamilyTree label tags
     "addr_longlati": StripSpec(
         tags={"LATI", "LONG", "MAP"}, parent_tag="ADDR"
     ),  # coords on ADDR unsupported by webtrees (direct or via MAP)
+    "place_tran": StripSpec(tags={"TRAN"}, parent_tag="PLAC"),  # remove place translations
+    "mise": StripSpec(tags={"MISE"}, level=1),
+    "object_crop": StripSpec(tags={"CROP"}, parent_tag="OBJE"),  # remove crop rectangles from media objects
     "indi_race": StripSpec(tags={"RACE"}, parent_tag="INDI"),
     "change_date": StripSpec(tags={"CHAN"}, level=2),
     "create_date": StripSpec(tags={"CREA"}, level=2),
@@ -1415,8 +1453,10 @@ TRANSFORMERS: dict[str, dict[str, str | TagTransform] | None] = {
         "LATR": TagTransform(rename="EVEN", add_children=[("TYPE", "Land Transaction")])
     },
     # Custom transformers (None = handled separately):
+    "secg_givn": None,  # append NAME:SECG content to NAME:GIVN and remove SECG
     "addr_to_plac": None,  # merge ADDR value into PLAC (prepend with ", ") for event elements
     "living100y_private": None,
+    "living100y_name_only": None,
     "died20y_private": None,
 }
 
@@ -1433,16 +1473,24 @@ PRESETS: dict[str, dict[str, list[str]]] = {
             "stf",
             "sto",
             "bkm",
+            "labl",
             "addr_longlati",
+            "place_tran",
+            "mise",
+            "object_crop",
             "change_date",
             "create_date",
             "indi_race",
         ],
-        "transform": ["fid_fsftid", "latr_even"],
+        "transform": ["secg_givn", "fid_fsftid", "latr_even"],
     },
     "mft_sgi": {
         "clean": ["place_slovenia_rm"],
         "transform": ["addr_to_plac", "living100y_private"],
+    },
+    "mft_public": {
+        "clean": ["place_country_only"],
+        "transform": ["living100y_name_only"],
     },
     "index_cleanup_sgi": {
         "clean": [
@@ -1608,6 +1656,20 @@ def process_file(
                     print(f"  [clean:place_duplicate_rm] {raw!r} -> {cleaned!r}  — {_record_label(element)}")
                 element.set_value(cleaned)
 
+    if "place_country_only" in cleaners:
+        s = stats["place_country_only"]
+        for element in parser.get_element_list():
+            if element.get_tag() != gedcom.tags.GEDCOM_TAG_PLACE:
+                continue
+            raw = element.get_value()
+            s.processed += 1
+            cleaned, _ = clean_place_country_only(raw)
+            if cleaned != raw:
+                s.fixed += 1
+                if verbose:
+                    print(f"  [clean:place_country_only] {raw!r} -> {cleaned!r}  — {_record_label(element)}")
+                element.set_value(cleaned)
+
     for name in transformers:
         if TRANSFORMERS[name] is None:
             continue  # custom transformer — handled separately below
@@ -1641,6 +1703,45 @@ def process_file(
             if verbose:
                 print(
                     f"  [transform:{name}] {old_tag} -> {new_tag}  {element.get_value()!r}  — {_record_label(element)}"
+                )
+
+    if "secg_givn" in transformers:
+        ts = transform_stats["secg_givn"]
+        for element in parser.get_element_list():
+            if element.get_tag() != gedcom.tags.GEDCOM_TAG_NAME:
+                continue
+            children = element.get_child_elements()
+            secg_els = [ch for ch in children if ch.get_tag() == "SECG"]
+            if not secg_els:
+                continue
+            ts.processed += 1
+            secg_val = secg_els[0].get_value().strip()
+            if not secg_val:
+                continue
+            givn_els = [ch for ch in children if ch.get_tag() == "GIVN"]
+            if givn_els:
+                old_givn = givn_els[0].get_value()
+                new_givn = (old_givn.strip() + " " + secg_val).strip()
+                givn_els[0].set_value(new_givn)
+            else:
+                givn_el = Element(
+                    element.get_level() + 1,
+                    "",
+                    "GIVN",
+                    secg_val,
+                    "\n",
+                    multi_line=False,
+                )
+                givn_el.set_parent_element(element)
+                children.insert(0, givn_el)
+                new_givn = secg_val
+                old_givn = ""
+            for secg_el in secg_els:
+                children.remove(secg_el)
+            ts.transformed += 1
+            if verbose:
+                print(
+                    f"  [transform:secg_givn] SECG {secg_val!r} appended to GIVN {old_givn!r} -> {new_givn!r}  — {_record_label(element)}"
                 )
 
     if "addr_to_plac" in transformers:
@@ -1799,6 +1900,82 @@ def process_file(
                         f"  [transform:living100y_private] anonymised INDI {element.get_pointer()} {' '.join(parts)}"
                     )
 
+    if "living100y_name_only" in transformers:
+        import datetime as _dt2
+
+        ts = transform_stats["living100y_name_only"]
+        _curr_year2 = _dt2.date.today().year
+
+        for element in parser.get_root_child_elements():
+            if element.get_tag() != gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
+                continue
+
+            ts.processed += 1
+            name_val = ""
+            name_val_display = ""
+
+            for ch in element.get_child_elements():
+                if ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME:
+                    name_val_display = ch.get_value().replace("/", "").strip()
+                    name_val = name_val_display.lower()
+                    break
+
+            is_name_only = False
+            if name_val == "living":
+                is_name_only = True
+            else:
+                has_death = False
+                birth_year = None
+                birth_date_str = None
+                for ch in element.get_child_elements():
+                    tag = ch.get_tag()
+                    if tag in ("DEAT", "BURI", "CREM"):
+                        if ch.get_value().strip().upper() != "N":
+                            has_death = True
+                    elif tag == "EVEN":
+                        for gch in ch.get_child_elements():
+                            if (
+                                gch.get_tag() == "TYPE"
+                                and "death" in gch.get_value().lower()
+                            ):
+                                has_death = True
+                    elif tag in ("BIRT", "BAPM", "CHR"):
+                        for gch in ch.get_child_elements():
+                            if gch.get_tag() == gedcom.tags.GEDCOM_TAG_DATE:
+                                m = re.search(
+                                    r"\b(1[0-9]{3}|20[0-2][0-9])\b", gch.get_value()
+                                )
+                                if m:
+                                    y = int(m.group(1))
+                                    if birth_year is None or tag == "BIRT":
+                                        birth_year = y
+                                        birth_date_str = gch.get_value().strip()
+
+                if not has_death:
+                    if birth_year is not None and (_curr_year2 - birth_year) < 100:
+                        is_name_only = True
+
+            if is_name_only:
+                children = element.get_child_elements()
+                to_keep = []
+                for ch in children:
+                    if ch.get_tag() in ("FAMC", "FAMS", "SEX"):
+                        to_keep.append(ch)
+                    elif ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME:
+                        # Keep name tags (with GIVN/SURN sub-elements) unchanged
+                        to_keep.append(ch)
+
+                children.clear()
+                children.extend(to_keep)
+
+                ts.transformed += 1
+                if verbose:
+                    parts = [name_val_display or "?"]
+                    parts.append(f"b.{birth_date_str}" if birth_date_str else "b.?")
+                    print(
+                        f"  [transform:living100y_name_only] name-only INDI {element.get_pointer()} {' '.join(parts)}"
+                    )
+
     if "died20y_private" in transformers:
         import datetime as _dt
 
@@ -1898,11 +2075,13 @@ def process_file(
                 if el.get_tag() not in spec.tags:
                     continue
                 if spec.parent_tag is not None:
-                    if (
-                        el.get_parent_element() is None
-                        or el.get_parent_element().get_tag() != spec.parent_tag
-                    ):
+                    parent = el.get_parent_element()
+                    if parent is None or parent.get_tag() != spec.parent_tag:
                         continue
+                    if spec.grandparent_tag is not None:
+                        grandparent = parent.get_parent_element()
+                        if grandparent is None or grandparent.get_tag() != spec.grandparent_tag:
+                            continue
                 if spec.level is not None:
                     if el.get_level() != spec.level:
                         continue
@@ -1914,7 +2093,9 @@ def process_file(
                 if verbose:
                     label = _record_label(element)
                     msg = f"  [strip:{name}] removing {element.get_tag()}"
-                    if spec.parent_tag:
+                    if spec.grandparent_tag and spec.parent_tag:
+                        msg += f" under {spec.grandparent_tag}:{spec.parent_tag}"
+                    elif spec.parent_tag:
                         msg += f" under {spec.parent_tag}"
                     msg += f"  — {label}"
                     print(msg)
