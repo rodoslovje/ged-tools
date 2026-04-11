@@ -10,9 +10,7 @@ Options:
     --clean CLEANER[,CLEANER...]    Apply specific formatting cleaners.
     --strip STRIPPER[,STRIPPER...]  Strip specific tags or records.
     --transform TRANS[,TRANS...]    Transform specific tags or structures.
-    --warn                          Print warnings to stderr (e.g. unparsed dates).
     --verbose                       Print every change performed.
-    --stats                         Print summary statistics at the end.
 
 Processors
 ----------
@@ -102,20 +100,52 @@ Examples:
     python tools/gedcom_cleaner.py family.ged out.ged --preset mft_webtrees --strip change_date
 
     # Apply individual processors with verbose output
-    python tools/gedcom_cleaner.py family.ged out.ged --clean dd_mmm_yyyy --transform living100y_private --verbose --stats
+    python tools/gedcom_cleaner.py family.ged out.ged --clean dd_mmm_yyyy --transform living100y_private --verbose
 """
 
 import argparse
+import io
+import locale
 import os
 import re
 import sys
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
 import chardet
 from gedcom.element.element import Element
 from gedcom.parser import Parser
 import gedcom.tags
+
+
+# ---------------------------------------------------------------------------
+# Thread-local stdout/stderr proxy
+# ---------------------------------------------------------------------------
+
+class _ThreadLocalStream:
+    """Proxy for sys.stdout/sys.stderr that dispatches to a per-thread override
+    when set, falling back to the real stream for the main thread and any thread
+    that has not installed an override. This allows worker threads to capture
+    their own output without clobbering the global sys.stdout/sys.stderr."""
+
+    def __init__(self, real_stream):
+        object.__setattr__(self, "_real", real_stream)
+        object.__setattr__(self, "_local", threading.local())
+
+    def _target(self):
+        return getattr(self._local, "override", self._real)
+
+    def write(self, s):
+        return self._target().write(s)
+
+    def flush(self):
+        return self._target().flush()
+
+    # Forward any other attribute access (e.g. .encoding, .reconfigure) to real
+    def __getattr__(self, name):
+        return getattr(self._real, name)
 
 
 # ---------------------------------------------------------------------------
@@ -2296,17 +2326,83 @@ def process_file(
 # ---------------------------------------------------------------------------
 
 
+def _process_one_file_batch(
+    filename: str,
+    input_dir: str,
+    output_dir: str,
+    cleaners: list[str],
+    strippers: list[str],
+    transformers: list[str],
+    warn: bool,
+    verbose: bool,
+) -> tuple[str, dict, dict, dict, str, str]:
+    """Process a single file for batch mode. Returns (filename, clean_stats, strip_stats,
+    transform_stats, captured_stdout, captured_stderr)."""
+    # Print before installing the thread-local override so this goes to the
+    # real terminal (no override set yet for this thread).
+    print(f"Processing: {filename}")
+
+    input_path = os.path.join(input_dir, filename)
+    output_path = os.path.join(output_dir, filename)
+
+    buf_out = io.StringIO()
+    buf_err = io.StringIO()
+    # Install thread-local overrides so only this thread's output is captured
+    sys.stdout._local.override = buf_out
+    sys.stderr._local.override = buf_err
+    try:
+        clean_stats, strip_stats, transform_stats = process_file(
+            input_path, output_path, cleaners, strippers, transformers, warn, verbose
+        )
+    except SystemExit:
+        clean_stats, strip_stats, transform_stats = {}, {}, {}
+    finally:
+        del sys.stdout._local.override
+        del sys.stderr._local.override
+
+    def _prefix(text: str) -> str:
+        if not text:
+            return text
+        return "\n".join(f"[{filename}] {line}" if line.strip() else line
+                         for line in text.splitlines()) + "\n"
+
+    return filename, clean_stats, strip_stats, transform_stats, _prefix(buf_out.getvalue()), _prefix(buf_err.getvalue())
+
+
 def main():
+    # Install thread-local proxies before any output so worker threads can
+    # capture their own stdout/stderr without clobbering the global streams.
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
+    sys.stdout = _ThreadLocalStream(sys.stdout)
+    sys.stderr = _ThreadLocalStream(sys.stderr)
 
     parser = argparse.ArgumentParser(
         description="Clean and normalise a GEDCOM file.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("input", help="Input GEDCOM file (.ged)")
-    parser.add_argument("output", help="Output GEDCOM file (.ged)")
+    parser.add_argument("input", nargs="?", help="Input GEDCOM file (.ged)")
+    parser.add_argument("output", nargs="?", help="Output GEDCOM file (.ged)")
+    parser.add_argument(
+        "--input-dir",
+        default="",
+        metavar="DIR",
+        help="Process all .ged files in DIR (batch mode)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="",
+        metavar="DIR",
+        help="Write processed files to DIR (batch mode)",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=16,
+        metavar="N",
+        help="Number of parallel workers in batch mode (default: 16)",
+    )
     parser.add_argument(
         "--clean",
         default="",
@@ -2332,19 +2428,9 @@ def main():
         help=f"Apply a predefined combination of processors. Available: {', '.join(PRESETS)}",
     )
     parser.add_argument(
-        "--warn",
-        action="store_true",
-        help="Print dates that could not be converted to stderr",
-    )
-    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Print every conversion performed",
-    )
-    parser.add_argument(
-        "--stats",
-        action="store_true",
-        help="Print per-cleaner statistics at the end",
     )
 
     args = parser.parse_args()
@@ -2414,6 +2500,120 @@ def main():
         print(f"Strippers:    {', '.join(requested_strip)}")
     if requested_transform:
         print(f"Transformers: {', '.join(requested_transform)}")
+
+    # --- Batch mode ---
+    if args.input_dir:
+        if not args.output_dir:
+            print("ERROR: --output-dir is required with --input-dir", file=sys.stderr)
+            sys.exit(1)
+        os.makedirs(args.output_dir, exist_ok=True)
+
+        try:
+            locale.setlocale(locale.LC_COLLATE, ("sl_SI", "UTF-8"))
+        except locale.Error:
+            locale.setlocale(locale.LC_COLLATE, "")
+
+        ged_files = sorted(
+            [f for f in os.listdir(args.input_dir) if f.lower().endswith(".ged")],
+            key=locale.strxfrm,
+        )
+        if not ged_files:
+            print(f"No .ged files found in '{args.input_dir}'.")
+            sys.exit(0)
+
+        print(f"Input dir:    {args.input_dir}")
+        print(f"Output dir:   {args.output_dir}")
+        print(f"Files:        {len(ged_files)}  Workers: {args.workers}")
+        print()
+
+        all_results: list[tuple[str, dict, dict, dict]] = []
+
+        with ThreadPoolExecutor(max_workers=args.workers) as executor:
+            futures = {}
+            for filename in ged_files:
+                futures[executor.submit(
+                    _process_one_file_batch,
+                    filename,
+                    args.input_dir,
+                    args.output_dir,
+                    requested_clean,
+                    requested_strip,
+                    requested_transform,
+                    True,
+                    args.verbose,
+                )] = filename
+            pending = set(futures.values())
+            for future in as_completed(futures):
+                pending.discard(futures[future])
+                filename, c_stats, s_stats, t_stats, out, err = future.result()
+                if out:
+                    print(out, end="")
+                if err:
+                    print(err, end="", file=sys.stderr)
+                all_results.append((filename, c_stats, s_stats, t_stats))
+                if 0 < len(pending) <= args.workers:
+                    print(f"Waiting for: {', '.join(sorted(pending, key=locale.strxfrm))}")
+
+        print("Completed!")
+
+        # --- Summary table ---
+        # Collect processor names in processing order: cleaners → strippers → transformers
+        proc_names: list[str] = []
+        for name in requested_clean + requested_strip + requested_transform:
+            if name not in proc_names:
+                proc_names.append(name)
+
+        def _changed(c_stats, s_stats, t_stats, name):
+            if name in c_stats:
+                return c_stats[name].fixed
+            if name in s_stats:
+                return s_stats[name].removed
+            if name in t_stats:
+                return t_stats[name].transformed
+            return 0
+
+        # Only keep processors that changed something in at least one file
+        active_procs = [p for p in proc_names if any(_changed(c, s, t, p) for _, c, s, t in all_results)]
+
+        all_results.sort(key=lambda x: locale.strxfrm(x[0]))
+
+        # Strip .ged/.GED extension for display
+        def _stem(fn: str) -> str:
+            return fn[:-4] if fn.lower().endswith(".ged") else fn
+
+        file_col = max((len(_stem(r[0])) for r in all_results), default=4)
+        file_col = max(file_col, len("File"))
+        proc_widths = [max(len(p), 4) for p in active_procs]
+
+        header_parts = [f"{'File':<{file_col}}"]
+        for p, w in zip(active_procs, proc_widths):
+            header_parts.append(f"{p:>{w}}")
+        header = "  ".join(header_parts)
+        print(f"\n{header}")
+        print("-" * len(header))
+
+        totals = [0] * len(active_procs)
+        for filename, c_stats, s_stats, t_stats in all_results:
+            row_parts = [f"{_stem(filename):<{file_col}}"]
+            for i, (p, w) in enumerate(zip(active_procs, proc_widths)):
+                v = _changed(c_stats, s_stats, t_stats, p)
+                totals[i] += v
+                row_parts.append(f"{v if v else '':>{w}}")
+            print("  ".join(row_parts))
+
+        print("-" * len(header))
+        total_parts = [f"{'TOTAL':<{file_col}}"]
+        for t, w in zip(totals, proc_widths):
+            total_parts.append(f"{t:>{w}}")
+        print("  ".join(total_parts))
+
+        os._exit(0)
+
+    # --- Single-file mode ---
+    if not args.input or not args.output:
+        print("ERROR: provide input and output files, or use --input-dir / --output-dir", file=sys.stderr)
+        sys.exit(1)
+
     print(f"Input:        {args.input}")
     print(f"Output:       {args.output}")
     print()
@@ -2424,41 +2624,39 @@ def main():
         requested_clean,
         requested_strip,
         requested_transform,
-        args.warn,
+        True,
         args.verbose,
     )
 
     total_warn = sum(s.warn for s in stats.values())
     if total_warn:
-        note = " (use --warn to see details)" if not args.warn else ""
-        print(f"{total_warn} value(s) could not be converted{note}.", file=sys.stderr)
+        print(f"{total_warn} value(s) could not be converted.", file=sys.stderr)
 
     print(f"Saved: {args.output}")
 
-    if args.stats:
-        rows = []
-        for name, s in stats.items():
-            rows.append(("cleaner", name, str(s.processed), str(s.fixed), str(s.warn)))
-        for name, s in strip_stats.items():
-            rows.append(("stripper", name, str(s.processed), str(s.removed), "-"))
-        for name, s in transform_stats.items():
-            rows.append(
-                ("transformer", name, str(s.processed), str(s.transformed), "-")
-            )
+    rows = []
+    for name, s in stats.items():
+        rows.append(("cleaner", name, str(s.processed), str(s.fixed), str(s.warn)))
+    for name, s in strip_stats.items():
+        rows.append(("stripper", name, str(s.processed), str(s.removed), "-"))
+    for name, s in transform_stats.items():
+        rows.append(
+            ("transformer", name, str(s.processed), str(s.transformed), "-")
+        )
 
-        if rows:
-            headers = ("type", "name", "processed", "changed", "warn")
-            widths = [
-                max(len(h), max(len(r[i]) for r in rows)) for i, h in enumerate(headers)
-            ]
-            fmt = "  ".join(
-                f"{{:<{w}}}" if i < 2 else f"{{:>{w}}}" for i, w in enumerate(widths)
-            )
-            print()
-            print(fmt.format(*headers))
-            print("-" * (sum(widths) + 2 * (len(widths) - 1)))
-            for row in rows:
-                print(fmt.format(*row))
+    if rows:
+        headers = ("type", "name", "processed", "changed", "warn")
+        widths = [
+            max(len(h), max(len(r[i]) for r in rows)) for i, h in enumerate(headers)
+        ]
+        fmt = "  ".join(
+            f"{{:<{w}}}" if i < 2 else f"{{:>{w}}}" for i, w in enumerate(widths)
+        )
+        print()
+        print(fmt.format(*headers))
+        print("-" * (sum(widths) + 2 * (len(widths) - 1)))
+        for row in rows:
+            print(fmt.format(*row))
 
 
 if __name__ == "__main__":

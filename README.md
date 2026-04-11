@@ -35,9 +35,7 @@ Options:
   --clean CLEANER[,CLEANER...]    Apply specific formatting cleaners
   --strip STRIPPER[,STRIPPER...]  Strip specific tags or records
   --transform TRANS[,TRANS...]    Transform specific tags or structures
-  --warn                          Print warnings to stderr (e.g. unparsed dates)
   --verbose                       Print every change performed
-  --stats                         Print summary statistics at the end
 ```
 
 ### Processor types
@@ -109,7 +107,7 @@ python tools/gedcom-cleaner.py family.ged out.ged --preset index_cleanup_sgi
 python tools/gedcom-cleaner.py family.ged out.ged --preset mft_webtrees --strip change_date
 
 # Apply individual processors with verbose output
-python tools/gedcom-cleaner.py family.ged out.ged --clean dd_mmm_yyyy --transform living100y_private --verbose --stats
+python tools/gedcom-cleaner.py family.ged out.ged --clean dd_mmm_yyyy --transform living100y_private --verbose
 ```
 
 ## gedcom-to-json
