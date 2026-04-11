@@ -21,7 +21,7 @@ import re
 import sys
 from pathlib import Path
 
-_MATRICULA_RE = re.compile(r'https?://(?:data\.)?matricula-online\.eu/[^\s\'"<>\]]+', re.IGNORECASE)
+_MATRICULA_RE = re.compile(r'https?://(?:data\.)?matricula-online\.eu(?:/[^/\s\'"<>\]]+){5,}[^\s\'"<>\]]*', re.IGNORECASE)
 
 
 def _read_lines(path: Path) -> list[str]:

@@ -145,7 +145,7 @@ def get_name_surname(individual):
     return "", ""
 
 
-MATRICULA_RE = re.compile(r"https?://data\.matricula-online\.eu/[^\"\s<]+")
+MATRICULA_RE = re.compile(r"https?://data\.matricula-online\.eu(?:/[^/\"\s<]+){5,}[^\"\s<]*")
 GENEANET_CEMETERY_RE = re.compile(
     r"https?://[a-z]{2}\.geneanet\.org/(?:cemetery|friedhof)[^\"\s<]*"
 )
@@ -208,9 +208,10 @@ def _find_all_links(text):
     if not text:
         return []
     links = []
-    url = _find_matricula_url(text)
-    if url:
-        links.append(url)
+    for m in MATRICULA_RE.finditer(text):
+        url = _normalize_matricula_url(m.group().rstrip(".,;)"))
+        if url not in links:
+            links.append(url)
     for pattern in (
         GENEANET_CEMETERY_RE,
         FINDAGRAVE_RE,
@@ -219,8 +220,7 @@ def _find_all_links(text):
         SISTORY_CENSUS_RE,
         FAMILYSEARCH_RE,
     ):
-        m = pattern.search(text)
-        if m:
+        for m in pattern.finditer(text):
             url = m.group().rstrip(".,;)")
             if url not in links:
                 links.append(url)
