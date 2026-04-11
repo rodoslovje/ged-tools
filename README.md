@@ -28,7 +28,11 @@ pip install -r requirements.txt
 Cleans, strips, and transforms GEDCOM files. Processors are applied in order: **cleaners → transformers → strippers**.
 
 ```bash
+# Single file
 python tools/gedcom-cleaner.py <input.ged> <output.ged> [OPTIONS]
+
+# Batch mode
+python tools/gedcom-cleaner.py --input-dir DIR --output-dir DIR [STEM ...] [OPTIONS]
 
 Options:
   --preset PRESET                 Apply a predefined combination of processors
@@ -36,6 +40,10 @@ Options:
   --strip STRIPPER[,STRIPPER...]  Strip specific tags or records
   --transform TRANS[,TRANS...]    Transform specific tags or structures
   --verbose                       Print every change performed
+  --input-dir DIR                 Process all .ged files in DIR (batch mode)
+  --output-dir DIR                Write processed files to DIR (batch mode)
+  --workers N                     Parallel workers in batch mode (default: 16)
+  STEM ...                        File stems to process in batch mode (default: all)
 ```
 
 ### Processor types
@@ -100,7 +108,7 @@ A preset is a named combination of processors for a common use case. Can be comb
 ### Examples
 
 ```bash
-# Apply a preset
+# Apply a preset to a single file
 python tools/gedcom-cleaner.py family.ged out.ged --preset index_cleanup_sgi
 
 # Combine a preset with an extra stripper
@@ -108,6 +116,12 @@ python tools/gedcom-cleaner.py family.ged out.ged --preset mft_webtrees --strip 
 
 # Apply individual processors with verbose output
 python tools/gedcom-cleaner.py family.ged out.ged --clean dd_mmm_yyyy --transform living100y_private --verbose
+
+# Batch: process all files in a directory
+python tools/gedcom-cleaner.py --input-dir data/input --output-dir data/filtered --preset mft_webtrees
+
+# Batch: process specific files only
+python tools/gedcom-cleaner.py --input-dir data/input --output-dir data/filtered --preset mft_webtrees Košir Hawlina
 ```
 
 ## gedcom-to-json

@@ -3,7 +3,8 @@
 gedcom-cleaner: Read a GEDCOM file and clean, strip, or transform its content.
 
 Usage:
-    python tools/gedcom_cleaner.py <input.ged> <output.ged> [OPTIONS]
+    python tools/gedcom-cleaner.py <input.ged> <output.ged> [OPTIONS]
+    python tools/gedcom-cleaner.py --input-dir DIR --output-dir DIR [STEM ...] [OPTIONS]
 
 Options:
     --preset PRESET                 Apply a predefined combination of processors.
@@ -11,6 +12,10 @@ Options:
     --strip STRIPPER[,STRIPPER...]  Strip specific tags or records.
     --transform TRANS[,TRANS...]    Transform specific tags or structures.
     --verbose                       Print every change performed.
+    --input-dir DIR                 Process all .ged files in DIR (batch mode).
+    --output-dir DIR                Write processed files to DIR (batch mode).
+    --workers N                     Parallel workers in batch mode (default: 16).
+    STEM ...                        File stems to process in batch mode (default: all).
 
 Processors
 ----------
@@ -93,14 +98,20 @@ Available Presets:
                          Transformers: living100y_private, died20y_private.
 
 Examples:
-    # Apply a preset
-    python tools/gedcom_cleaner.py family.ged out.ged --preset index_cleanup_sgi
+    # Apply a preset to a single file
+    python tools/gedcom-cleaner.py family.ged out.ged --preset index_cleanup_sgi
 
     # Combine a preset with an extra stripper
-    python tools/gedcom_cleaner.py family.ged out.ged --preset mft_webtrees --strip change_date
+    python tools/gedcom-cleaner.py family.ged out.ged --preset mft_webtrees --strip change_date
 
     # Apply individual processors with verbose output
-    python tools/gedcom_cleaner.py family.ged out.ged --clean dd_mmm_yyyy --transform living100y_private --verbose
+    python tools/gedcom-cleaner.py family.ged out.ged --clean dd_mmm_yyyy --transform living100y_private --verbose
+
+    # Batch: process all files in a directory
+    python tools/gedcom-cleaner.py --input-dir data/input --output-dir data/filtered --preset mft_webtrees
+
+    # Batch: process specific files only
+    python tools/gedcom-cleaner.py --input-dir data/input --output-dir data/filtered --preset mft_webtrees Košir Hawlina
 """
 
 import argparse
@@ -2391,6 +2402,12 @@ def main():
         help="Process all .ged files in DIR (batch mode)",
     )
     parser.add_argument(
+        "stems",
+        nargs="*",
+        metavar="STEM",
+        help="File stems to process in batch mode (e.g. Košir Hawlina). Default: all files.",
+    )
+    parser.add_argument(
         "--output-dir",
         default="",
         metavar="DIR",
@@ -2513,10 +2530,16 @@ def main():
         except locale.Error:
             locale.setlocale(locale.LC_COLLATE, "")
 
-        ged_files = sorted(
-            [f for f in os.listdir(args.input_dir) if f.lower().endswith(".ged")],
-            key=locale.strxfrm,
-        )
+        all_in_dir = [f for f in os.listdir(args.input_dir) if f.lower().endswith(".ged")]
+        if args.stems:
+            stems_lower = {s.lower() for s in args.stems}
+            ged_files = [f for f in all_in_dir if os.path.splitext(f)[0].lower() in stems_lower]
+            missing = [s for s in args.stems if s.lower() not in {os.path.splitext(f)[0].lower() for f in ged_files}]
+            if missing:
+                print(f"WARNING: stems not found in '{args.input_dir}': {', '.join(missing)}", file=sys.stderr)
+        else:
+            ged_files = all_in_dir
+        ged_files = sorted(ged_files, key=locale.strxfrm)
         if not ged_files:
             print(f"No .ged files found in '{args.input_dir}'.")
             sys.exit(0)
@@ -2557,9 +2580,9 @@ def main():
         print("Completed!")
 
         # --- Summary table ---
-        # Collect processor names in processing order: cleaners → strippers → transformers
+        # Collect processor names in processing order: cleaners → transformers → strippers
         proc_names: list[str] = []
-        for name in requested_clean + requested_strip + requested_transform:
+        for name in requested_clean + requested_transform + requested_strip:
             if name not in proc_names:
                 proc_names.append(name)
 
