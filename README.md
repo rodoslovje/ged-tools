@@ -112,6 +112,68 @@ python tools/gedcom-cleaner.py family.ged out.ged --preset mft_webtrees --strip 
 python tools/gedcom-cleaner.py family.ged out.ged --clean dd_mmm_yyyy --transform living100y_private --verbose --stats
 ```
 
+## gedcom-to-json
+
+Converts GEDCOM files from `data/filtered/` into JSON output files in `data/output/`. For each input file it produces three JSON files: `<stem>-births.json`, `<stem>-families.json`, and `<stem>-deaths.json`. Contributor metadata is read from `data/contributors.json`.
+
+```bash
+python tools/gedcom-to-json.py [--mode update|full]
+
+Options:
+  --mode update  (default) Skip files whose JSON output is already up to date
+  --mode full    Process all files and overwrite existing JSON
+```
+
+## gedcom-links
+
+Extracts all HTTP/HTTPS links from one or more GEDCOM files and prints frequency statistics grouped by domain and by domain + path prefix.
+
+```bash
+python tools/gedcom-links.py <file.ged> [<file.ged> ...] [OPTIONS]
+
+Options:
+  --top N      Show only the top N entries per group
+  --levels N   Number of path segments to include in domain+path stats (default: 1)
+  --verbose    Print per-file link counts
+```
+
+Example output:
+
+```
+Total links: 142
+
+By domain
+---------
+    98  matricula-online.eu
+    44  familysearch.org
+
+By domain + 1 path segment(s)
+------------------------------
+    98  data.matricula-online.eu/en
+    44  www.familysearch.org/ark
+```
+
+## compare-links
+
+Checks that every `matricula-online.eu` link in filtered GED files is referenced in the corresponding JSON output. Reports links present in the GED but missing from all three JSON files (`-births`, `-families`, `-deaths`), along with the INDI/FAM record(s) they are attached to.
+
+```bash
+python tools/compare-links.py <filtered_dir> <output_dir> [STEM ...]
+
+  filtered_dir   Directory containing filtered .ged files
+  output_dir     Directory containing *-births.json, *-families.json, *-deaths.json
+  STEM           Optional list of file stems to process (default: all .ged files)
+```
+
+Example output:
+
+```
+=== Renko — 2 missing link(s) ===
+  https://data.matricula-online.eu/en/...
+    INDI @I42@ — Janez Renko (b.1850, d.1920)
+Košir: OK
+```
+
 ## Project Structure
 
 ```
