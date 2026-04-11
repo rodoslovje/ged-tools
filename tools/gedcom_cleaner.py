@@ -1,47 +1,96 @@
 #!/usr/bin/env python3
 """
-gedcom-cleaner: Read a GEDCOM file and save it in a cleaned format.
+gedcom-cleaner: Read a GEDCOM file and clean, strip, or transform its content.
 
 Usage:
     python tools/gedcom_cleaner.py <input.ged> <output.ged> [OPTIONS]
 
 Options:
-    --preset PRESET                 Apply a predefined combination of processors
-    --clean CLEANER[,CLEANER...]    Apply specific formatting cleaners
-    --strip STRIPPER[,STRIPPER...]  Strip specific tags or records
-    --transform TRANS[,TRANS...]    Transform specific tags or structures
-    --warn                          Print warnings to stderr (e.g. unparsed dates)
-    --verbose                       Print every conversion performed
-    --stats                         Print summary statistics at the end
+    --preset PRESET                 Apply a predefined combination of processors.
+    --clean CLEANER[,CLEANER...]    Apply specific formatting cleaners.
+    --strip STRIPPER[,STRIPPER...]  Strip specific tags or records.
+    --transform TRANS[,TRANS...]    Transform specific tags or structures.
+    --warn                          Print warnings to stderr (e.g. unparsed dates).
+    --verbose                       Print every change performed.
+    --stats                         Print summary statistics at the end.
+
+Processors
+----------
+Processors are the individual operations applied to the GEDCOM file. There are
+three types, applied in this order: cleaners → transformers → strippers.
+
+  Cleaners   Normalize field values in-place. The record structure is unchanged;
+             only the text content of tags is cleaned (e.g. date format fixes,
+             removing placeholder text). A cleaner receives a raw string value
+             and returns a corrected one.
+
+  Transformers  Restructure or reclassify records. May rename tags, move values
+             between tags, or anonymize entire individuals. Transformers operate
+             on the element tree and can add, remove, or rewrite child elements.
+
+  Strippers  Remove unwanted tags or entire records from the output. Strippers
+             run last so that cleaners and transformers have already processed
+             any data worth keeping before it is discarded.
+
+Presets
+-------
+A preset is a named combination of cleaners, strippers, and transformers that
+covers a common use case. Presets and individual processor flags can be combined:
+processors from both sources are merged (preset first, then explicit flags).
 
 Available Cleaners:
     dd_mmm_yyyy          Normalize all dates to DD MMM YYYY format.
-    name_placeholder     Clear empty/placeholder names (e.g., "___", "???").
+    name_placeholder     Clear empty/placeholder names (e.g. "___", "???").
     place_placeholder    Clear empty/placeholder places.
-    place_slovenia_rm    Remove "Slovenia" / "Slovenija" from places.
+    place_slovenia_rm    Remove "Slovenia" / "Slovenija" suffix from places.
     place_duplicate_rm   Remove adjacent duplicate components in places.
 
 Available Strippers:
-    ste, stf, sto, bkm   Strip proprietary app tags.
-    addr_longlati        Remove coordinates from addresses.
+    ste, stf, sto, bkm   Strip proprietary MacFamilyTree / other app tags.
+    addr_longlati        Remove coordinates (LATI/LONG) from addresses.
     indi_race            Remove RACE tags.
-    change_date          Remove CHAN (change) tags.
-    create_date          Remove CREA (creation) tags.
+    change_date          Remove CHAN (change date) tags.
+    create_date          Remove CREA (creation date) tags.
     noname_indi          Remove individuals with no valid name.
     noname_fam           Remove families with no named spouses.
     living               Remove individuals who are likely still living.
 
 Available Transformers:
-    fid_fsftid           Rename _FID to _FSFTID.
+    fid_fsftid           Rename _FID to _FSFTID (FamilySearch ID tag fix).
     latr_even            Convert LATR to EVEN type="Land Transaction".
     addr_to_plac         Merge ADDR values into event PLAC tags.
-    living100y_private       Anonymize names/events of living people to "private".
-    died20y_private      Anonymize people whose death/burial/cremation was in the last 20 years.
+    living100y_private   Anonymize individuals with a known birth year under 100
+                         years ago and no death record: set name to "private" and
+                         remove all events. Uses birth, baptism, or christening
+                         date. Complies with ZVOP-2 for living persons.
+    died20y_private      Anonymize individuals whose death, burial, or cremation
+                         was recorded within the last 20 years (date must be
+                         present). Complies with ZVOP-2 post-mortem protection.
 
 Available Presets:
     mft_webtrees         WebTrees compatibility for MacFamilyTree exports.
-    mft_sgi              Slovenian Genealogy formatting.
-    srd_index_cleanup    Full cleanup and anonymization for public indices.
+                         Cleaners: dd_mmm_yyyy, name_placeholder.
+                         Strippers: ste, stf, sto, bkm, addr_longlati,
+                           change_date, create_date, indi_race.
+                         Transformers: fid_fsftid, latr_even.
+    mft_sgi              Slovenian Genealogy Institute formatting.
+                         Cleaners: place_slovenia_rm.
+                         Transformers: addr_to_plac, living100y_private.
+    index_cleanup_sgi    Full cleanup and anonymization for public indices.
+                         Cleaners: dd_mmm_yyyy, name_placeholder,
+                           place_placeholder, place_duplicate_rm.
+                         Strippers: noname_indi, noname_fam.
+                         Transformers: living100y_private, died20y_private.
+
+Examples:
+    # Apply a preset
+    python tools/gedcom_cleaner.py family.ged out.ged --preset index_cleanup_sgi
+
+    # Combine a preset with an extra stripper
+    python tools/gedcom_cleaner.py family.ged out.ged --preset mft_webtrees --strip change_date
+
+    # Apply individual processors with verbose output
+    python tools/gedcom_cleaner.py family.ged out.ged --clean dd_mmm_yyyy --transform living100y_private --verbose --stats
 """
 
 import argparse
@@ -1395,7 +1444,7 @@ PRESETS: dict[str, dict[str, list[str]]] = {
         "clean": ["place_slovenia_rm"],
         "transform": ["addr_to_plac", "living100y_private"],
     },
-    "srd_index_cleanup": {
+    "index_cleanup_sgi": {
         "clean": [
             "dd_mmm_yyyy",
             "name_placeholder",
