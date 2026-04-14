@@ -734,11 +734,6 @@ def extract_year(date_str):
     return int(match.group(1)) if match else None
 
 
-def is_recent(date_str, cutoff_year):
-    """Returns True if the year in date_str is within the last 100 years."""
-    year = extract_year(date_str)
-    return year is not None and year > cutoff_year
-
 
 def needs_processing(input_path, births_path, families_path):
     """
@@ -918,20 +913,18 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                 "famc": famc_pointers,
             }
 
-            if birth_date or birth_place:
+            if birth_date or birth_place or birth_links:
                 record = {
                     "name": name,
                     "surname": surname,
                     "date_of_birth": birth_date or "",
                     "place_of_birth": birth_place or "",
-                    "_is_deceased": is_deceased_flag,
-                    "_ptr": pointer,
                 }
                 if birth_links:
                     record["links"] = _dedup_links(birth_links)
                 births_data.append(record)
 
-            if death_date or death_place:
+            if death_date or death_place or death_links:
                 record = {
                     "name": name,
                     "surname": surname,
@@ -945,8 +938,6 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
         elif tag == "FAM":
             family_elements.append(element)
 
-    birth_cutoff = datetime.now().year - 100
-
     def is_empty(name, surname):
         return not name.strip() and not surname.strip()
 
@@ -955,14 +946,6 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
             name.strip().lower() == "private"
             or surname.strip().lower() == "private"
         )
-
-    def is_person_recent(person_data, cutoff):
-        birth_date = person_data.get("birth_date") or ""
-        year = extract_year(birth_date)
-        if year is not None:
-            return year > cutoff
-        est_year = person_data.get("estimated_birth_year")
-        return est_year is not None and est_year > cutoff
 
     family_dict = {}
     for family in family_elements:
@@ -1062,31 +1045,16 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                             continue
                         p_data = individuals_dict.get(p_ptr)
                         if p_data:
-                            p_is_deceased = p_data.get("is_deceased", False)
-                            is_private = (
-                                is_person_recent(p_data, birth_cutoff)
-                                and not p_is_deceased
+                            p_name = p_data.get("name", "") or "unknown"
+                            p_surname = p_data.get("surname", "")
+                            p_birth_year = extract_year(p_data.get("birth_date"))
+                            parents_list.append(
+                                {
+                                    "name": p_name,
+                                    "surname": p_surname,
+                                    "year": str(p_birth_year) if p_birth_year else "",
+                                }
                             )
-                            if is_private:
-                                parents_list.append(
-                                    {"name": "private", "surname": "", "year": ""}
-                                )
-                            else:
-                                p_name = p_data.get("name", "")
-                                if not p_name:
-                                    p_name = "unknown"
-                                p_surname = p_data.get("surname", "")
-                                p_birth_year = extract_year(p_data.get("birth_date"))
-                                p_year_str = (
-                                    str(p_birth_year) if p_birth_year else ""
-                                )
-                                parents_list.append(
-                                    {
-                                        "name": p_name,
-                                        "surname": p_surname,
-                                        "year": p_year_str,
-                                    }
-                                )
             return parents_list
 
         husband_parents = get_parents_list(husb)
@@ -1096,27 +1064,16 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
         for child_ptr in child_pointers:
             child_data = individuals_dict.get(child_ptr)
             if child_data:
-                child_birth_date = child_data.get("birth_date", "")
-                child_is_deceased = child_data.get("is_deceased", False)
-                is_private = (
-                    is_person_recent(child_data, birth_cutoff)
-                    and not child_is_deceased
+                child_name = child_data.get("name", "") or "unknown"
+                child_surname = child_data.get("surname", "")
+                birth_year = extract_year(child_data.get("birth_date", ""))
+                children_list.append(
+                    {
+                        "name": child_name,
+                        "surname": child_surname,
+                        "year": str(birth_year) if birth_year else "",
+                    }
                 )
-                if is_private:
-                    children_list.append(
-                        {"name": "private", "surname": "", "year": ""}
-                    )
-                else:
-                    child_name = child_data.get("name", "") or "unknown"
-                    child_surname = child_data.get("surname", "")
-                    birth_year = extract_year(child_birth_date)
-                    children_list.append(
-                        {
-                            "name": child_name,
-                            "surname": child_surname,
-                            "year": str(birth_year) if birth_year else "",
-                        }
-                    )
         children_list.sort(key=lambda c: (c["year"] == "", c["year"], c["name"]))
 
         record = {
@@ -1126,16 +1083,15 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
             "wife_surname": wife.get("surname", ""),
             "date_of_marriage": marr_date or "",
             "place_of_marriage": marr_place or "",
-            "_husb_is_recent": is_person_recent(husb, birth_cutoff),
-            "_wife_is_recent": is_person_recent(wife, birth_cutoff),
-            "_husb_is_deceased": husb.get("is_deceased", False),
-            "_wife_is_deceased": wife.get("is_deceased", False),
         }
 
         if is_private_name(
             record["husband_name"], record["husband_surname"]
         ) or is_private_name(record["wife_name"], record["wife_surname"]):
-            continue
+            if record["date_of_marriage"]:
+                record["date_of_marriage"] = "private"
+            if record["place_of_marriage"]:
+                record["place_of_marriage"] = "private"
 
         if is_empty(record["husband_name"], record["husband_surname"]) and is_empty(
             record["wife_name"], record["wife_surname"]
@@ -1159,36 +1115,6 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
     families_before = len(families_data)
     deaths_before = len(deaths_data)
 
-    births_data = [
-        r
-        for r in births_data
-        if (
-            not is_recent(r["date_of_birth"], birth_cutoff)
-            and not is_person_recent(
-                individuals_dict.get(r.get("_ptr"), {}), birth_cutoff
-            )
-        )
-        or r.get("_is_deceased", False)
-    ]
-    families_data = [
-        r
-        for r in families_data
-        if not (r.get("_husb_is_recent", False) and not r.get("_husb_is_deceased", False))
-        and not (r.get("_wife_is_recent", False) and not r.get("_wife_is_deceased", False))
-        and (
-            not is_recent(r["date_of_marriage"], birth_cutoff)
-            or r.get("_husb_is_deceased", False)
-            or r.get("_wife_is_deceased", False)
-        )
-    ]
-    for r in births_data:
-        r.pop("_is_deceased", None)
-        r.pop("_ptr", None)
-    for r in families_data:
-        r.pop("_husb_is_recent", None)
-        r.pop("_wife_is_recent", None)
-        r.pop("_husb_is_deceased", None)
-        r.pop("_wife_is_deceased", None)
     filtered_births = births_before - len(births_data)
     filtered_families = families_before - len(families_data)
     filtered_deaths = deaths_before - len(deaths_data)
