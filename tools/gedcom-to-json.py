@@ -411,9 +411,9 @@ def _determine_link_type(url, context=None):
     if not url:
         return []
 
-    # FamilySearch ark links are behind a login — do not attempt to fetch them.
+    # FamilySearch and dLib.si links cannot be reliably typed by page fetch.
     # Return [] so they are kept on whichever event they were placed in the GEDCOM.
-    if FAMILYSEARCH_RE.search(url):
+    if FAMILYSEARCH_RE.search(url) or DLIB_RE.search(url):
         return []
 
     # Strip query parameters (like ?pg=N) to cache and fetch at the book level
