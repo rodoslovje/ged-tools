@@ -62,29 +62,36 @@ Available Strippers:
     deat_placeholder     Remove DEAT/BURI/CREM records that are entirely placeholder
                          (no real date, no real place — e.g. MFT stub "__.__.____" / "____").
                          Skipped for individuals born 100+ years ago (stub means "died, date unknown").
+                         Runs before transformers so privacy evaluation sees clean DEAT state.
     noname_indi          Remove individuals with no valid name.
     noname_fam           Remove families with no named spouses.
     living               Remove individuals who are likely still living.
-    marriage20y_private  Remove family records where marriage occurred in the last 20 years.
-    born_30y_private     Remove individuals born in the last 30 years (no death record required).
 
-Available Transformers:
+Available Transformers (listed in execution order):
+    born20y_private      Remove individuals born in the last 20 years with no
+                         confirmed death record.
+    died20y_private      Anonymize individuals whose death, burial, or cremation
+                         was recorded within the last 20 years (date must be
+                         present). Complies with ZVOP-2 post-mortem protection.
+    marriage20y_private  Remove family records where marriage occurred in the last
+                         20 years.
+    living100y_private   Anonymize individuals with a known birth year under 100
+                         years ago and no death record: set name to "private" and
+                         remove all events. Uses birth, baptism, or christening
+                         date. Falls back to relative-based birth year estimation
+                         (parents +35y, children -35y) when birth date is absent
+                         or partial. Complies with ZVOP-2 for living persons.
+    living100y_initials  Same detection as living100y_private but reduces the full
+                         name to initials (e.g. Luka /Renko/ -> L. /R./).
+                         All events are still removed.
+    fam_partner_private  If both spouses are private: remove the entire family record.
+                         If one spouse is private: replace all non-empty event field
+                         values (date, place, note, links, etc.) with "private".
+                         Runs last, after all individual-level privacy transformers.
     secg_givn            Append NAME:SECG content to NAME:GIVN and remove the SECG tag.
     fid_fsftid           Rename _FID to _FSFTID (FamilySearch ID tag fix).
     latr_even            Convert LATR to EVEN type="Land Transaction".
     addr_to_plac         Merge ADDR values into event PLAC tags.
-    living100y_private   Anonymize individuals with a known birth year under 100
-                         years ago and no death record: set name to "private" and
-                         remove all events. Uses birth, baptism, or christening
-                         date. Complies with ZVOP-2 for living persons.
-    living100y_initials Same detection as living100y_private but reduces the full
-                         name to initials (e.g. Luka /Renko/ -> L. /R./).
-                         All events are still removed.
-    died20y_private      Anonymize individuals whose death, burial, or cremation
-                         was recorded within the last 20 years (date must be
-                         present). Complies with ZVOP-2 post-mortem protection.
-    fam_partner_private  Strip date and place from all family events (MARR etc.)
-                         when at least one spouse is private. Run after living100y_private.
 
 Available Presets:
     mft_webtrees         WebTrees compatibility for MacFamilyTree exports.
@@ -102,7 +109,8 @@ Available Presets:
                          Cleaners: dd_mmm_yyyy, name_placeholder,
                            place_placeholder, place_duplicate_rm.
                          Strippers: deat_placeholder, noname_indi, noname_fam.
-                         Transformers: living100y_private, died20y_private, fam_partner_private.
+                         Transformers (in order): born20y_private, died20y_private,
+                           marriage20y_private, living100y_private, fam_partner_private.
 
 Examples:
     # Apply a preset to a single file
@@ -1571,8 +1579,6 @@ STRIPPERS: dict[str, StripSpec | None] = {
     "noname_indi": None,  # remove INDI records whose every NAME value is empty
     "noname_fam": None,  # remove FAM records where all HUSB/WIFE INDIs are nameless
     "living": None,  # remove INDI records of people likely still alive, and their FAMs
-    "marriage20y_private": None,  # remove FAM records where marriage was in the last 20 years
-    "born_30y_private": None,  # remove INDI records of people born in the last 30 years
 }
 
 
@@ -1607,6 +1613,8 @@ TRANSFORMERS: dict[str, dict[str, str | TagTransform] | None] = {
     "living100y_initials": None,
     "died20y_private": None,
     "fam_partner_private": None,
+    "marriage20y_private": None,  # remove FAM records where marriage was in the last 20 years
+    "born20y_private": None,  # remove INDI records of people born in the last 20 years
 }
 
 
@@ -1648,8 +1656,8 @@ PRESETS: dict[str, dict[str, list[str]]] = {
             "place_placeholder",
             "place_duplicate_rm",
         ],
-        "strip": ["deat_placeholder", "noname_indi", "noname_fam", "marriage20y_private", "born_30y_private"],
-        "transform": ["living100y_private", "died20y_private", "fam_partner_private"],
+        "strip": ["deat_placeholder", "noname_indi", "noname_fam"],
+        "transform": ["born20y_private", "died20y_private", "marriage20y_private", "living100y_private", "fam_partner_private"],
     },
 }
 
@@ -2006,12 +2014,225 @@ def process_file(
                     print(f"  [strip:deat_placeholder] INDI {element.get_pointer()} — {_dp_label}")
                 element.get_child_elements().remove(ch)
 
+    if "born20y_private" in transformers:
+        import datetime as _dt_b20
+
+        ts = transform_stats["born20y_private"]
+        _curr_year_b20 = _dt_b20.date.today().year
+        root_elements = parser.get_root_child_elements()
+        indi_list = [el for el in root_elements if el.get_tag() == gedcom.tags.GEDCOM_TAG_INDIVIDUAL]
+        ts.processed = len(indi_list)
+        indis_to_remove = []
+        for el in indi_list:
+            birth_year = None
+            has_confirmed_death = False
+            for ch in el.get_child_elements():
+                tag = ch.get_tag()
+                if tag in ("BIRT", "BAPM", "CHR"):
+                    for gch in ch.get_child_elements():
+                        if gch.get_tag() == gedcom.tags.GEDCOM_TAG_DATE:
+                            y = _extract_birth_year(gch.get_value())
+                            if y is not None:
+                                if birth_year is None or tag == "BIRT":
+                                    birth_year = y
+                elif tag in ("DEAT", "BURI", "CREM"):
+                    val = ch.get_value().strip().upper()
+                    if val == "Y":
+                        has_confirmed_death = True
+                    elif val != "N":
+                        child_els = ch.get_child_elements()
+                        if not child_els:
+                            has_confirmed_death = True  # bare DEAT
+                        else:
+                            for gch in child_els:
+                                d = gch.get_value().strip()
+                                if not d:
+                                    continue
+                                if gch.get_tag() == gedcom.tags.GEDCOM_TAG_DATE:
+                                    if re.search(r"\d", d):
+                                        has_confirmed_death = True
+                                        break
+                                else:
+                                    has_confirmed_death = True
+                                    break
+            if birth_year is not None and (_curr_year_b20 - birth_year) < 20 and not has_confirmed_death:
+                indis_to_remove.append(el)
+        for el in indis_to_remove:
+            ts.transformed += 1
+            if verbose:
+                print(f"  [transform:born20y_private] INDI {el.get_pointer()} — {_indi_label(el)}")
+            root_elements.remove(el)
+
+    if "died20y_private" in transformers:
+        import datetime as _dt
+
+        ts = transform_stats["died20y_private"]
+        _curr_year = _dt.date.today().year
+        _year_re2 = re.compile(r"\b(1[0-9]{3}|20[0-2][0-9])\b")
+
+        def _anonymise_indi(element):
+            children = element.get_child_elements()
+            to_keep = []
+            name_kept = False
+            for ch in children:
+                if ch.get_tag() in ("FAMC", "FAMS", "SEX"):
+                    to_keep.append(ch)
+                elif ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME and not name_kept:
+                    ch.set_value("private")
+                    ch.get_child_elements().clear()
+                    to_keep.append(ch)
+                    name_kept = True
+            if not name_kept:
+                name_el = Element(
+                    element.get_level() + 1,
+                    "",
+                    gedcom.tags.GEDCOM_TAG_NAME,
+                    "private",
+                    "\n",
+                    multi_line=False,
+                )
+                name_el.set_parent_element(element)
+                to_keep.insert(0, name_el)
+            children.clear()
+            children.extend(to_keep)
+
+        for element in parser.get_root_child_elements():
+            if element.get_tag() != gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
+                continue
+            ts.processed += 1
+            death_year = None
+            has_death_event = False
+            _name_display = ""
+            _birth_date_str = None
+            _death_date_str = None
+            for ch in element.get_child_elements():
+                _tag = ch.get_tag()
+                if _tag == gedcom.tags.GEDCOM_TAG_NAME and not _name_display:
+                    _name_display = ch.get_value().replace("/", "").strip()
+                elif _tag in ("DEAT", "BURI", "CREM"):
+                    if ch.get_value().strip().upper() == "N":
+                        continue
+                    has_death_event = True
+                    for gch in ch.get_child_elements():
+                        if gch.get_tag() == gedcom.tags.GEDCOM_TAG_DATE:
+                            _m = _year_re2.search(gch.get_value())
+                            if _m:
+                                y = int(_m.group(1))
+                                if death_year is None or y < death_year:
+                                    death_year = y
+                                    _death_date_str = gch.get_value().strip()
+                elif _tag in ("BIRT", "BAPM", "CHR") and _birth_date_str is None:
+                    for gch in ch.get_child_elements():
+                        if gch.get_tag() == gedcom.tags.GEDCOM_TAG_DATE:
+                            _birth_date_str = gch.get_value().strip()
+                            if _tag == "BIRT":
+                                break
+            if has_death_event and death_year is not None and (_curr_year - death_year) < 20:
+                _anonymise_indi(element)
+                ts.transformed += 1
+                if verbose:
+                    _by2 = re.search(r"\b\d{3,4}\b", _birth_date_str).group() if _birth_date_str and re.search(r"\b\d{3,4}\b", _birth_date_str) else None
+                    _dy2 = re.search(r"\b\d{3,4}\b", _death_date_str).group() if _death_date_str and re.search(r"\b\d{3,4}\b", _death_date_str) else None
+                    parts = [_name_display or "?"]
+                    parts.append(f"b.{_by2}" if _by2 else "b.?")
+                    parts.append(f"d.{_dy2}" if _dy2 else "d.?")
+                    print(
+                        f"  [transform:died20y_private] INDI {element.get_pointer()} {' '.join(parts)}"
+                    )
+
+    if "marriage20y_private" in transformers:
+        import datetime as _dt_m20
+
+        ts = transform_stats["marriage20y_private"]
+        _curr_year_m20 = _dt_m20.date.today().year
+        _year_re_m20 = re.compile(r"\b(1[0-9]{3}|20[0-2][0-9])\b")
+        root_elements = parser.get_root_child_elements()
+        _ptr_index_m20 = {el.get_pointer(): el for el in root_elements if el.get_pointer()}
+        fam_list = [el for el in root_elements if el.get_tag() == gedcom.tags.GEDCOM_TAG_FAMILY]
+        ts.processed = len(fam_list)
+        fams_to_remove = []
+        for fam in fam_list:
+            marr_year = None
+            for ch in fam.get_child_elements():
+                if ch.get_tag() != gedcom.tags.GEDCOM_TAG_MARRIAGE:
+                    continue
+                for gch in ch.get_child_elements():
+                    if gch.get_tag() == gedcom.tags.GEDCOM_TAG_DATE:
+                        m = _year_re_m20.search(gch.get_value())
+                        if m:
+                            marr_year = int(m.group(1))
+                        break
+                if marr_year is not None:
+                    break
+            if marr_year is not None and (_curr_year_m20 - marr_year) < 20:
+                fams_to_remove.append(fam)
+        for fam in fams_to_remove:
+            ts.transformed += 1
+            if verbose:
+                print(f"  [transform:marriage20y_private] removing {_fam_label(fam, _ptr_index_m20)}")
+            root_elements.remove(fam)
+
     if "living100y_private" in transformers:
         import datetime
 
         ts = transform_stats["living100y_private"]
         curr_year = datetime.date.today().year
         _private_ptrs: set[str] = set()
+
+        # Build pointer index for relative-based birth year estimation
+        _ptr_index_100y = {
+            el.get_pointer(): el
+            for el in parser.get_root_child_elements()
+            if el.get_pointer()
+        }
+
+        _exact_year_re = re.compile(r"\b(1[0-9]{3}|20[0-2][0-9])\b")
+
+        def _get_exact_birth_year(indi_el):
+            """Return birth year only when it is a full 4-digit year (no partial/fill)."""
+            for _ch in indi_el.get_child_elements():
+                if _ch.get_tag() == gedcom.tags.GEDCOM_TAG_BIRTH:
+                    for _gch in _ch.get_child_elements():
+                        if _gch.get_tag() == gedcom.tags.GEDCOM_TAG_DATE:
+                            _m = _exact_year_re.search(_gch.get_value())
+                            return int(_m.group(1)) if _m else None
+            return None
+
+        def _estimate_birth_year_from_relatives(indi_el) -> tuple[int | None, list[str]]:
+            """Estimate birth year from parents (+35y) and children (-35y).
+            Returns (earliest_estimate, [description, ...]), or (None, []) if no relatives found.
+            Only uses exact birth years of relatives to avoid cascading partial-year errors.
+            """
+            estimates: list[tuple[int, str]] = []
+            for _ch in indi_el.get_child_elements():
+                if _ch.get_tag() == "FAMC":  # this person is a child in this family
+                    _fam = _ptr_index_100y.get(_ch.get_value().strip())
+                    if _fam:
+                        for _fch in _fam.get_child_elements():
+                            if _fch.get_tag() in (gedcom.tags.GEDCOM_TAG_HUSBAND, gedcom.tags.GEDCOM_TAG_WIFE):
+                                _parent = _ptr_index_100y.get(_fch.get_value().strip())
+                                if _parent:
+                                    _py = _get_exact_birth_year(_parent)
+                                    if _py:
+                                        _est = _py + 35
+                                        _role = "father" if _fch.get_tag() == gedcom.tags.GEDCOM_TAG_HUSBAND else "mother"
+                                        estimates.append((_est, f"{_role} {_indi_label(_parent)} +35={_est}"))
+                elif _ch.get_tag() == "FAMS":  # this person is a spouse/parent in this family
+                    _fam = _ptr_index_100y.get(_ch.get_value().strip())
+                    if _fam:
+                        for _fch in _fam.get_child_elements():
+                            if _fch.get_tag() == "CHIL":
+                                _child = _ptr_index_100y.get(_fch.get_value().strip())
+                                if _child:
+                                    _cy = _get_exact_birth_year(_child)
+                                    if _cy:
+                                        _est = _cy - 35
+                                        estimates.append((_est, f"child {_indi_label(_child)} -35={_est}"))
+            if not estimates:
+                return None, []
+            _min_year = min(e[0] for e in estimates)
+            _descs = [e[1] for e in estimates]
+            return _min_year, _descs
 
         for element in parser.get_root_child_elements():
             if element.get_tag() != gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
@@ -2028,13 +2249,13 @@ def process_file(
                     name_val = name_val_display.lower()
                     break
 
+            has_death = False
+            birth_year = None
+            birth_date_str = None
+            death_date_str = None
             if name_val == "living":
                 is_private = True
             else:
-                has_death = False
-                birth_year = None
-                birth_date_str = None
-                death_date_str = None
                 for ch in element.get_child_elements():
                     tag = ch.get_tag()
                     if tag in ("DEAT", "BURI", "CREM"):
@@ -2091,8 +2312,34 @@ def process_file(
                                         birth_date_str = gch.get_value().strip()
 
                 if not has_death:
-                    if birth_year is not None and (curr_year - birth_year) < 100:
-                        is_private = True
+                    if birth_year is None:
+                        # No birth date at all — try relatives to determine if living
+                        _rel_year, _rel_descs = _estimate_birth_year_from_relatives(element)
+                        if _rel_year is not None:
+                            if (curr_year - _rel_year) < 100:
+                                is_private = True
+                                _rel_verdict = "private"
+                            else:
+                                _rel_verdict = "not private"
+                            if verbose:
+                                _ptr = element.get_pointer()
+                                print(f"  [transform:living100y_private] INDI {_ptr} no birth date, relative estimate b.{_rel_year} ({'; '.join(_rel_descs)}) → {_rel_verdict}")
+                    elif (curr_year - birth_year) < 100:
+                        # If birth year came from a partial date (e.g. "1___" → 1999),
+                        # try to confirm using relatives before marking private.
+                        if birth_date_str and _PARTIAL_YEAR_RE.search(birth_date_str):
+                            _rel_year, _rel_descs = _estimate_birth_year_from_relatives(element)
+                            if _rel_year is not None and (curr_year - _rel_year) >= 100:
+                                if verbose:
+                                    _ptr = element.get_pointer()
+                                    print(f"  [transform:living100y_private] INDI {_ptr} partial birth {birth_date_str!r}, relative estimate b.{_rel_year} ({'; '.join(_rel_descs)}) → not private")
+                            else:
+                                is_private = True
+                                if verbose and _rel_year is not None:
+                                    _ptr = element.get_pointer()
+                                    print(f"  [transform:living100y_private] INDI {_ptr} partial birth {birth_date_str!r}, relative estimate b.{_rel_year} ({'; '.join(_rel_descs)}) → private")
+                        else:
+                            is_private = True
 
             if is_private:
                 children = element.get_child_elements()
@@ -2296,83 +2543,6 @@ def process_file(
                             f"  [transform:living100y_initials] stripped MARR date/place from {element.get_pointer()}"
                         )
 
-    if "died20y_private" in transformers:
-        import datetime as _dt
-
-        ts = transform_stats["died20y_private"]
-        _curr_year = _dt.date.today().year
-        _year_re2 = re.compile(r"\b(1[0-9]{3}|20[0-2][0-9])\b")
-
-        def _anonymise_indi(element):
-            children = element.get_child_elements()
-            to_keep = []
-            name_kept = False
-            for ch in children:
-                if ch.get_tag() in ("FAMC", "FAMS", "SEX"):
-                    to_keep.append(ch)
-                elif ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME and not name_kept:
-                    ch.set_value("private")
-                    ch.get_child_elements().clear()
-                    to_keep.append(ch)
-                    name_kept = True
-            if not name_kept:
-                name_el = Element(
-                    element.get_level() + 1,
-                    "",
-                    gedcom.tags.GEDCOM_TAG_NAME,
-                    "private",
-                    "\n",
-                    multi_line=False,
-                )
-                name_el.set_parent_element(element)
-                to_keep.insert(0, name_el)
-            children.clear()
-            children.extend(to_keep)
-
-        for element in parser.get_root_child_elements():
-            if element.get_tag() != gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
-                continue
-            ts.processed += 1
-            death_year = None
-            has_death_event = False
-            _name_display = ""
-            _birth_date_str = None
-            _death_date_str = None
-            for ch in element.get_child_elements():
-                _tag = ch.get_tag()
-                if _tag == gedcom.tags.GEDCOM_TAG_NAME and not _name_display:
-                    _name_display = ch.get_value().replace("/", "").strip()
-                elif _tag in ("DEAT", "BURI", "CREM"):
-                    if ch.get_value().strip().upper() == "N":
-                        continue
-                    has_death_event = True
-                    for gch in ch.get_child_elements():
-                        if gch.get_tag() == gedcom.tags.GEDCOM_TAG_DATE:
-                            _m = _year_re2.search(gch.get_value())
-                            if _m:
-                                y = int(_m.group(1))
-                                if death_year is None or y < death_year:
-                                    death_year = y
-                                    _death_date_str = gch.get_value().strip()
-                elif _tag in ("BIRT", "BAPM", "CHR") and _birth_date_str is None:
-                    for gch in ch.get_child_elements():
-                        if gch.get_tag() == gedcom.tags.GEDCOM_TAG_DATE:
-                            _birth_date_str = gch.get_value().strip()
-                            if _tag == "BIRT":
-                                break
-            if has_death_event and death_year is not None and (_curr_year - death_year) < 20:
-                _anonymise_indi(element)
-                ts.transformed += 1
-                if verbose:
-                    _by2 = re.search(r"\b\d{3,4}\b", _birth_date_str).group() if _birth_date_str and re.search(r"\b\d{3,4}\b", _birth_date_str) else None
-                    _dy2 = re.search(r"\b\d{3,4}\b", _death_date_str).group() if _death_date_str and re.search(r"\b\d{3,4}\b", _death_date_str) else None
-                    parts = [_name_display or "?"]
-                    parts.append(f"b.{_by2}" if _by2 else "b.?")
-                    parts.append(f"d.{_dy2}" if _dy2 else "d.?")
-                    print(
-                        f"  [transform:died20y_private] INDI {element.get_pointer()} {' '.join(parts)}"
-                    )
-
     if "fam_partner_private" in transformers:
         ts = transform_stats["fam_partner_private"]
 
@@ -2396,6 +2566,8 @@ def process_file(
             "ENGA",  # engagement
         }
 
+        _fams_to_remove = []
+
         for element in parser.get_root_child_elements():
             if element.get_tag() != gedcom.tags.GEDCOM_TAG_FAMILY:
                 continue
@@ -2407,34 +2579,47 @@ def process_file(
             ]
             if not refs:
                 continue
-            any_private = any(
+
+            private_flags = [
                 ptr in _ptr_index_fpp and _indi_is_private(_ptr_index_fpp[ptr])
                 for ptr in refs
-            )
+            ]
+            all_private = all(private_flags)
+            any_private = any(private_flags)
+
             if not any_private:
                 continue
-            stripped_any = False
-            for ch in element.get_child_elements():
-                if ch.get_tag() not in _fam_event_tags:
-                    continue
-                event_children = ch.get_child_elements()
-                kept = [
-                    gch for gch in event_children
-                    if gch.get_tag() not in (
-                        gedcom.tags.GEDCOM_TAG_DATE,
-                        gedcom.tags.GEDCOM_TAG_PLACE,
-                    )
-                ]
-                if len(kept) < len(event_children):
-                    event_children.clear()
-                    event_children.extend(kept)
-                    stripped_any = True
-            if stripped_any:
+
+            if all_private:
+                # Both partners private — drop the whole family record
+                _fams_to_remove.append(element)
                 ts.transformed += 1
                 if verbose:
                     print(
-                        f"  [transform:fam_partner_private] remove date/place {_fam_label(element, _ptr_index_fpp)}"
+                        f"  [transform:fam_partner_private] remove FAM {_fam_label(element, _ptr_index_fpp)}"
                     )
+            else:
+                # Mixed — replace all non-empty event field values with "private"
+                changed_any = False
+                for ch in element.get_child_elements():
+                    if ch.get_tag() not in _fam_event_tags:
+                        continue
+                    for gch in ch.get_child_elements():
+                        if gch.get_value().strip():
+                            gch.set_value("private")
+                            gch.get_child_elements().clear()
+                            changed_any = True
+                if changed_any:
+                    ts.transformed += 1
+                    if verbose:
+                        print(
+                            f"  [transform:fam_partner_private] redact event fields {_fam_label(element, _ptr_index_fpp)}"
+                        )
+
+        _root = parser.get_root_child_elements()
+        for _fam in _fams_to_remove:
+            if _fam in _root:
+                _root.remove(_fam)
 
     # Regular tag-based strippers (run after cleaners and transformers)
     for name in strippers:
@@ -2661,65 +2846,6 @@ def process_file(
             if verbose:
                 print(f"  [strip:living] removing {_fam_label(fam, {el.get_pointer(): el for el in root_elements if el.get_pointer()})}")
             root_elements.remove(fam)
-
-    if "marriage20y_private" in strippers:
-        import datetime as _dt_m20
-
-        ss = strip_stats["marriage20y_private"]
-        _curr_year_m20 = _dt_m20.date.today().year
-        _year_re_m20 = re.compile(r"\b(1[0-9]{3}|20[0-2][0-9])\b")
-        root_elements = parser.get_root_child_elements()
-        _ptr_index_m20 = {el.get_pointer(): el for el in root_elements if el.get_pointer()}
-        fam_list = [el for el in root_elements if el.get_tag() == gedcom.tags.GEDCOM_TAG_FAMILY]
-        ss.processed = len(fam_list)
-        fams_to_remove = []
-        for fam in fam_list:
-            marr_year = None
-            for ch in fam.get_child_elements():
-                if ch.get_tag() != gedcom.tags.GEDCOM_TAG_MARRIAGE:
-                    continue
-                for gch in ch.get_child_elements():
-                    if gch.get_tag() == gedcom.tags.GEDCOM_TAG_DATE:
-                        m = _year_re_m20.search(gch.get_value())
-                        if m:
-                            marr_year = int(m.group(1))
-                        break
-                if marr_year is not None:
-                    break
-            if marr_year is not None and (_curr_year_m20 - marr_year) < 20:
-                fams_to_remove.append(fam)
-        for fam in fams_to_remove:
-            ss.removed += 1
-            if verbose:
-                print(f"  [strip:marriage20y_private] removing {_fam_label(fam, _ptr_index_m20)}")
-            root_elements.remove(fam)
-
-    if "born_30y_private" in strippers:
-        import datetime as _dt_b30
-
-        ss = strip_stats["born_30y_private"]
-        _curr_year_b30 = _dt_b30.date.today().year
-        root_elements = parser.get_root_child_elements()
-        indi_list = [el for el in root_elements if el.get_tag() == gedcom.tags.GEDCOM_TAG_INDIVIDUAL]
-        ss.processed = len(indi_list)
-        indis_to_remove = []
-        for el in indi_list:
-            birth_year = None
-            for ch in el.get_child_elements():
-                if ch.get_tag() in ("BIRT", "BAPM", "CHR"):
-                    for gch in ch.get_child_elements():
-                        if gch.get_tag() == gedcom.tags.GEDCOM_TAG_DATE:
-                            y = _extract_birth_year(gch.get_value())
-                            if y is not None:
-                                if birth_year is None or ch.get_tag() == "BIRT":
-                                    birth_year = y
-            if birth_year is not None and (_curr_year_b30 - birth_year) < 30:
-                indis_to_remove.append(el)
-        for el in indis_to_remove:
-            ss.removed += 1
-            if verbose:
-                print(f"  [strip:born_30y_private] INDI {el.get_pointer()} — {_indi_label(el)}")
-            root_elements.remove(el)
 
     parser.invalidate_cache()
     try:

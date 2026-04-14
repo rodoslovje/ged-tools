@@ -938,9 +938,6 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
         elif tag == "FAM":
             family_elements.append(element)
 
-    def is_empty(name, surname):
-        return not name.strip() and not surname.strip()
-
     def is_private_name(name, surname):
         return (
             name.strip().lower() == "private"
@@ -1093,10 +1090,6 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
             if record["place_of_marriage"]:
                 record["place_of_marriage"] = "private"
 
-        if is_empty(record["husband_name"], record["husband_surname"]) and is_empty(
-            record["wife_name"], record["wife_surname"]
-        ):
-            continue
 
         if marr_links:
             record["links"] = _dedup_links(marr_links)
