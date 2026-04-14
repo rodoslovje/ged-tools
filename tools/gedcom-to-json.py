@@ -162,12 +162,27 @@ SISTORY_CENSUS_RE = re.compile(
 FAMILYSEARCH_RE = re.compile(
     r"https?://(?:www\.)?familysearch\.org/ark:/[^\"\s<]+"
 )
+DLIB_RE = re.compile(r"https?://(?:www\.)?dlib\.si/[^\"\s<]+")
+
+
+_MATRICULA_LANG_RE = re.compile(r"(https://data\.matricula-online\.eu/)[a-z]{2}(/)")
 
 
 def _normalize_matricula_url(url):
-    """Normalize matricula URL: upgrade http to https only. Keep the original language
-    code so pages load correctly regardless of country (/de/oesterreich, /sl/slovenia, etc.)."""
+    """Normalize matricula URL: upgrade http to https only. Language code is
+    preserved as-is; deduplication across language variants is handled by _dedup_links."""
     return url.replace("http://", "https://")
+
+
+def _dedup_links(links):
+    """Deduplicate and sort links. Matricula URLs differing only in language code
+    (e.g. /en/ vs /sl/) are treated as the same link; the last occurrence is kept
+    so that explicitly written URLs (from NOTEs) override template-derived ones."""
+    seen = {}
+    for url in links:
+        key = _MATRICULA_LANG_RE.sub(r"\1*\2", url)
+        seen[key] = url  # last wins
+    return sorted(seen.values())
 
 
 def _find_matricula_url(text):
@@ -221,6 +236,7 @@ def _find_all_links(text):
         SISTORY_RE,
         SISTORY_CENSUS_RE,
         FAMILYSEARCH_RE,
+        DLIB_RE,
     ):
         for m in pattern.finditer(text):
             url = m.group().rstrip(".,;)")
@@ -289,7 +305,22 @@ def _link_from_subelement(element, sources_dict):
         if val.startswith("@") and val.endswith("@"):
             template = sources_dict.get(val, "")
             if template:
-                # P7: if a PAGE child exists, substitute the page number into the template URL
+                # P7: if a PAGE child exists, resolve via page→URL map or template fallback
+                if isinstance(template, dict):
+                    page_map = template["pages"]
+                    tmpl = template["template"]
+                    for sour_child in element.get_child_elements():
+                        if sour_child.get_tag() == "PAGE":
+                            page_val = (sour_child.get_value() or "").strip()
+                            m = re.search(r"\d+", page_val)
+                            if m:
+                                pg = m.group()
+                                if pg in page_map:
+                                    return [page_map[pg]]
+                                elif tmpl:
+                                    return [_apply_page(tmpl, pg)]
+                    return _find_all_links(tmpl) or [tmpl]
+                # legacy string template (P5 plain URL or old-style template)
                 for sour_child in element.get_child_elements():
                     if sour_child.get_tag() == "PAGE":
                         page_val = (sour_child.get_value() or "").strip()
@@ -615,19 +646,23 @@ def build_sources_dict(root_elements, obje_dict=None):
                     break
         if pointer in sources:
             continue
-        # P7: FILN-based source — find first OBJE child with a matricula URL to use
-        #     as a page-substitution template (e.g. .../04105/?pg=1 → .../04105/?pg=254)
+        # P7: FILN-based source — build a page→URL map from all OBJE children so that
+        #     the exact URL (including language code) for each page can be resolved.
+        #     Falls back to template substitution for pages not explicitly listed.
         has_filn = any(c.get_tag() == "FILN" for c in element.get_child_elements())
         if has_filn:
+            page_map = {}
+            fallback_template = ""
             for child in element.get_child_elements():
                 if child.get_tag() == "OBJE":
-                    obje_ptr = child.get_value() or ""
-                    template = obje_dict.get(obje_ptr, "")
-                    if template and _PAGE_RE.search(template):
-                        sources[pointer] = (
-                            template  # stored as template; caller substitutes page
-                        )
-                        break
+                    obje_url = obje_dict.get(child.get_value() or "", "")
+                    if obje_url and _PAGE_RE.search(obje_url):
+                        pg = _PAGE_RE.search(obje_url).group()[4:]  # strip "?pg="
+                        page_map[pg] = obje_url
+                        if not fallback_template:
+                            fallback_template = obje_url
+            if page_map:
+                sources[pointer] = {"pages": page_map, "template": fallback_template}
     return sources
 
 
@@ -664,6 +699,31 @@ def get_event_data(element, event_tag, sources_dict=None, obje_dict=None):
                         links.append(url)
         return date, place, links
     return "", "", []
+
+
+def _get_all_event_links(element, event_tags, sources_dict, obje_dict):
+    """Extract all links from all occurrences of the given event tag(s).
+    Unlike get_event_data, handles multiple instances of the same tag (e.g. RESI, OCCU).
+    """
+    links = []
+    for child in element.get_child_elements():
+        if child.get_tag() not in event_tags:
+            continue
+        for url in _find_all_links(_full_text(child)):
+            if url not in links:
+                links.append(url)
+        for subchild in child.get_child_elements():
+            if subchild.get_tag() == "OBJE":
+                val = subchild.get_value() or ""
+                if val.startswith("@") and val.endswith("@"):
+                    url = obje_dict.get(val, "")
+                    if url and url not in links:
+                        links.append(url)
+            else:
+                for url in _link_from_subelement(subchild, sources_dict):
+                    if url not in links:
+                        links.append(url)
+    return links
 
 
 def extract_year(date_str):
@@ -804,10 +864,12 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
             death_date, death_place, raw_death_links = get_event_data(
                 element, "DEAT", sources_dict, obje_dict
             )
-            _, _, raw_buri_links = get_event_data(element, "BURI", sources_dict, obje_dict)
-            for url in raw_buri_links:
+            for url in _get_all_event_links(element, {"BURI", "CREM"}, sources_dict, obje_dict):
                 if url not in raw_death_links:
                     raw_death_links.append(url)
+            for url in _get_all_event_links(element, {"BAPM"}, sources_dict, obje_dict):
+                if url not in raw_birth_links:
+                    raw_birth_links.append(url)
 
             person_context = f"{name} {surname} [{filename}]".strip()
             birth_links, b_misplaced = sanitize_links(raw_birth_links, "birth", context=person_context)
@@ -832,6 +894,9 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
             for url in indi_d_links:
                 if url not in death_links:
                     death_links.append(url)
+            for url in _get_all_event_links(element, {"RESI", "OCCU"}, sources_dict, obje_dict):
+                if url not in birth_links:
+                    birth_links.append(url)
 
             is_deceased_flag = any(
                 child.get_tag() in ("DEAT", "BURI")
@@ -863,7 +928,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                     "_ptr": pointer,
                 }
                 if birth_links:
-                    record["links"] = list(dict.fromkeys(birth_links))
+                    record["links"] = _dedup_links(birth_links)
                 births_data.append(record)
 
             if death_date or death_place:
@@ -874,7 +939,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                     "place_of_death": death_place or "",
                 }
                 if death_links:
-                    record["links"] = list(dict.fromkeys(death_links))
+                    record["links"] = _dedup_links(death_links)
                 deaths_data.append(record)
 
         elif tag == "FAM":
@@ -1027,7 +1092,6 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
         husband_parents = get_parents_list(husb)
         wife_parents = get_parents_list(wife)
 
-        children_info = []
         children_list = []
         for child_ptr in child_pointers:
             child_data = individuals_dict.get(child_ptr)
@@ -1039,29 +1103,21 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                     and not child_is_deceased
                 )
                 if is_private:
-                    children_info.append("private")
                     children_list.append(
                         {"name": "private", "surname": "", "year": ""}
                     )
                 else:
-                    child_name = child_data.get("name", "")
-                    if not child_name:
-                        child_name = "unknown"
+                    child_name = child_data.get("name", "") or "unknown"
                     child_surname = child_data.get("surname", "")
                     birth_year = extract_year(child_birth_date)
-                    year_str = str(birth_year) if birth_year else ""
-                    if birth_year:
-                        children_info.append(f"{child_name} *{birth_year}")
-                    else:
-                        children_info.append(child_name)
                     children_list.append(
                         {
                             "name": child_name,
                             "surname": child_surname,
-                            "year": year_str,
+                            "year": str(birth_year) if birth_year else "",
                         }
                     )
-        children_string = ", ".join(children_info)
+        children_list.sort(key=lambda c: (c["year"] == "", c["year"], c["name"]))
 
         record = {
             "husband_name": husb.get("name", ""),
@@ -1087,9 +1143,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
             continue
 
         if marr_links:
-            record["links"] = list(dict.fromkeys(marr_links))
-        if children_string:
-            record["children"] = children_string
+            record["links"] = _dedup_links(marr_links)
         if children_list:
             record["children_list"] = children_list
         if husband_parents:
@@ -1155,6 +1209,8 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
         key=lambda x: (
             x.get("husband_surname", "") or "",
             x.get("husband_name", "") or "",
+            x.get("wife_surname", "") or "",
+            x.get("wife_name", "") or "",
             x.get("date_of_marriage", "") or "",
             x.get("place_of_marriage", "") or "",
         )
@@ -1288,26 +1344,26 @@ def main():
     save_url_cache()
 
     # --- Summary table ---
-    col_w = max((len(m["contributor"]) for m in metadata), default=10)
-    header = f"{'File':<{col_w}}  {'Births':>7}  {'Families':>8}  {'Deaths':>7}  {'Links':>6}  {'Filtered':>8}  {'Status'}"
+    col_w = max((len(m["contributor"]) for m in metadata if not m.get("skipped")), default=10)
+    header = f"{'File':<{col_w}}  {'Births':>7}  {'Families':>8}  {'Deaths':>7}  {'Links':>6}  {'Filtered':>8}"
     print(f"\n{header}")
     print("-" * len(header))
     for m in metadata:
-        status = "skipped" if m.get("skipped") else "updated"
+        if m.get("skipped"):
+            continue
         print(
             f"{m['contributor']:<{col_w}}  "
             f"{m['births_count']:>7}  "
             f"{m['families_count']:>8}  "
             f"{m['deaths_count']:>7}  "
             f"{m['links_count']:>6}  "
-            f"{m.get('filtered_count', 0):>8}  "
-            f"{status}"
+            f"{m.get('filtered_count', 0):>8}"
         )
-    total_b = sum(m["births_count"] for m in metadata)
-    total_f = sum(m["families_count"] for m in metadata)
-    total_d = sum(m["deaths_count"] for m in metadata)
-    total_l = sum(m["links_count"] for m in metadata)
-    total_fi = sum(m.get("filtered_count", 0) for m in metadata)
+    total_b = sum(m["births_count"] for m in metadata if not m.get("skipped"))
+    total_f = sum(m["families_count"] for m in metadata if not m.get("skipped"))
+    total_d = sum(m["deaths_count"] for m in metadata if not m.get("skipped"))
+    total_l = sum(m["links_count"] for m in metadata if not m.get("skipped"))
+    total_fi = sum(m.get("filtered_count", 0) for m in metadata if not m.get("skipped"))
     print("-" * len(header))
     print(f"{'TOTAL':<{col_w}}  {total_b:>7}  {total_f:>8}  {total_d:>7}  {total_l:>6}  {total_fi:>8}")
 
