@@ -3,6 +3,7 @@
 import argparse
 import locale
 import os
+import sys
 import json
 import re
 import time
@@ -390,7 +391,7 @@ def load_url_cache():
                         continue
                     _URL_CACHE[k] = v
         except Exception as e:
-            print(f"Warning: Could not load URL cache: {e}")
+            print(f"Warning: Could not load URL cache: {e}", file=sys.stderr)
             _URL_CACHE = {}
             _BROKEN_CACHE = set()
 
@@ -403,7 +404,7 @@ def save_url_cache():
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(combined, f, indent=4)
     except Exception as e:
-        print(f"Warning: Could not save URL cache: {e}")
+        print(f"Warning: Could not save URL cache: {e}", file=sys.stderr)
 
 
 
@@ -492,7 +493,7 @@ def _determine_link_type(url, context=None):
         except urllib.error.HTTPError as e:
             if e.code == 404:
                 ctx_str = f" (person: {context})" if context else ""
-                print(f"  [!] 404 Not Found (broken link) — cached: {base_url}{ctx_str}")
+                print(f"  [!] 404 Not Found (broken link) — cached: {base_url}{ctx_str}", file=sys.stderr)
                 _BROKEN_CACHE.add(base_url)
                 return []
             if attempt < 2:
@@ -500,7 +501,7 @@ def _determine_link_type(url, context=None):
             else:
                 ctx_str = f" (person: {context})" if context else ""
                 display_url = url if url != base_url else base_url
-                print(f"  [!] Failed to fetch {display_url}{ctx_str} after 3 attempts: {e}")
+                print(f"  [!] Failed to fetch {display_url}{ctx_str} after 3 attempts: {e}", file=sys.stderr)
                 _ERROR_CACHE.add(base_url)
                 return []
         except Exception as e:
@@ -509,7 +510,7 @@ def _determine_link_type(url, context=None):
             else:
                 ctx_str = f" (person: {context})" if context else ""
                 display_url = url if url != base_url else base_url
-                print(f"  [!] Failed to fetch {display_url}{ctx_str} after 3 attempts: {e}")
+                print(f"  [!] Failed to fetch {display_url}{ctx_str} after 3 attempts: {e}", file=sys.stderr)
                 _ERROR_CACHE.add(base_url)
                 return []
 
@@ -806,7 +807,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
             meta = None
         return meta, log
 
-    print(f"Processing: {filename}")
+    print(f"Processing: {filename}", file=sys.stderr)
 
     # Initialize lists to hold extracted records for this file.
     births_data = []
@@ -819,7 +820,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
 
         fixed = fix_cp1252_as_cp1250(gedcom_content)
         if fixed is not gedcom_content:
-            print(f"  WARNING: cp1252→cp1250 encoding fix applied (è→č etc.) for {filename}")
+            print(f"  WARNING: cp1252→cp1250 encoding fix applied (è→č etc.) for {filename}", file=sys.stderr)
             gedcom_content = fixed
 
         gedcom_content = re.sub(
@@ -834,7 +835,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
 
         os.remove(temp_path)
     except Exception as e:
-        print(f"  ERROR: Could not parse {filename}. Skipping file. Reason: {e}")
+        print(f"  ERROR: Could not parse {filename}. Skipping file. Reason: {e}", file=sys.stderr)
         if os.path.exists(temp_path):
             os.remove(temp_path)
         return None, log
@@ -1197,7 +1198,7 @@ def main():
     args = parser.parse_args()
     full_mode = args.mode == "full"
 
-    print(f"Starting GEDCOM data extraction process (mode: {args.mode}, workers: {args.workers})...")
+    print(f"Starting GEDCOM data extraction process (mode: {args.mode}, workers: {args.workers})...", file=sys.stderr)
 
     load_url_cache()
 
@@ -1205,12 +1206,12 @@ def main():
     # Ensure the output directory exists, creating it if necessary.
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
-        print(f"Created output directory: {OUTPUT_DIR}")
+        print(f"Created output directory: {OUTPUT_DIR}", file=sys.stderr)
 
     # Check if the input directory exists.
     if not os.path.isdir(INPUT_DIR):
-        print(f"Error: Input directory '{INPUT_DIR}' not found.")
-        print("Please create it and place your GEDCOM (.ged) files inside.")
+        print(f"Error: Input directory '{INPUT_DIR}' not found.", file=sys.stderr)
+        print("Please create it and place your GEDCOM (.ged) files inside.", file=sys.stderr)
         return
 
     # --- File Processing Loop ---
@@ -1225,7 +1226,7 @@ def main():
     )
 
     if not gedcom_files:
-        print(f"No GEDCOM files found in '{INPUT_DIR}'.")
+        print(f"No GEDCOM files found in '{INPUT_DIR}'.", file=sys.stderr)
         return
 
     # Store metadata about processed files for the frontend
@@ -1249,9 +1250,9 @@ def main():
             if meta is not None:
                 metadata.append(meta)
             if 0 < len(pending) <= args.workers:
-                print(f"Waiting for: {', '.join(sorted(pending, key=locale.strxfrm))}")
+                print(f"Waiting for: {', '.join(sorted(pending, key=locale.strxfrm))}", file=sys.stderr)
 
-    print("Completed!")
+    print("Completed!", file=sys.stderr)
 
     # Write global metadata.json for the frontend
     metadata.sort(key=lambda x: locale.strxfrm(x.get("contributor", "")))

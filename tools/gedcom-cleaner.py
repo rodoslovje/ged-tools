@@ -2878,7 +2878,7 @@ def _process_one_file_batch(
     transform_stats, captured_stdout, captured_stderr)."""
     # Print before installing the thread-local override so this goes to the
     # real terminal (no override set yet for this thread).
-    print(f"Processing: {filename}")
+    print(f"Processing: {filename}", file=sys.stderr)
 
     input_path = os.path.join(input_dir, filename)
     output_path = os.path.join(output_dir, filename)
@@ -3037,13 +3037,13 @@ def main():
         sys.exit(1)
 
     if args.preset:
-        print(f"Preset:       {args.preset}")
+        print(f"Preset:       {args.preset}", file=sys.stderr)
     if requested_clean:
-        print(f"Cleaners:     {', '.join(requested_clean)}")
+        print(f"Cleaners:     {', '.join(requested_clean)}", file=sys.stderr)
     if requested_strip:
-        print(f"Strippers:    {', '.join(requested_strip)}")
+        print(f"Strippers:    {', '.join(requested_strip)}", file=sys.stderr)
     if requested_transform:
-        print(f"Transformers: {', '.join(requested_transform)}")
+        print(f"Transformers: {', '.join(requested_transform)}", file=sys.stderr)
 
     # --- Batch mode ---
     if args.input_dir:
@@ -3073,13 +3073,13 @@ def main():
             ged_files = all_in_dir
         ged_files = sorted(ged_files, key=locale.strxfrm)
         if not ged_files:
-            print(f"No .ged files found in '{args.input_dir}'.")
+            print(f"No .ged files found in '{args.input_dir}'.", file=sys.stderr)
             sys.exit(0)
 
-        print(f"Input dir:    {args.input_dir}")
-        print(f"Output dir:   {args.output_dir}")
-        print(f"Files:        {len(ged_files)}  Workers: {args.workers}")
-        print()
+        print(f"Input dir:    {args.input_dir}", file=sys.stderr)
+        print(f"Output dir:   {args.output_dir}", file=sys.stderr)
+        print(f"Files:        {len(ged_files)}  Workers: {args.workers}", file=sys.stderr)
+        print(file=sys.stderr)
 
         all_results: list[tuple[str, dict, dict, dict]] = []
 
@@ -3107,9 +3107,9 @@ def main():
                     print(err, end="", file=sys.stderr)
                 all_results.append((filename, c_stats, s_stats, t_stats))
                 if 0 < len(pending) <= args.workers:
-                    print(f"Waiting for: {', '.join(sorted(pending, key=locale.strxfrm))}")
+                    print(f"Waiting for: {', '.join(sorted(pending, key=locale.strxfrm))}", file=sys.stderr)
 
-        print("Completed!")
+        print("Completed!", file=sys.stderr)
 
         # --- Summary table ---
         # Collect processor names in processing order: cleaners → transformers → strippers
@@ -3170,9 +3170,9 @@ def main():
         print("ERROR: provide input and output files, or use --input-dir / --output-dir", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Input:        {args.input}")
-    print(f"Output:       {args.output}")
-    print()
+    print(f"Input:        {args.input}", file=sys.stderr)
+    print(f"Output:       {args.output}", file=sys.stderr)
+    print(file=sys.stderr)
 
     stats, strip_stats, transform_stats = process_file(
         args.input,
@@ -3188,7 +3188,7 @@ def main():
     if total_warn:
         print(f"{total_warn} value(s) could not be converted.", file=sys.stderr)
 
-    print(f"Saved: {args.output}")
+    print(f"Saved: {args.output}", file=sys.stderr)
 
     rows = []
     for name, s in stats.items():
