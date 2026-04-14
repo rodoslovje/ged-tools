@@ -72,9 +72,9 @@ Available Transformers:
                          years ago and no death record: set name to "private" and
                          remove all events. Uses birth, baptism, or christening
                          date. Complies with ZVOP-2 for living persons.
-    living100y_name_only Same detection as living100y_private but keeps surname and
-                         shortens given/middle names to initials (e.g. Luka Renko
-                         -> L. Renko). All events are still removed.
+    living100y_initials Same detection as living100y_private but reduces the full
+                         name to initials (e.g. Luka /Renko/ -> L. /R./).
+                         All events are still removed.
     died20y_private      Anonymize individuals whose death, burial, or cremation
                          was recorded within the last 20 years (date must be
                          present). Complies with ZVOP-2 post-mortem protection.
@@ -90,7 +90,7 @@ Available Presets:
                          Transformers: addr_to_plac, living100y_private.
     mft_public           Public sharing from MacFamilyTree exports.
                          Cleaners: place_country_only.
-                         Transformers: living100y_name_only.
+                         Transformers: living100y_initials.
     index_cleanup_sgi    Full cleanup and anonymization for public indices.
                          Cleaners: dd_mmm_yyyy, name_placeholder,
                            place_placeholder, place_duplicate_rm.
@@ -1498,7 +1498,7 @@ TRANSFORMERS: dict[str, dict[str, str | TagTransform] | None] = {
     "secg_givn": None,  # append NAME:SECG content to NAME:GIVN and remove SECG
     "addr_to_plac": None,  # merge ADDR value into PLAC (prepend with ", ") for event elements
     "living100y_private": None,
-    "living100y_name_only": None,
+    "living100y_initials": None,
     "died20y_private": None,
 }
 
@@ -1532,7 +1532,7 @@ PRESETS: dict[str, dict[str, list[str]]] = {
     },
     "mft_public": {
         "clean": ["place_country_only"],
-        "transform": ["living100y_name_only"],
+        "transform": ["living100y_initials"],
     },
     "index_cleanup_sgi": {
         "clean": [
@@ -1942,11 +1942,12 @@ def process_file(
                         f"  [transform:living100y_private] anonymised INDI {element.get_pointer()} {' '.join(parts)}"
                     )
 
-    if "living100y_name_only" in transformers:
+    if "living100y_initials" in transformers:
         import datetime as _dt2
 
-        ts = transform_stats["living100y_name_only"]
+        ts = transform_stats["living100y_initials"]
         _curr_year2 = _dt2.date.today().year
+        _affected_fams: set[str] = set()
 
         for element in parser.get_root_child_elements():
             if element.get_tag() != gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
@@ -1997,42 +1998,61 @@ def process_file(
                     if birth_year is not None and (_curr_year2 - birth_year) < 100:
                         is_name_only = True
 
-            def _initials(given: str) -> str:
-                """Shorten each given/middle name word to its first letter and a dot."""
-                return " ".join(w[0].upper() + "." for w in given.split() if w)
+            def _initials(name: str) -> str:
+                """Convert every word in name to its first letter and a dot."""
+                return " ".join(w[0].upper() + "." for w in name.split() if w)
 
             def _shorten_name_value(val: str) -> str:
-                """Shorten given names in a GEDCOM NAME value (surname between slashes).
+                """Convert given and surname parts to initials, keeping slashes.
 
-                'Luka /Renko/' -> 'L. /Renko/'
-                'Ronja Sofija /Renko/' -> 'R. S. /Renko/'
+                'Luka /Renko/'        -> 'L. /R./'
+                'Ronja Sofija /Renko/' -> 'R. S. /R./'
+                'Luka'                -> 'L.'
                 """
                 m = re.match(r"^(.*?)(/[^/]*/)(.*?)$", val.strip())
                 if m:
-                    given_part = m.group(1).strip()
-                    surn_part = m.group(2)
-                    suffix = m.group(3).strip()
-                    short_given = _initials(given_part) if given_part else ""
-                    parts = [p for p in [short_given, surn_part, suffix] if p]
+                    given = _initials(m.group(1).strip())
+                    surn = _initials(m.group(2).strip("/ "))
+                    parts = [p for p in [given, f"/{surn}/"] if p]
                     return " ".join(parts)
-                # No surname slashes — shorten all but the last word (treat last as surname)
-                words = val.split()
-                if len(words) <= 1:
-                    return val
-                return _initials(" ".join(words[:-1])) + " " + words[-1]
+                return _initials(val)
 
             if is_name_only:
                 children = element.get_child_elements()
                 to_keep = []
+                name_kept = False
                 for ch in children:
                     if ch.get_tag() in ("FAMC", "FAMS", "SEX"):
+                        if ch.get_tag() == "FAMS":
+                            _affected_fams.add(ch.get_value().strip())
                         to_keep.append(ch)
-                    elif ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME:
+                    elif ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME and not name_kept:
                         ch.set_value(_shorten_name_value(ch.get_value()))
-                        for gch in ch.get_child_elements():
+                        name_children = ch.get_child_elements()
+                        kept_name_children = []
+                        for gch in name_children:
                             if gch.get_tag() == "GIVN":
                                 gch.set_value(_initials(gch.get_value()))
+                                kept_name_children.append(gch)
+                            elif gch.get_tag() == "SURN":
+                                gch.set_value(_initials(gch.get_value()))
+                                kept_name_children.append(gch)
+                        name_children.clear()
+                        name_children.extend(kept_name_children)
                         to_keep.append(ch)
+                        name_kept = True
+
+                if not name_kept:
+                    name_el = Element(
+                        element.get_level() + 1,
+                        "",
+                        gedcom.tags.GEDCOM_TAG_NAME,
+                        _shorten_name_value(name_val_display),
+                        "\n",
+                        multi_line=False,
+                    )
+                    name_el.set_parent_element(element)
+                    to_keep.insert(0, name_el)
 
                 children.clear()
                 children.extend(to_keep)
@@ -2042,8 +2062,31 @@ def process_file(
                     parts = [name_val_display or "?"]
                     parts.append(f"b.{birth_date_str}" if birth_date_str else "b.?")
                     print(
-                        f"  [transform:living100y_name_only] name-only INDI {element.get_pointer()} {' '.join(parts)}"
+                        f"  [transform:living100y_initials] initials INDI {element.get_pointer()} {' '.join(parts)}"
                     )
+
+        # Strip marriage date and place from families of anonymised individuals
+        for element in parser.get_root_child_elements():
+            if element.get_tag() != "FAM":
+                continue
+            if element.get_pointer() not in _affected_fams:
+                continue
+            for ch in element.get_child_elements():
+                if ch.get_tag() == "MARR":
+                    marr_children = ch.get_child_elements()
+                    stripped = [
+                        gch for gch in marr_children
+                        if gch.get_tag() not in (
+                            gedcom.tags.GEDCOM_TAG_DATE,
+                            gedcom.tags.GEDCOM_TAG_PLACE,
+                        )
+                    ]
+                    marr_children.clear()
+                    marr_children.extend(stripped)
+                    if verbose:
+                        print(
+                            f"  [transform:living100y_initials] stripped MARR date/place from {element.get_pointer()}"
+                        )
 
     if "died20y_private" in transformers:
         import datetime as _dt

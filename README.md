@@ -91,7 +91,7 @@ Options:
 | `latr_even` | Convert LATR to EVEN type="Land Transaction". |
 | `addr_to_plac` | Merge ADDR values into event PLAC tags. |
 | `living100y_private` | Anonymize individuals with a known birth year under 100 years ago and no death record: set name to `private` and remove all events. Uses birth, baptism, or christening date. Complies with ZVOP-2 for living persons. |
-| `living100y_name_only` | Same detection as `living100y_private` but keeps surname and shortens given/middle names to initials (e.g. `Luka Renko` → `L. Renko`). All events are still removed. |
+| `living100y_initials` | Same detection as `living100y_private` but reduces the full name to initials (e.g. `Luka /Renko/` → `L. /R./`). All events are still removed. |
 | `died20y_private` | Anonymize individuals whose death, burial, or cremation was recorded within the last 20 years (date must be present). Complies with ZVOP-2 post-mortem protection. |
 
 ### Presets
@@ -102,7 +102,7 @@ A preset is a named combination of processors for a common use case. Can be comb
 |---|---|
 | `mft_webtrees` | WebTrees compatibility for MacFamilyTree exports. Cleaners: `dd_mmm_yyyy`, `name_placeholder`. Strippers: `ste`, `stf`, `sto`, `bkm`, `labl`, `addr_longlati`, `place_tran`, `mise`, `object_crop`, `change_date`, `create_date`, `indi_race`. Transformers: `secg_givn`, `fid_fsftid`, `latr_even`. |
 | `mft_sgi` | Slovenian Genealogy Institute formatting. Cleaners: `place_slovenia_rm`. Transformers: `addr_to_plac`, `living100y_private`. |
-| `mft_public` | Public sharing from MacFamilyTree exports. Cleaners: `place_country_only`. Transformers: `living100y_name_only`. |
+| `mft_public` | Public sharing from MacFamilyTree exports. Cleaners: `place_country_only`. Transformers: `living100y_initials`. |
 | `index_cleanup_sgi` | Full cleanup and anonymization for public indices. Cleaners: `dd_mmm_yyyy`, `name_placeholder`, `place_placeholder`, `place_duplicate_rm`. Strippers: `noname_indi`, `noname_fam`. Transformers: `living100y_private`, `died20y_private`. |
 
 ### Examples
