@@ -916,6 +916,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
 
             if birth_date or birth_place or birth_links:
                 record = {
+                    "_ptr": pointer,
                     "name": name,
                     "surname": surname,
                     "date_of_birth": birth_date or "",
@@ -927,6 +928,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
 
             if death_date or death_place or death_links:
                 record = {
+                    "_ptr": pointer,
                     "name": name,
                     "surname": surname,
                     "date_of_death": death_date or "",
@@ -954,6 +956,30 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
             elif child.get_tag() == "WIFE":
                 w_ptr = child.get_value()
         family_dict[family.get_pointer()] = {"husb": h_ptr, "wife": w_ptr}
+
+    def _resolve_parent_fields(record):
+        ptr = record.pop("_ptr", None)
+        if not ptr:
+            return
+        famc_list = individuals_dict.get(ptr, {}).get("famc", [])
+        if not famc_list:
+            return
+        fam = family_dict.get(famc_list[0], {})
+        husb_ptr = fam.get("husb", "")
+        wife_ptr = fam.get("wife", "")
+        if husb_ptr:
+            hd = individuals_dict.get(husb_ptr, {})
+            record["father_name"] = hd.get("name", "")
+            record["father_surname"] = hd.get("surname", "")
+        if wife_ptr:
+            wd = individuals_dict.get(wife_ptr, {})
+            record["mother_name"] = wd.get("name", "")
+            record["mother_surname"] = wd.get("surname", "")
+
+    for record in births_data:
+        _resolve_parent_fields(record)
+    for record in deaths_data:
+        _resolve_parent_fields(record)
 
     person_to_family_info = {}
     for fam_el in family_elements:
