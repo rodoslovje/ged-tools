@@ -16,6 +16,9 @@ Options:
     --descendants          Keep all descendants of the root person
                            (children, grandchildren, …) plus the family records
                            that connect them. Can be combined with --ancestors.
+    --related              Also keep all descendants of every ancestor already
+                           included (use with --ancestors). This pulls in
+                           cousins, aunts/uncles, and all their descendants.
     --siblings             Also keep all siblings of every included person
                            (i.e. all children in every kept parent family).
     --living-private       Redact all living individuals: replace name with
@@ -41,6 +44,9 @@ Examples:
 
     # Ancestors with their siblings, disambiguated by birth year
     python tools/gedcom-filter.py family.ged ancestors.ged --ancestors --siblings --person Renko --birth-year 1952
+
+    # All blood relatives reachable through the ancestor tree
+    python tools/gedcom-filter.py family.ged related.ged --ancestors --related --person @I123@
 
     # Descendants with living people shown as initials only
     python tools/gedcom-filter.py family.ged out.ged --descendants --living-initials --person @I123@
@@ -534,6 +540,69 @@ def _collect_descendants(
 
 
 # ---------------------------------------------------------------------------
+# Related collection
+# ---------------------------------------------------------------------------
+
+def _collect_related(
+    indi_ptrs: set[str],
+    fam_ptrs: set[str],
+    ptr_index: dict,
+    stop_ptrs: set[str],
+    verbose: bool,
+) -> tuple[set[str], set[str]]:
+    """
+    Starting from all individuals already in indi_ptrs (typically ancestors),
+    fan out downward via FAMS -> FAM -> CHIL to collect every descendant of
+    every known individual.  Only individuals not already in indi_ptrs are
+    reported in verbose output and counted as new.
+
+    stop_ptrs: pointers whose FAMS links are not followed (they remain in the
+    result but their own descendants are not added).  Pass {target_ptr} to
+    prevent the root person's own descendants from being included when
+    --descendants was not requested.
+
+    Returns updated (indi_ptrs, fam_ptrs) sets.
+    """
+    new_indi: set[str] = set()
+    new_fam: set[str] = set()
+    queue = list(indi_ptrs)
+    visited = set(indi_ptrs)
+
+    while queue:
+        ptr = queue.pop()
+        if ptr in stop_ptrs:
+            continue
+        indi = ptr_index.get(ptr)
+        if indi is None or indi.get_tag() != gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
+            continue
+        for ch in indi.get_child_elements():
+            if ch.get_tag() != "FAMS":
+                continue
+            fam_ptr = ch.get_value().strip()
+            fam = ptr_index.get(fam_ptr)
+            if fam is None or fam.get_tag() != gedcom.tags.GEDCOM_TAG_FAMILY:
+                continue
+            if fam_ptr not in fam_ptrs:
+                new_fam.add(fam_ptr)
+            for fch in fam.get_child_elements():
+                if fch.get_tag() != gedcom.tags.GEDCOM_TAG_CHILD:
+                    continue
+                child_ptr = fch.get_value().strip()
+                if child_ptr in visited:
+                    continue
+                visited.add(child_ptr)
+                child_el = ptr_index.get(child_ptr)
+                if child_el is None:
+                    continue
+                new_indi.add(child_ptr)
+                if verbose:
+                    print(f"  [keep:related] {child_ptr}  {_indi_label(child_el)}")
+                queue.append(child_ptr)
+
+    return indi_ptrs | new_indi, fam_ptrs | new_fam
+
+
+# ---------------------------------------------------------------------------
 # Main filter logic
 # ---------------------------------------------------------------------------
 
@@ -544,6 +613,7 @@ def filter_file(
     birth_year: int | None,
     mode_ancestors: bool,
     mode_descendants: bool,
+    related: bool,
     siblings: bool,
     living: str | None,
     verbose: bool,
@@ -598,6 +668,19 @@ def filter_file(
         fam_ptrs |= d_fam
         print(
             f"Descendants:  {len(indi_ptrs - prev_indi)} individuals, "
+            f"{len(fam_ptrs - prev_fam)} families kept",
+            file=sys.stderr,
+        )
+
+    if related:
+        prev_indi = set(indi_ptrs)
+        prev_fam = set(fam_ptrs)
+        # When --descendants was not requested, stop at the root person so
+        # their own children are not pulled in via the related fan-out.
+        stop_ptrs = set() if mode_descendants else {target_ptr}
+        indi_ptrs, fam_ptrs = _collect_related(indi_ptrs, fam_ptrs, ptr_index, stop_ptrs, verbose)
+        print(
+            f"Related:      {len(indi_ptrs - prev_indi)} additional individuals, "
             f"{len(fam_ptrs - prev_fam)} families kept",
             file=sys.stderr,
         )
@@ -722,6 +805,12 @@ def main():
         help="Keep all descendants of the root person",
     )
     arg_parser.add_argument(
+        "--related",
+        action="store_true",
+        help="Also keep all descendants of every ancestor (cousins, aunts/uncles, …). "
+             "Use with --ancestors.",
+    )
+    arg_parser.add_argument(
         "--siblings",
         action="store_true",
         help="Also keep all siblings of every included person",
@@ -774,6 +863,7 @@ def main():
         birth_year=args.birth_year,
         mode_ancestors=args.ancestors,
         mode_descendants=args.descendants,
+        related=args.related,
         siblings=args.siblings,
         living=living,
         verbose=args.verbose,
