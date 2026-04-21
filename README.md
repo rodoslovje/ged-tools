@@ -130,6 +130,69 @@ python tools/gedcom-cleaner.py --input-dir data/input --output-dir data/filtered
 python tools/gedcom-cleaner.py --input-dir data/input --output-dir data/filtered --preset mft_webtrees Košir Hawlina
 ```
 
+## gedcom-filter
+
+Filters a GEDCOM file to keep only a selected subset of individuals and families relative to a root person, with optional privacy redaction of living individuals.
+
+```bash
+python tools/gedcom-filter.py <input.ged> <output.ged> --person PERSON [OPTIONS]
+```
+
+At least one of `--ancestors` or `--descendants` must be specified.
+
+### Options
+
+```
+  --person PERSON        Root person: GEDCOM pointer (@I123@), full name, or partial name
+  --birth-year YEAR      Disambiguate when multiple people match --person
+  --ancestors            Keep direct ancestors (parents, grandparents, …) and their connecting families
+  --descendants          Keep all descendants (children, grandchildren, …) and their connecting families
+  --siblings             Also keep all siblings of every included person
+  --living-private       Redact living individuals: replace name with "private", remove all events
+  --living-name          Redact living individuals: keep full name, remove all events
+  --living-initials      Redact living individuals: reduce name to initials, remove all events
+  --verbose              Print each kept/removed/redacted record
+```
+
+`--ancestors` and `--descendants` can be combined to produce a full hourglass tree. The three `--living-*` flags are mutually exclusive.
+
+### Person specification
+
+| Form | Example |
+|---|---|
+| GEDCOM pointer | `@I123@` or `I123` |
+| Full name | `"Luka Renko"` |
+| Partial name (surname only) | `Renko` |
+| Name + birth year | `--person Renko --birth-year 1952` |
+
+If a name matches multiple individuals the tool prints all candidates with their pointers and exits.
+
+### Living detection
+
+An individual is considered living when they have no `DEAT`, `BURI`, or `CREM` record. The `--living-*` flags apply to all kept individuals that pass this check.
+
+### Examples
+
+```bash
+# Keep only ancestors of a person, identified by pointer
+python tools/gedcom-filter.py family.ged ancestors.ged --ancestors --person @I123@
+
+# Keep only descendants, identified by full name
+python tools/gedcom-filter.py family.ged descendants.ged --descendants --person "Luka Renko"
+
+# Full hourglass tree (ancestors + descendants)
+python tools/gedcom-filter.py family.ged hourglass.ged --ancestors --descendants --person @I123@
+
+# Ancestors + their siblings, with name disambiguation
+python tools/gedcom-filter.py family.ged out.ged --ancestors --siblings --person Renko --birth-year 1952
+
+# Descendants with living people shown as initials only
+python tools/gedcom-filter.py family.ged out.ged --descendants --living-initials --person @I123@
+
+# Full tree, living people fully redacted
+python tools/gedcom-filter.py family.ged out.ged --ancestors --descendants --living-private --person @I123@
+```
+
 ## gedcom-to-json
 
 Converts GEDCOM files from `data/filtered/` into JSON output files in `data/output/`. For each input file it produces three JSON files: `<stem>-births.json`, `<stem>-families.json`, and `<stem>-deaths.json`. Contributor metadata is read from `data/contributors.json`.
