@@ -117,11 +117,18 @@ Available Presets:
     mft_public           Public sharing from MacFamilyTree exports.
                          Cleaners: place_country_only.
                          Transformers: living100y_initials.
-    index_cleanup_sgi    Full cleanup and anonymization for public indices.
+    index_cleanup_sgi    Full cleanup and anonymization for public indices (Slovenia).
                          Cleaners: dd_mmm_yyyy, name_placeholder,
                            place_placeholder, place_duplicate_rm.
                          Strippers: noname_indi, noname_fam.
                          Transformers (in order): born75y_private, died20y_private,
+                           living100y_private, fam_partner_private.
+    index_cleanup_cgi    Full cleanup and anonymization for public indices (Croatia).
+                         Same as index_cleanup_sgi without died20y_private.
+                         Cleaners: dd_mmm_yyyy, name_placeholder,
+                           place_placeholder, place_duplicate_rm.
+                         Strippers: noname_indi, noname_fam.
+                         Transformers (in order): born75y_private,
                            living100y_private, fam_partner_private.
 
 Examples:
@@ -1672,6 +1679,16 @@ PRESETS: dict[str, dict[str, list[str]]] = {
         ],
         "strip": ["noname_indi", "noname_fam"],
         "transform": ["born75y_private", "died20y_private", "living100y_private", "fam_partner_private"],
+    },
+    "index_cleanup_cgi": {
+        "clean": [
+            "dd_mmm_yyyy",
+            "name_placeholder",
+            "place_placeholder",
+            "place_duplicate_rm",
+        ],
+        "strip": ["noname_indi", "noname_fam"],
+        "transform": ["born75y_private", "living100y_private", "fam_partner_private"],
     },
 }
 

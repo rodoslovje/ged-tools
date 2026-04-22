@@ -125,7 +125,8 @@ A preset is a named combination of processors for a common use case. Can be comb
 | `mft_webtrees` | WebTrees compatibility for MacFamilyTree exports. Cleaners: `dd_mmm_yyyy`, `name_placeholder`. Strippers: `ste`, `stf`, `sto`, `bkm`, `labl`, `addr_longlati`, `place_tran`, `mise`, `object_crop`, `change_date`, `create_date`, `indi_race`. Transformers: `secg_givn`, `fid_fsftid`, `latr_even`. |
 | `mft_sgi` | Slovenian Genealogy Institute formatting. Cleaners: `place_slovenia_rm`. Transformers: `addr_to_plac`, `living100y_private`. |
 | `mft_public` | Public sharing from MacFamilyTree exports. Cleaners: `place_country_only`. Transformers: `living100y_initials`. |
-| `index_cleanup_sgi` | Full cleanup and anonymization for public indices. Cleaners: `dd_mmm_yyyy`, `name_placeholder`, `place_placeholder`, `place_duplicate_rm`. Strippers: `noname_indi`, `noname_fam`. Transformers (in order): `born75y_private`, `died20y_private`, `living100y_private`, `fam_partner_private`. |
+| `index_cleanup_sgi` | Full cleanup and anonymization for public indices (Slovenia). Cleaners: `dd_mmm_yyyy`, `name_placeholder`, `place_placeholder`, `place_duplicate_rm`. Strippers: `noname_indi`, `noname_fam`. Transformers (in order): `born75y_private`, `died20y_private`, `living100y_private`, `fam_partner_private`. |
+| `index_cleanup_cgi` | Full cleanup and anonymization for public indices (Croatia). Same as `index_cleanup_sgi` without `died20y_private`. Cleaners: `dd_mmm_yyyy`, `name_placeholder`, `place_placeholder`, `place_duplicate_rm`. Strippers: `noname_indi`, `noname_fam`. Transformers (in order): `born75y_private`, `living100y_private`, `fam_partner_private`. |
 
 ### Examples
 
