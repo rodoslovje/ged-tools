@@ -163,8 +163,7 @@ At least one of `--ancestors` or `--descendants` must be specified.
 
 | Option | Description |
 |---|---|
-| `--person PERSON` | Root person: GEDCOM pointer (`@I123@`), full name, or partial name |
-| `--birth-year YEAR` | Disambiguate when multiple people match `--person` |
+| `--person PERSON [PERSON ...]` | One or more root persons: GEDCOM pointer (`@I123@`), full name, partial name, or name with birth year (`"Franc Renko 1901"`). Results are unioned across all specified persons. |
 | `--ancestors` | Keep direct ancestors (parents, grandparents, …) and their connecting families |
 | `--descendants` | Keep all descendants (children, grandchildren, …) and their connecting families |
 | `--related` | Also keep all descendants of every ancestor (cousins, aunts/uncles, …). Use with `--ancestors`. Does not include the root person's own descendants unless `--descendants` is also set. |
@@ -183,9 +182,11 @@ At least one of `--ancestors` or `--descendants` must be specified.
 | GEDCOM pointer | `@I123@` or `I123` |
 | Full name | `"Luka Renko"` |
 | Partial name (surname only) | `Renko` |
-| Name + birth year | `--person Renko --birth-year 1952` |
+| Name with inline birth year | `"Franc Renko 1901"` |
+| Name + separate birth year option | `--person Renko --birth-year 1952` |
+| Multiple persons | `--person @I123@ @I456@` or `--person "Franc Renko 1901" "Ana Kovač 1905"` |
 
-If a name matches multiple individuals the tool prints all candidates with their pointers and exits.
+If a name matches multiple individuals the tool prints all candidates with their pointers and exits. When specifying multiple persons, use pointers or inline birth years to avoid ambiguity. `--birth-year` applies to all persons and overrides any inline year.
 
 ### Living detection
 
@@ -214,6 +215,12 @@ python tools/gedcom-filter.py family.ged out.ged --descendants --living-initials
 
 # Full tree, living people fully redacted
 python tools/gedcom-filter.py family.ged out.ged --ancestors --descendants --living-private --person @I123@
+
+# Multiple root persons — union of all their ancestors
+python tools/gedcom-filter.py family.ged out.ged --ancestors --person @I123@ @I456@
+
+# Descendants of two siblings
+python tools/gedcom-filter.py family.ged out.ged --descendants --person @I123@ @I124@
 ```
 
 ---

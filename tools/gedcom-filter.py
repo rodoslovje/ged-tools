@@ -6,10 +6,12 @@ Usage:
     python tools/gedcom-filter.py <input.ged> <output.ged> --ancestors|--descendants --person PERSON [OPTIONS]
 
 Options:
-    --person PERSON        Identify the root person. PERSON can be:
+    --person PERSON [PERSON ...]
+                           One or more root persons. Each PERSON can be:
                              - A GEDCOM pointer  (e.g. @I123@ or I123)
                              - A full or partial name (e.g. "Luka Renko" or "Renko")
-    --birth-year YEAR      Disambiguate when multiple people match --person.
+                             - A name with birth year (e.g. "Franc Renko 1901")
+                           Results are unioned across all specified persons.
     --ancestors            Keep direct ancestors of the root person
                            (parents, grandparents, … all the way up) plus the
                            family records that connect them.
@@ -42,11 +44,15 @@ Examples:
     # Both ancestors and descendants (full hourglass tree)
     python tools/gedcom-filter.py family.ged hourglass.ged --ancestors --descendants --person @I123@
 
-    # Ancestors with their siblings, disambiguated by birth year
-    python tools/gedcom-filter.py family.ged ancestors.ged --ancestors --siblings --person Renko --birth-year 1952
+    # Ancestors with their siblings, birth year inline
+    python tools/gedcom-filter.py family.ged ancestors.ged --ancestors --siblings --person "Renko 1952"
 
     # All blood relatives reachable through the ancestor tree
     python tools/gedcom-filter.py family.ged related.ged --ancestors --related --person @I123@
+
+    # Multiple root persons — union of all their ancestors
+    python tools/gedcom-filter.py family.ged out.ged --ancestors --person @I123@ @I456@
+    python tools/gedcom-filter.py family.ged out.ged --ancestors --person "Luka Renko" "Ana Kovač"
 
     # Descendants with living people shown as initials only
     python tools/gedcom-filter.py family.ged out.ged --descendants --living-initials --person @I123@
@@ -266,7 +272,6 @@ def _name_parts(raw_name: str) -> tuple[str, str]:
 def _find_person(
     root_elements: list,
     person_spec: str,
-    birth_year: int | None,
 ) -> str:
     """
     Return the GEDCOM pointer of the matching individual.
@@ -274,9 +279,17 @@ def _find_person(
     person_spec may be:
       - A pointer: '@I123@' or 'I123'
       - A full or partial name: 'Luka Renko', 'Renko', 'Luka'
+      - A name with birth year: 'Franc Renko 1901'
 
     Exits with an error message if 0 or 2+ ambiguous matches are found.
     """
+    # Extract birth year from the last word if it looks like a year (1000–2029).
+    birth_year: int | None = None
+    parts = person_spec.strip().split()
+    if parts and re.match(r"^(1[0-9]{3}|20[0-2][0-9])$", parts[-1]):
+        birth_year = int(parts[-1])
+        person_spec = " ".join(parts[:-1])
+
     # --- pointer lookup ---
     ptr_spec = person_spec.strip()
     if not ptr_spec.startswith("@"):
@@ -609,8 +622,7 @@ def _collect_related(
 def filter_file(
     input_path: str,
     output_path: str,
-    person_spec: str,
-    birth_year: int | None,
+    person_specs: list[str],
     mode_ancestors: bool,
     mode_descendants: bool,
     related: bool,
@@ -640,48 +652,48 @@ def filter_file(
         if el.get_pointer()
     }
 
-    # Locate root person
-    target_ptr = _find_person(root_elements, person_spec, birth_year)
-    target_el = ptr_index[target_ptr]
-    print(
-        f"Root person:  {target_ptr}  {_indi_label(target_el)}",
-        file=sys.stderr,
-    )
+    # Locate all root persons
+    target_ptrs = [_find_person(root_elements, spec) for spec in person_specs]
+    label = "Root person: " if len(target_ptrs) == 1 else "Root person:"
+    for ptr in target_ptrs:
+        print(f"{label}  {ptr}  {_indi_label(ptr_index[ptr])}", file=sys.stderr)
 
     indi_ptrs: set[str] = set()
     fam_ptrs: set[str] = set()
 
     if mode_ancestors:
-        a_indi, a_fam = _collect_ancestors(target_ptr, ptr_index, verbose)
-        indi_ptrs |= a_indi
-        fam_ptrs |= a_fam
+        before_indi, before_fam = len(indi_ptrs), len(fam_ptrs)
+        for target_ptr in target_ptrs:
+            a_indi, a_fam = _collect_ancestors(target_ptr, ptr_index, verbose)
+            indi_ptrs |= a_indi
+            fam_ptrs |= a_fam
         print(
-            f"Ancestors:    {len(a_indi)} individuals, {len(a_fam)} families kept",
+            f"Ancestors:    {len(indi_ptrs) - before_indi} individuals, "
+            f"{len(fam_ptrs) - before_fam} families kept",
             file=sys.stderr,
         )
 
     if mode_descendants:
-        prev_indi = set(indi_ptrs)
-        prev_fam = set(fam_ptrs)
-        d_indi, d_fam = _collect_descendants(target_ptr, ptr_index, verbose)
-        indi_ptrs |= d_indi
-        fam_ptrs |= d_fam
+        before_indi, before_fam = len(indi_ptrs), len(fam_ptrs)
+        for target_ptr in target_ptrs:
+            d_indi, d_fam = _collect_descendants(target_ptr, ptr_index, verbose)
+            indi_ptrs |= d_indi
+            fam_ptrs |= d_fam
         print(
-            f"Descendants:  {len(indi_ptrs - prev_indi)} individuals, "
-            f"{len(fam_ptrs - prev_fam)} families kept",
+            f"Descendants:  {len(indi_ptrs) - before_indi} individuals, "
+            f"{len(fam_ptrs) - before_fam} families kept",
             file=sys.stderr,
         )
 
     if related:
-        prev_indi = set(indi_ptrs)
-        prev_fam = set(fam_ptrs)
-        # When --descendants was not requested, stop at the root person so
+        before_indi, before_fam = len(indi_ptrs), len(fam_ptrs)
+        # When --descendants was not requested, stop at all root persons so
         # their own children are not pulled in via the related fan-out.
-        stop_ptrs = set() if mode_descendants else {target_ptr}
+        stop_ptrs = set() if mode_descendants else set(target_ptrs)
         indi_ptrs, fam_ptrs = _collect_related(indi_ptrs, fam_ptrs, ptr_index, stop_ptrs, verbose)
         print(
-            f"Related:      {len(indi_ptrs - prev_indi)} additional individuals, "
-            f"{len(fam_ptrs - prev_fam)} families kept",
+            f"Related:      {len(indi_ptrs) - before_indi} additional individuals, "
+            f"{len(fam_ptrs) - before_fam} families kept",
             file=sys.stderr,
         )
 
@@ -783,16 +795,10 @@ def main():
     arg_parser.add_argument(
         "--person",
         required=True,
+        nargs="+",
         metavar="PERSON",
-        help="Root person: GEDCOM pointer (@I123@), name, or partial name",
-    )
-    arg_parser.add_argument(
-        "--birth-year",
-        type=int,
-        default=None,
-        metavar="YEAR",
-        dest="birth_year",
-        help="Disambiguate name matches by birth year",
+        help="Root person(s): GEDCOM pointer (@I123@), name, or partial name. "
+             "Specify multiple to union their results.",
     )
     arg_parser.add_argument(
         "--ancestors",
@@ -859,8 +865,7 @@ def main():
     filter_file(
         input_path=args.input,
         output_path=args.output,
-        person_spec=args.person,
-        birth_year=args.birth_year,
+        person_specs=args.person,
         mode_ancestors=args.ancestors,
         mode_descendants=args.descendants,
         related=args.related,
