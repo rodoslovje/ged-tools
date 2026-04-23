@@ -564,23 +564,29 @@ def _collect_related(
     verbose: bool,
 ) -> tuple[set[str], set[str]]:
     """
-    Starting from all individuals already in indi_ptrs (typically ancestors),
-    fan out downward via FAMS -> FAM -> CHIL to collect every descendant of
-    every known individual.  Only individuals not already in indi_ptrs are
-    reported in verbose output and counted as new.
+    Two-phase collection.
 
-    stop_ptrs: pointers whose FAMS links are not followed (they remain in the
-    result but their own descendants are not added).  Pass {target_ptr} to
-    prevent the root person's own descendants from being included when
-    --descendants was not requested.
+    Phase 1 — BFS via FAMS only, starting from all ancestors:
+      • Children of each family are queued as blood relatives.
+      • The other spouse in each family is recorded but NOT queued (so their
+        own family trees are not explored).
+      • FAMS traversal is skipped for stop_ptrs (prevents root person's own
+        descendants from being added when --descendants is absent).
+
+    Phase 2 — one-level FAMC pass for spouses found in Phase 1:
+      • For each spouse, follow their FAMC to find their immediate birth
+        family: parents (HUSB/WIFE) and siblings (CHIL).
+      • Those members are added to the result but not queued — no recursion.
 
     Returns updated (indi_ptrs, fam_ptrs) sets.
     """
     new_indi: set[str] = set()
     new_fam: set[str] = set()
+    spouses: set[str] = set()
     queue = list(indi_ptrs)
     visited = set(indi_ptrs)
 
+    # ── Phase 1: FAMS BFS ────────────────────────────────────────────────────
     while queue:
         ptr = queue.pop()
         if ptr in stop_ptrs:
@@ -598,19 +604,60 @@ def _collect_related(
             if fam_ptr not in fam_ptrs:
                 new_fam.add(fam_ptr)
             for fch in fam.get_child_elements():
-                if fch.get_tag() != gedcom.tags.GEDCOM_TAG_CHILD:
+                ftag = fch.get_tag()
+                fptr = fch.get_value().strip()
+                if fptr in visited:
                     continue
-                child_ptr = fch.get_value().strip()
-                if child_ptr in visited:
+                el = ptr_index.get(fptr)
+                if el is None:
                     continue
-                visited.add(child_ptr)
-                child_el = ptr_index.get(child_ptr)
-                if child_el is None:
+                visited.add(fptr)
+                new_indi.add(fptr)
+                if ftag == gedcom.tags.GEDCOM_TAG_CHILD:
+                    queue.append(fptr)
+                    if verbose:
+                        print(f"  [keep:related] {fptr}  {_indi_label(el)}")
+                elif ftag in (
+                    gedcom.tags.GEDCOM_TAG_HUSBAND,
+                    gedcom.tags.GEDCOM_TAG_WIFE,
+                ) and fptr != ptr:
+                    spouses.add(fptr)
+                    if verbose:
+                        print(f"  [keep:spouse ] {fptr}  {_indi_label(el)}")
+
+    # ── Phase 2: birth families of spouses (one level, no recursion) ─────────
+    for ptr in spouses:
+        indi = ptr_index.get(ptr)
+        if indi is None:
+            continue
+        for ch in indi.get_child_elements():
+            if ch.get_tag() != "FAMC":
+                continue
+            fam_ptr = ch.get_value().strip()
+            fam = ptr_index.get(fam_ptr)
+            if fam is None or fam.get_tag() != gedcom.tags.GEDCOM_TAG_FAMILY:
+                continue
+            if fam_ptr not in fam_ptrs and fam_ptr not in new_fam:
+                new_fam.add(fam_ptr)
+            for fch in fam.get_child_elements():
+                ftag = fch.get_tag()
+                fptr = fch.get_value().strip()
+                if fptr in visited:
                     continue
-                new_indi.add(child_ptr)
-                if verbose:
-                    print(f"  [keep:related] {child_ptr}  {_indi_label(child_el)}")
-                queue.append(child_ptr)
+                el = ptr_index.get(fptr)
+                if el is None:
+                    continue
+                visited.add(fptr)
+                new_indi.add(fptr)
+                if ftag == gedcom.tags.GEDCOM_TAG_CHILD:
+                    if verbose:
+                        print(f"  [keep:sibling] {fptr}  {_indi_label(el)}")
+                elif ftag in (
+                    gedcom.tags.GEDCOM_TAG_HUSBAND,
+                    gedcom.tags.GEDCOM_TAG_WIFE,
+                ):
+                    if verbose:
+                        print(f"  [keep:parent ] {fptr}  {_indi_label(el)}")
 
     return indi_ptrs | new_indi, fam_ptrs | new_fam
 

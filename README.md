@@ -255,6 +255,102 @@ python tools/gedcom-to-json.py --mode full --workers 4
 
 ---
 
+## gedcom-query
+
+Queries a GEDCOM file and prints individuals, families, or surname summaries in a compact human-readable format, with an optional CSV output mode.
+
+```
+python tools/gedcom-query.py <input.ged> [OPTIONS]
+```
+
+At least one of `--person`, `--surnames`, or `--family` must be specified.
+
+### Options
+
+| Option | Description |
+|---|---|
+| `--person [PERSON ...]` | List individuals. Without names: all individuals. With names: only the listed persons. |
+| `--ancestors` | With named `--person`: also include all ancestors. |
+| `--descendants` | With named `--person`: also include all descendants. |
+| `--surnames` | Output unique surnames instead of full person rows. |
+| `--location` | With `--surnames`: also output the place of the oldest occurrence of each surname. |
+| `--family` | List all families: `Husband Wife ⚭yyyy Place` |
+| `--any-place` | When birth place is absent, fall back to baptism, residence, or death place (checked in that order). |
+| `--csv` | Output as CSV instead of plain text |
+
+### Person specification
+
+Persons can be identified by GEDCOM pointer, full name, or name with birth year to disambiguate:
+
+| Form | Example |
+|---|---|
+| GEDCOM pointer | `@I123@` |
+| Full name | `"Luka Renko"` |
+| Name with birth year | `"Franc Renko 1901"` |
+| Multiple persons | `--person "Franc Renko 1901" "Ana Kovač 1905"` |
+
+### Output formats
+
+**`--person`** (plain text): `Name Surname *yyyy +yyyy Place`
+```
+Franc Renko *1901 +1964 Stara Sušica,Primorje-Gorski Kotar,Croatia
+```
+
+**`--family`** (plain text): `Husband Wife ⚭yyyy Place`
+```
+Franc Renko Marija Kovač ⚭1925 Zagreb,Zagreb,Croatia
+```
+
+**`--surnames`** (plain text):
+```
+Kovač
+Renko
+```
+
+**`--surnames --location`** (plain text): `Surname Place`
+```
+Kovač Zagreb,Zagreb,Croatia
+Renko Stara Sušica,Primorje-Gorski Kotar,Croatia
+```
+
+### CSV columns
+
+| Mode | Columns |
+|---|---|
+| `--person` | `Name, Surname, Birth, Death, Place` |
+| `--family` | `Husband_Given, Husband_Surname, Wife_Given, Wife_Surname, Marriage, Marriage_Place` |
+| `--surnames` | `Surname` |
+| `--surnames --location` | `Surname, Location` |
+
+Output is sorted alphabetically by surname (then given name), respecting Slovenian/Croatian collation (č after c, š after s, ž after z).
+
+### Examples
+
+```bash
+# List all individuals
+python tools/gedcom-query.py family.ged --person
+
+# List a specific person's ancestors
+python tools/gedcom-query.py family.ged --person "Franc Renko 1901" --ancestors
+
+# List a specific person's descendants
+python tools/gedcom-query.py family.ged --person "@I123@" --descendants
+
+# List all families
+python tools/gedcom-query.py family.ged --family
+
+# List unique surnames among all ancestors, with origin location
+python tools/gedcom-query.py family.ged --person "Luka Renko" --ancestors --surnames --location --any-place
+
+# Export individuals to CSV
+python tools/gedcom-query.py family.ged --person --csv > persons.csv
+
+# Export surnames with locations to CSV
+python tools/gedcom-query.py family.ged --person "Luka Renko" --ancestors --surnames --location --any-place --csv > surnames.csv
+```
+
+---
+
 ## gedcom-links
 
 Extracts all HTTP/HTTPS links from one or more GEDCOM files and prints frequency statistics grouped by domain and by domain + path prefix.
