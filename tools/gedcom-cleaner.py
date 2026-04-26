@@ -1630,6 +1630,9 @@ TRANSFORMERS: dict[str, dict[str, str | TagTransform] | None] = {
     "latr_even": {
         "LATR": TagTransform(rename="EVEN", add_children=[("TYPE", "Land Transaction")])
     },
+    "prs_even_type": {
+        "_PRS": TagTransform(rename="EVEN", add_children=[("TYPE", "Civil Partnership")])
+    },
     # Custom transformers (None = handled separately):
     "secg_givn": None,  # append NAME:SECG content to NAME:GIVN and remove SECG
     "addr_to_plac": None,  # merge ADDR value into PLAC (prepend with ", ") for event elements
@@ -1667,7 +1670,7 @@ PRESETS: dict[str, dict[str, list[str]]] = {
             "indi_race",
             "sour_tags",
         ],
-        "transform": ["secg_givn", "fid_fsftid", "latr_even", "nobi_fact", "sour_peri_titl", "sour_date_publ", "sour_filn_abbr", "sour_plac_auth"],
+        "transform": ["secg_givn", "fid_fsftid", "latr_even", "prs_even_type", "nobi_fact", "sour_peri_titl", "sour_date_publ", "sour_filn_abbr", "sour_plac_auth"],
     },
     "mft_sgi": {
         "clean": ["place_slovenia_rm"],
