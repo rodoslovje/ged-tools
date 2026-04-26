@@ -1623,6 +1623,7 @@ class TagTransform:
 # attribute via name mangling — this is a deliberate workaround.
 TRANSFORMERS: dict[str, dict[str, str | TagTransform] | None] = {
     "fid_fsftid": {"_FID": "_FSFTID"},
+    "nobi_fact": {"NOBI": "FACT"},
     "sour_filn_abbr": {"FILN": "ABBR"},
     "sour_date_publ": None,  # rename DATE -> PUBL only inside SOUR records
     "sour_plac_auth": None,  # rename PLAC -> AUTH inside SOUR, only if AUTH not already present
@@ -1666,7 +1667,7 @@ PRESETS: dict[str, dict[str, list[str]]] = {
             "indi_race",
             "sour_tags",
         ],
-        "transform": ["secg_givn", "fid_fsftid", "latr_even", "sour_peri_titl", "sour_date_publ", "sour_filn_abbr", "sour_plac_auth"],
+        "transform": ["secg_givn", "fid_fsftid", "latr_even", "nobi_fact", "sour_peri_titl", "sour_date_publ", "sour_filn_abbr", "sour_plac_auth"],
     },
     "mft_sgi": {
         "clean": ["place_slovenia_rm"],
