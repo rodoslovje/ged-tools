@@ -1579,7 +1579,7 @@ class StripSpec:
 
 
 STRIPPERS: dict[str, StripSpec | None] = {
-    "ste": StripSpec(tags={"_STE"}),  # MacFamilyTree source-template entries (level-0)
+    "ste": None,  # level-0 _STE template records + level-1 _STE refs inside SOUR
     "stf": StripSpec(tags={"_STF"}),  # MacFamilyTree source-template fields (level-0)
     "sto": StripSpec(tags={"_STO"}, level=1),
     "bkm": StripSpec(tags={"_BKM"}, level=1),
@@ -1591,6 +1591,7 @@ STRIPPERS: dict[str, StripSpec | None] = {
     "mise": StripSpec(tags={"MISE"}, level=1),
     "object_crop": StripSpec(tags={"CROP"}, parent_tag="OBJE"),  # remove crop rectangles from media objects
     "indi_race": StripSpec(tags={"RACE"}, parent_tag="INDI"),
+    "sour_tags": StripSpec(tags={"AGNC"}, parent_tag="SOUR"),
     "change_date": StripSpec(tags={"CHAN"}, level=2),
     "create_date": StripSpec(tags={"CREA"}, level=2),
     # Runs between cleaners and transformers (before privacy evaluation):
@@ -1622,12 +1623,16 @@ class TagTransform:
 # attribute via name mangling — this is a deliberate workaround.
 TRANSFORMERS: dict[str, dict[str, str | TagTransform] | None] = {
     "fid_fsftid": {"_FID": "_FSFTID"},
+    "sour_filn_abbr": {"FILN": "ABBR"},
+    "sour_date_publ": None,  # rename DATE -> PUBL only inside SOUR records
+    "sour_plac_auth": None,  # rename PLAC -> AUTH inside SOUR, only if AUTH not already present
     "latr_even": {
         "LATR": TagTransform(rename="EVEN", add_children=[("TYPE", "Land Transaction")])
     },
     # Custom transformers (None = handled separately):
     "secg_givn": None,  # append NAME:SECG content to NAME:GIVN and remove SECG
     "addr_to_plac": None,  # merge ADDR value into PLAC (prepend with ", ") for event elements
+    "sour_peri_titl": None,  # rename SOUR:PERI to SOUR:TITL when no TITL already present
     "born75y_private": None,  # anonymize INDIs born in the last 75 years regardless of death status
     "living100y_private": None,
     "living100y_initials": None,
@@ -1659,8 +1664,9 @@ PRESETS: dict[str, dict[str, list[str]]] = {
             "change_date",
             "create_date",
             "indi_race",
+            "sour_tags",
         ],
-        "transform": ["secg_givn", "fid_fsftid", "latr_even"],
+        "transform": ["secg_givn", "fid_fsftid", "latr_even", "sour_peri_titl", "sour_date_publ", "sour_filn_abbr", "sour_plac_auth"],
     },
     "mft_sgi": {
         "clean": ["place_slovenia_rm"],
@@ -1994,6 +2000,65 @@ def process_file(
             if verbose_transform:
                 print(
                     f"  [transform:addr_to_plac] ADDR {addr_val!r} + PLAC {old_plac!r} -> PLAC {new_plac!r}  — {_record_label(element)}"
+                )
+
+    if "sour_peri_titl" in transformers:
+        ts = transform_stats["sour_peri_titl"]
+        for element in parser.get_root_child_elements():
+            if element.get_tag() != gedcom.tags.GEDCOM_TAG_SOURCE:
+                continue
+            children = element.get_child_elements()
+            peri_els = [ch for ch in children if ch.get_tag() == "PERI"]
+            if not peri_els:
+                continue
+            titl_els = [ch for ch in children if ch.get_tag() == "TITL"]
+            if titl_els:
+                continue
+            ts.processed += 1
+            peri_val = peri_els[0].get_value()
+            peri_els[0]._Element__tag = "TITL"
+            ts.transformed += 1
+            if verbose_transform:
+                print(
+                    f"  [transform:sour_peri_titl] PERI -> TITL {peri_val!r}  — {_record_label(element)}"
+                )
+
+    if "sour_date_publ" in transformers:
+        ts = transform_stats["sour_date_publ"]
+        for element in parser.get_root_child_elements():
+            if element.get_tag() != gedcom.tags.GEDCOM_TAG_SOURCE:
+                continue
+            for ch in element.get_child_elements():
+                if ch.get_tag() != gedcom.tags.GEDCOM_TAG_DATE:
+                    continue
+                ts.processed += 1
+                date_val = ch.get_value()
+                ch._Element__tag = "PUBL"
+                ts.transformed += 1
+                if verbose_transform:
+                    print(
+                        f"  [transform:sour_date_publ] DATE -> PUBL {date_val!r}  — {_record_label(element)}"
+                    )
+
+    if "sour_plac_auth" in transformers:
+        ts = transform_stats["sour_plac_auth"]
+        for element in parser.get_root_child_elements():
+            if element.get_tag() != gedcom.tags.GEDCOM_TAG_SOURCE:
+                continue
+            children = element.get_child_elements()
+            plac_els = [ch for ch in children if ch.get_tag() == gedcom.tags.GEDCOM_TAG_PLACE]
+            if not plac_els:
+                continue
+            auth_els = [ch for ch in children if ch.get_tag() == "AUTH"]
+            if auth_els:
+                continue
+            ts.processed += 1
+            plac_val = plac_els[0].get_value()
+            plac_els[0]._Element__tag = "AUTH"
+            ts.transformed += 1
+            if verbose_transform:
+                print(
+                    f"  [transform:sour_plac_auth] PLAC -> AUTH {plac_val!r}  — {_record_label(element)}"
                 )
 
     # deat_placeholder must run after cleaners (so placeholder DATEs are already removed)
@@ -2977,6 +3042,28 @@ def process_file(
                 if ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME
             ]
             return all(ch.get_value().strip().lower() == "private" for ch in names)
+
+    if "ste" in strippers:
+        ss = strip_stats["ste"]
+        root_els = parser.get_root_child_elements()
+        candidates = (
+            [(el, root_els) for el in root_els if el.get_tag() == "_STE"]
+            + [
+                (el, el.get_parent_element().get_child_elements())
+                for el in parser.get_element_list()
+                if el.get_tag() == "_STE"
+                and el.get_parent_element() is not None
+                and el.get_parent_element().get_tag() == gedcom.tags.GEDCOM_TAG_SOURCE
+            ]
+        )
+        for el, container in candidates:
+            ss.processed += 1
+            ss.removed += 1
+            if verbose_strip:
+                parent = el.get_parent_element()
+                label = f"  — {_record_label(parent)}" if parent else f" {el.get_pointer()}"
+                print(f"  [strip:ste] removing _STE{label}")
+            container.remove(el)
 
     if "noname_indi" in strippers:
         ss = strip_stats["noname_indi"]
