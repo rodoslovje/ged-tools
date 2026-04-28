@@ -1582,6 +1582,7 @@ STRIPPERS: dict[str, StripSpec | None] = {
     "ste": None,  # level-0 _STE template records + level-1 _STE refs inside SOUR
     "stf": StripSpec(tags={"_STF"}),  # MacFamilyTree source-template fields (level-0)
     "sto": StripSpec(tags={"_STO"}, level=1),
+    "stp": StripSpec(tags={"_STP"}, level=1),
     "bkm": StripSpec(tags={"_BKM"}, level=1),
     "labl": StripSpec(tags={"_LABL"}, level=1),  # MacFamilyTree label tags
     "addr_longlati": StripSpec(
@@ -1669,6 +1670,7 @@ PRESETS: dict[str, dict[str, list[str]]] = {
             "create_date",
             "indi_race",
             "sour_tags",
+            "stp",
         ],
         "transform": ["secg_givn", "fid_fsftid", "latr_even", "prs_even_type", "nobi_fact", "sour_peri_titl", "sour_date_publ", "sour_filn_abbr", "sour_plac_auth"],
     },
