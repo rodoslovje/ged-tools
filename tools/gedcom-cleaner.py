@@ -116,7 +116,7 @@ Available Presets:
                          Transformers: addr_to_plac, living100y_private.
     mft_public           Public sharing from MacFamilyTree exports.
                          Cleaners: place_country_only.
-                         Transformers: living100y_initials.
+                         Transformers: living100y_initials, fam_partner_private.
     index_cleanup_sgi    Full cleanup and anonymization for public indices (Slovenia).
                          Cleaners: dd_mmm_yyyy, name_placeholder,
                            place_placeholder, place_duplicate_rm.
@@ -1680,7 +1680,7 @@ PRESETS: dict[str, dict[str, list[str]]] = {
     },
     "mft_public": {
         "clean": ["place_country_only"],
-        "transform": ["living100y_initials"],
+        "transform": ["living100y_initials", "fam_partner_private"],
     },
     "index_cleanup_sgi": {
         "clean": [
@@ -2743,11 +2743,18 @@ def process_file(
         ts = transform_stats["fam_partner_private"]
 
         def _indi_is_private(indi_el) -> bool:
-            """Return True if the individual has been anonymised (NAME == 'private')."""
+            """Return True if the individual has been anonymised.
+
+            Covers living100y_private (NAME == 'private') and living100y_initials
+            (all life events stripped, only NAME/SEX/FAMS/FAMC remain).
+            """
             for ch in indi_el.get_child_elements():
                 if ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME:
-                    return ch.get_value().strip().lower() == "private"
-            return False
+                    if ch.get_value().strip().lower() == "private":
+                        return True
+            _STRUCTURAL_TAGS = {gedcom.tags.GEDCOM_TAG_NAME, "SEX", "FAMS", "FAMC"}
+            tags = {ch.get_tag() for ch in indi_el.get_child_elements()}
+            return bool(tags) and tags.issubset(_STRUCTURAL_TAGS)
 
         _ptr_index_fpp = {
             el.get_pointer(): el
