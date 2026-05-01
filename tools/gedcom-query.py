@@ -16,11 +16,17 @@ Options:
     --location    With --surnames: also output the place of the oldest
                   (earliest birth year) occurrence of each surname.
     --family      List all families: Husband Wife ⚭yyyy Place
+    --url [URL]   List INDI and FAM records whose subtree contains URL as a
+                  substring (case-insensitive). Omit value to match any URL.
+                  By default only direct (non-event, non-source) children are
+                  searched.
+    --search-events   With --url: also search within event subtrees.
+    --search-sources  With --url: also search within source citation subtrees.
     --csv         Output as CSV
     --any-place   For --person/--surnames: fall back to baptism, residence, or
                   death place when birth place is absent (checked in that order)
 
-At least one of --person, --surnames, or --family must be specified.
+At least one of --person, --surnames, --family, or --url must be specified.
 
 Examples:
     python tools/gedcom-query.py family.ged --person
@@ -34,6 +40,9 @@ Examples:
     python tools/gedcom-query.py family.ged --person --any-place
     python tools/gedcom-query.py family.ged --person --csv > persons.csv
     python tools/gedcom-query.py family.ged --family --csv > families.csv
+    python tools/gedcom-query.py family.ged --url
+    python tools/gedcom-query.py family.ged --url familysearch.org
+    python tools/gedcom-query.py family.ged --url matricula-online.com --search-events --search-sources
 """
 
 import argparse
@@ -456,6 +465,117 @@ def _person_rows(root_elements, any_place: bool, ptr_filter: set | None = None) 
     return rows
 
 
+_EVENT_TAGS = frozenset({
+    # Individual events
+    "BIRT", "CHR", "DEAT", "BURI", "CREM", "ADOP", "BAPM", "BARM", "BASM",
+    "BLES", "CHRA", "CONF", "FCOM", "ORDN", "NATU", "EMIG", "IMMI", "CENS",
+    "PROB", "WILL", "GRAD", "RETI", "EVEN",
+    # Individual attributes
+    "CAST", "DSCR", "EDUC", "IDNO", "NATI", "NCHI", "NMR", "OCCU", "PROP",
+    "RELI", "RESI", "SSN", "TITL", "FACT",
+    # Family events
+    "MARS", "DIV", "DIVF", "ENGA", "MARR", "MARB", "MARC", "MARL",
+})
+
+
+_PTR_RE = re.compile(r'^@[^@]+@$')
+
+
+def _collect_url_values(el, include_events: bool, include_sources: bool, ptr_index: dict,
+                        _toplevel: bool = True, _visited: set | None = None) -> list[str]:
+    """
+    Collect all text values from el's subtree.
+    - At top level of an INDI/FAM record, event and source subtrees are skipped unless
+      include_events / include_sources are set.
+    - OBJE pointer references are always followed (they carry FILE URLs).
+    - SOUR pointer references are followed when include_sources is True.
+    - _visited prevents re-entering the same referenced record.
+    """
+    if _visited is None:
+        _visited = set()
+
+    values = []
+    for ch in el.get_child_elements():
+        tag = ch.get_tag()
+        val = (ch.get_value() or "").strip()
+
+        if _toplevel:
+            if tag in _EVENT_TAGS and not include_events:
+                continue
+            if tag == "SOUR" and not include_sources:
+                continue
+
+        values.append(val)
+
+        is_ptr = bool(_PTR_RE.match(val))
+        if is_ptr and val not in _visited:
+            if tag == "OBJE":
+                _visited.add(val)
+                ref = ptr_index.get(val)
+                if ref is not None:
+                    values.extend(_collect_url_values(ref, True, True, ptr_index, False, _visited))
+            elif tag == "SOUR" and include_sources:
+                _visited.add(val)
+                ref = ptr_index.get(val)
+                if ref is not None:
+                    values.extend(_collect_url_values(ref, True, True, ptr_index, False, _visited))
+            # For FAMC/FAMS/HUSB/WIFE/CHIL pointers: don't follow (would walk the whole tree)
+        else:
+            values.extend(_collect_url_values(ch, include_events, include_sources, ptr_index, False, _visited))
+
+    return values
+
+
+def _matching_urls(el, url_lower: str, include_events: bool, include_sources: bool, ptr_index: dict) -> list[str]:
+    seen: set[str] = set()
+    result = []
+    for v in _collect_url_values(el, include_events, include_sources, ptr_index):
+        vl = v.lower()
+        if (vl.startswith("http://") or vl.startswith("https://")) and (url_lower == "" or url_lower in vl) and v not in seen:
+            seen.add(v)
+            result.append(v)
+    return result
+
+
+def _has_url(el, url_lower: str, include_events: bool, include_sources: bool, ptr_index: dict) -> bool:
+    return bool(_matching_urls(el, url_lower, include_events, include_sources, ptr_index))
+
+
+def _url_rows(root_elements, ptr_index, url_substr: str, include_events: bool, include_sources: bool, any_place: bool) -> tuple[list, list]:
+    url_lower = url_substr.lower()
+    indi_rows = []
+    fam_rows = []
+    for el in root_elements:
+        tag = el.get_tag()
+        if tag == gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
+            urls = _matching_urls(el, url_lower, include_events, include_sources, ptr_index)
+            if urls:
+                given, surn = _get_name(el)
+                birth, birth_place = _get_event(el, gedcom.tags.GEDCOM_TAG_BIRTH)
+                death, _ = _get_event(el, gedcom.tags.GEDCOM_TAG_DEATH)
+                if any_place and not birth_place:
+                    birth_place = _get_place(el, "CHR", "RESI", gedcom.tags.GEDCOM_TAG_DEATH)
+                indi_rows.append((given, surn, birth, death, birth_place, urls))
+        elif tag == gedcom.tags.GEDCOM_TAG_FAMILY:
+            urls = _matching_urls(el, url_lower, include_events, include_sources, ptr_index)
+            if urls:
+                hg = hs = wg = ws = ""
+                for ch in el.get_child_elements():
+                    if ch.get_tag() == gedcom.tags.GEDCOM_TAG_HUSBAND:
+                        indi = ptr_index.get(ch.get_value().strip())
+                        if indi:
+                            hg, hs = _get_name(indi)
+                    elif ch.get_tag() == gedcom.tags.GEDCOM_TAG_WIFE:
+                        indi = ptr_index.get(ch.get_value().strip())
+                        if indi:
+                            wg, ws = _get_name(indi)
+                marr, marr_place = _get_marriage(el)
+                fam_rows.append((hg, hs, wg, ws, marr, marr_place, urls))
+    indi_rows.sort(key=lambda r: (_collation_key(r[1]), _collation_key(r[0])))
+    fam_rows.sort(key=lambda r: (_collation_key(r[1]), _collation_key(r[0]), _collation_key(r[3]), _collation_key(r[2])))
+    return indi_rows, fam_rows
+
+
 def _family_rows(root_elements, ptr_index) -> list[tuple]:
     rows = []
     for el in root_elements:
@@ -485,6 +605,9 @@ def query_file(
     do_surnames: bool,
     do_location: bool,
     do_family: bool,
+    url_pattern: str | None,
+    search_events: bool,
+    search_sources: bool,
     use_csv: bool,
     any_place: bool,
 ) -> None:
@@ -568,6 +691,50 @@ def query_file(
                     line += f" {marr_place}"
                 print(line)
 
+    if url_pattern is not None:
+        indi_rows, fam_rows = _url_rows(root_elements, ptr_index, url_pattern, search_events, search_sources, any_place)
+        if indi_rows:
+            if not first_section and not use_csv:
+                print()
+            first_section = False
+            if use_csv:
+                out.writerow(["Name", "Surname", "Birth", "Death", "Place", "URLs"])
+                for given, surn, birth, death, place, urls in indi_rows:
+                    out.writerow([given, surn, birth, death, place, " ".join(urls)])
+            else:
+                for given, surn, birth, death, place, urls in indi_rows:
+                    name = f"{given} {surn}".strip() or "?"
+                    parts = [name]
+                    if birth:
+                        parts.append(f"*{birth}")
+                    if death:
+                        parts.append(f"+{death}")
+                    if place:
+                        parts.append(place)
+                    print(" ".join(parts))
+                    for url in urls:
+                        print(f"  {url}")
+        if fam_rows:
+            if not first_section and not use_csv:
+                print()
+            first_section = False
+            if use_csv:
+                out.writerow(["Husband_Given", "Husband_Surname", "Wife_Given", "Wife_Surname", "Marriage", "Marriage_Place", "URLs"])
+                for hg, hs, wg, ws, marr, marr_place, urls in fam_rows:
+                    out.writerow([hg, hs, wg, ws, marr, marr_place, " ".join(urls)])
+            else:
+                for hg, hs, wg, ws, marr, marr_place, urls in fam_rows:
+                    husb = f"{hg} {hs}".strip() or "?"
+                    wife = f"{wg} {ws}".strip() or "?"
+                    line = f"{husb} {wife}"
+                    if marr:
+                        line += f" ⚭{marr}"
+                    if marr_place:
+                        line += f" {marr_place}"
+                    print(line)
+                    for url in urls:
+                        print(f"  {url}")
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -610,6 +777,25 @@ def main() -> None:
         help="With --surnames: output the place of the oldest occurrence of each surname",
     )
     arg_parser.add_argument("--family", action="store_true", help="List all families")
+    arg_parser.add_argument(
+        "--url",
+        nargs="?",
+        const="",
+        metavar="URL",
+        help="List INDI and FAM records containing this URL substring (case-insensitive); omit value to match any URL",
+    )
+    arg_parser.add_argument(
+        "--search-events",
+        action="store_true",
+        dest="search_events",
+        help="With --url: also search within event subtrees",
+    )
+    arg_parser.add_argument(
+        "--search-sources",
+        action="store_true",
+        dest="search_sources",
+        help="With --url: also search within source citation subtrees",
+    )
     arg_parser.add_argument("--csv", action="store_true", help="Output as CSV")
     arg_parser.add_argument(
         "--any-place",
@@ -620,15 +806,18 @@ def main() -> None:
 
     args = arg_parser.parse_args()
 
-    if args.person is None and not args.surnames and not args.family:
-        arg_parser.error("at least one of --person, --surnames, or --family must be specified")
+    if args.person is None and not args.surnames and not args.family and args.url is None:
+        arg_parser.error("at least one of --person, --surnames, --family, or --url must be specified")
     if (args.ancestors or args.descendants) and not (args.person and len(args.person) > 0):
         arg_parser.error("--ancestors/--descendants require --person with at least one name")
     if args.location and not args.surnames:
         arg_parser.error("--location requires --surnames")
+    if (args.search_events or args.search_sources) and args.url is None:
+        arg_parser.error("--search-events/--search-sources require --url")
 
     query_file(args.input, args.person, args.ancestors, args.descendants,
-               args.surnames, args.location, args.family, args.csv, args.any_place)
+               args.surnames, args.location, args.family, args.url,
+               args.search_events, args.search_sources, args.csv, args.any_place)
 
 
 if __name__ == "__main__":
