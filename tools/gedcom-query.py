@@ -20,11 +20,13 @@ Options:
                   substring (case-insensitive). Omit value to match any URL.
                   By default only direct (non-event) children are searched.
     --search-events   With --url: also search within event subtrees.
+    --addr [ADDR] List INDI and FAM records whose ADDR subtree contains ADDR as
+                  a substring (case-insensitive). Omit value to match any address.
     --csv         Output as CSV
     --any-place   For --person/--surnames: fall back to baptism, residence, or
                   death place when birth place is absent (checked in that order)
 
-At least one of --person, --surnames, --family, or --url must be specified.
+At least one of --person, --surnames, --family, --url, or --addr must be specified.
 
 Examples:
     python tools/gedcom-query.py family.ged --person
@@ -41,6 +43,8 @@ Examples:
     python tools/gedcom-query.py family.ged --url
     python tools/gedcom-query.py family.ged --url familysearch.org
     python tools/gedcom-query.py family.ged --url matricula-online.com --search-events
+    python tools/gedcom-query.py family.ged --addr "Sušica 47"
+    python tools/gedcom-query.py family.ged --person "Jakob Renka 1764" --descendants --addr
 """
 
 import argparse
@@ -565,6 +569,66 @@ def _url_rows(root_elements, ptr_index, url_substr: str, include_events: bool, a
     return indi_rows, fam_rows
 
 
+def _collect_addr_values(el) -> list[str]:
+    result = []
+    for ch in el.get_child_elements():
+        if ch.get_tag() == "ADDR":
+            val = (ch.get_value() or "").strip()
+            if val:
+                result.append(val)
+        result.extend(_collect_addr_values(ch))
+    return result
+
+
+def _matching_addrs(el, addr_lower: str) -> list[str]:
+    seen: set[str] = set()
+    result = []
+    for v in _collect_addr_values(el):
+        vl = v.lower()
+        if (addr_lower == "" or addr_lower in vl) and v not in seen:
+            seen.add(v)
+            result.append(v)
+    return result
+
+
+def _addr_rows(root_elements, ptr_index, addr_substr: str, any_place: bool,
+               ptr_filter: set | None = None) -> tuple[list, list]:
+    addr_lower = addr_substr.lower()
+    indi_rows = []
+    fam_rows = []
+    for el in root_elements:
+        tag = el.get_tag()
+        if tag == gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
+            if ptr_filter is not None and el.get_pointer().strip() not in ptr_filter:
+                continue
+            addrs = _matching_addrs(el, addr_lower)
+            if addrs:
+                given, surn = _get_name(el)
+                birth, birth_place = _get_event(el, gedcom.tags.GEDCOM_TAG_BIRTH)
+                death, _ = _get_event(el, gedcom.tags.GEDCOM_TAG_DEATH)
+                if any_place and not birth_place:
+                    birth_place = _get_place(el, "CHR", "RESI", gedcom.tags.GEDCOM_TAG_DEATH)
+                indi_rows.append((given, surn, birth, death, birth_place, addrs))
+        elif tag == gedcom.tags.GEDCOM_TAG_FAMILY:
+            addrs = _matching_addrs(el, addr_lower)
+            if addrs:
+                hg = hs = wg = ws = ""
+                for ch in el.get_child_elements():
+                    if ch.get_tag() == gedcom.tags.GEDCOM_TAG_HUSBAND:
+                        indi = ptr_index.get(ch.get_value().strip())
+                        if indi:
+                            hg, hs = _get_name(indi)
+                    elif ch.get_tag() == gedcom.tags.GEDCOM_TAG_WIFE:
+                        indi = ptr_index.get(ch.get_value().strip())
+                        if indi:
+                            wg, ws = _get_name(indi)
+                marr, marr_place = _get_marriage(el)
+                fam_rows.append((hg, hs, wg, ws, marr, marr_place, addrs))
+    indi_rows.sort(key=lambda r: (_collation_key(r[1]), _collation_key(r[0])))
+    fam_rows.sort(key=lambda r: (_collation_key(r[1]), _collation_key(r[0]), _collation_key(r[3]), _collation_key(r[2])))
+    return indi_rows, fam_rows
+
+
 def _family_rows(root_elements, ptr_index) -> list[tuple]:
     rows = []
     for el in root_elements:
@@ -596,6 +660,7 @@ def query_file(
     do_family: bool,
     url_pattern: str | None,
     search_events: bool,
+    addr_pattern: str | None,
     use_csv: bool,
     any_place: bool,
 ) -> None:
@@ -641,7 +706,7 @@ def query_file(
             for row in rows:
                 print(f"{row[0]} {row[1]}".rstrip() if do_location else row)
 
-    if person_queries is not None and not do_surnames and url_pattern is None:
+    if person_queries is not None and not do_surnames and url_pattern is None and addr_pattern is None:
         first_section = False
         rows = _person_rows(root_elements, any_place, ptr_filter)
         if use_csv:
@@ -724,6 +789,47 @@ def query_file(
                     for url in urls:
                         print(f"  {url}")
 
+    if addr_pattern is not None:
+        indi_rows, fam_rows = _addr_rows(root_elements, ptr_index, addr_pattern, any_place,
+                                          ptr_filter if person_queries is not None else None)
+        if indi_rows:
+            if not first_section and not use_csv:
+                print()
+            first_section = False
+            if use_csv:
+                out.writerow(["Name", "Surname", "Birth", "Death", "Place", "Addresses"])
+                for given, surn, birth, death, place, addrs in indi_rows:
+                    out.writerow([given, surn, birth, death, place, " | ".join(addrs)])
+            else:
+                for given, surn, birth, death, place, addrs in indi_rows:
+                    name = f"{given} {surn}".strip() or "?"
+                    parts = [name]
+                    if birth:
+                        parts.append(f"*{birth}")
+                    if death:
+                        parts.append(f"+{death}")
+                    if place:
+                        parts.append(place)
+                    print(" ".join(parts))
+        if fam_rows:
+            if not first_section and not use_csv:
+                print()
+            first_section = False
+            if use_csv:
+                out.writerow(["Husband_Given", "Husband_Surname", "Wife_Given", "Wife_Surname", "Marriage", "Marriage_Place", "Addresses"])
+                for hg, hs, wg, ws, marr, marr_place, addrs in fam_rows:
+                    out.writerow([hg, hs, wg, ws, marr, marr_place, " | ".join(addrs)])
+            else:
+                for hg, hs, wg, ws, marr, marr_place, addrs in fam_rows:
+                    husb = f"{hg} {hs}".strip() or "?"
+                    wife = f"{wg} {ws}".strip() or "?"
+                    line = f"{husb} {wife}"
+                    if marr:
+                        line += f" ⚭{marr}"
+                    if marr_place:
+                        line += f" {marr_place}"
+                    print(line)
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -780,6 +886,13 @@ def main() -> None:
         help="With --url: also search within event subtrees",
     )
 
+    arg_parser.add_argument(
+        "--addr",
+        nargs="?",
+        const="",
+        metavar="ADDR",
+        help="List INDI and FAM records with a matching ADDR value (case-insensitive substring); omit value to match any address",
+    )
     arg_parser.add_argument("--csv", action="store_true", help="Output as CSV")
     arg_parser.add_argument(
         "--any-place",
@@ -790,8 +903,8 @@ def main() -> None:
 
     args = arg_parser.parse_args()
 
-    if args.person is None and not args.surnames and not args.family and args.url is None:
-        arg_parser.error("at least one of --person, --surnames, --family, or --url must be specified")
+    if args.person is None and not args.surnames and not args.family and args.url is None and args.addr is None:
+        arg_parser.error("at least one of --person, --surnames, --family, --url, or --addr must be specified")
     if (args.ancestors or args.descendants) and not (args.person and len(args.person) > 0):
         arg_parser.error("--ancestors/--descendants require --person with at least one name")
     if args.location and not args.surnames:
@@ -801,7 +914,7 @@ def main() -> None:
 
     query_file(args.input, args.person, args.ancestors, args.descendants,
                args.surnames, args.location, args.family, args.url,
-               args.search_events, args.csv, args.any_place)
+               args.search_events, args.addr, args.csv, args.any_place)
 
 
 if __name__ == "__main__":
