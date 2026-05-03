@@ -22,11 +22,14 @@ Options:
     --search-events   With --url: also search within event subtrees.
     --addr [ADDR] List INDI and FAM records whose ADDR subtree contains ADDR as
                   a substring (case-insensitive). Omit value to match any address.
+    --duplicate-url
+                  List all URLs that appear in more than one media (OBJE) record,
+                  with the persons/families referencing each duplicate.
     --csv         Output as CSV
     --any-place   For --person/--surnames: fall back to baptism, residence, or
                   death place when birth place is absent (checked in that order)
 
-At least one of --person, --surnames, --family, --url, or --addr must be specified.
+At least one of --person, --surnames, --family, --url, --addr, or --duplicate-url must be specified.
 
 Examples:
     python tools/gedcom-query.py family.ged --person
@@ -45,6 +48,7 @@ Examples:
     python tools/gedcom-query.py family.ged --url matricula-online.com --search-events
     python tools/gedcom-query.py family.ged --addr "Sušica 47"
     python tools/gedcom-query.py family.ged --person "Jakob Renka 1764" --descendants --addr
+    python tools/gedcom-query.py family.ged --duplicate-url
 """
 
 import argparse
@@ -629,6 +633,77 @@ def _addr_rows(root_elements, ptr_index, addr_substr: str, any_place: bool,
     return indi_rows, fam_rows
 
 
+def _get_obje_refs(el) -> list[str]:
+    """Recursively collect all OBJE pointer values from el's subtree."""
+    result = []
+    for ch in el.get_child_elements():
+        if ch.get_tag() == gedcom.tags.GEDCOM_TAG_OBJECT:
+            val = (ch.get_value() or "").strip()
+            if val.startswith("@") and val.endswith("@"):
+                result.append(val)
+        result.extend(_get_obje_refs(ch))
+    return result
+
+
+def _duplicate_url_rows(root_elements, ptr_index) -> list[tuple[str, list]]:
+    """Return [(url, [person_or_family_row, ...]), ...] for URLs in multiple OBJE records."""
+    url_to_objes: dict[str, list[str]] = {}
+    url_display: dict[str, str] = {}
+    for el in root_elements:
+        if el.get_tag() != gedcom.tags.GEDCOM_TAG_OBJECT:
+            continue
+        obje_ptr = el.get_pointer().strip()
+        for ch in el.get_child_elements():
+            if ch.get_tag() != "FILE":
+                continue
+            val = (ch.get_value() or "").strip()
+            vl = val.lower()
+            if not (vl.startswith("http://") or vl.startswith("https://")):
+                continue
+            url_to_objes.setdefault(vl, []).append(obje_ptr)
+            url_display.setdefault(vl, val)
+
+    obje_to_records: dict[str, list] = {}
+    for el in root_elements:
+        if el.get_tag() not in (gedcom.tags.GEDCOM_TAG_INDIVIDUAL, gedcom.tags.GEDCOM_TAG_FAMILY):
+            continue
+        for obje_ptr in _get_obje_refs(el):
+            obje_to_records.setdefault(obje_ptr, []).append(el)
+
+    result = []
+    for url_lower, obje_ptrs in url_to_objes.items():
+        if len(obje_ptrs) <= 1:
+            continue
+        url = url_display[url_lower]
+        seen: set[str] = set()
+        rows = []
+        for obje_ptr in obje_ptrs:
+            for record_el in obje_to_records.get(obje_ptr, []):
+                rptr = record_el.get_pointer().strip()
+                if rptr in seen:
+                    continue
+                seen.add(rptr)
+                if record_el.get_tag() == gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
+                    given, surn = _get_name(record_el)
+                    birth, _ = _get_event(record_el, gedcom.tags.GEDCOM_TAG_BIRTH)
+                    rows.append(("INDI", given, surn, birth))
+                else:
+                    hg = hs = wg = ws = ""
+                    for ch in record_el.get_child_elements():
+                        if ch.get_tag() == gedcom.tags.GEDCOM_TAG_HUSBAND:
+                            indi = ptr_index.get(ch.get_value().strip())
+                            if indi:
+                                hg, hs = _get_name(indi)
+                        elif ch.get_tag() == gedcom.tags.GEDCOM_TAG_WIFE:
+                            indi = ptr_index.get(ch.get_value().strip())
+                            if indi:
+                                wg, ws = _get_name(indi)
+                    rows.append(("FAM", hg, hs, wg, ws))
+        result.append((url, rows))
+    result.sort(key=lambda r: r[0].lower())
+    return result
+
+
 def _family_rows(root_elements, ptr_index) -> list[tuple]:
     rows = []
     for el in root_elements:
@@ -661,6 +736,7 @@ def query_file(
     url_pattern: str | None,
     search_events: bool,
     addr_pattern: str | None,
+    do_duplicate_url: bool,
     use_csv: bool,
     any_place: bool,
 ) -> None:
@@ -830,6 +906,36 @@ def query_file(
                         line += f" {marr_place}"
                     print(line)
 
+    if do_duplicate_url:
+        dup_rows = _duplicate_url_rows(root_elements, ptr_index)
+        if dup_rows:
+            if not first_section and not use_csv:
+                print()
+            first_section = False
+            if use_csv:
+                out.writerow(["URL", "Name", "Surname", "Birth"])
+                for url, rows in dup_rows:
+                    for row in rows:
+                        if row[0] == "INDI":
+                            _, given, surn, birth = row
+                            out.writerow([url, given, surn, birth])
+                        else:
+                            _, hg, hs, wg, ws = row
+                            out.writerow([url, f"{hg} {hs}".strip(), f"{wg} {ws}".strip(), ""])
+            else:
+                for url, rows in dup_rows:
+                    print(url)
+                    for row in rows:
+                        if row[0] == "INDI":
+                            _, given, surn, birth = row
+                            name = f"{given} {surn}".strip() or "?"
+                            print(f"  {name}" + (f" *{birth}" if birth else ""))
+                        else:
+                            _, hg, hs, wg, ws = row
+                            husb = f"{hg} {hs}".strip() or "?"
+                            wife = f"{wg} {ws}".strip() or "?"
+                            print(f"  {husb} ⚭ {wife}")
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -893,6 +999,12 @@ def main() -> None:
         metavar="ADDR",
         help="List INDI and FAM records with a matching ADDR value (case-insensitive substring); omit value to match any address",
     )
+    arg_parser.add_argument(
+        "--duplicate-url",
+        action="store_true",
+        dest="duplicate_url",
+        help="List URLs that appear in more than one media (OBJE) record",
+    )
     arg_parser.add_argument("--csv", action="store_true", help="Output as CSV")
     arg_parser.add_argument(
         "--any-place",
@@ -903,8 +1015,8 @@ def main() -> None:
 
     args = arg_parser.parse_args()
 
-    if args.person is None and not args.surnames and not args.family and args.url is None and args.addr is None:
-        arg_parser.error("at least one of --person, --surnames, --family, --url, or --addr must be specified")
+    if args.person is None and not args.surnames and not args.family and args.url is None and args.addr is None and not args.duplicate_url:
+        arg_parser.error("at least one of --person, --surnames, --family, --url, --addr, or --duplicate-url must be specified")
     if (args.ancestors or args.descendants) and not (args.person and len(args.person) > 0):
         arg_parser.error("--ancestors/--descendants require --person with at least one name")
     if args.location and not args.surnames:
@@ -914,7 +1026,7 @@ def main() -> None:
 
     query_file(args.input, args.person, args.ancestors, args.descendants,
                args.surnames, args.location, args.family, args.url,
-               args.search_events, args.addr, args.csv, args.any_place)
+               args.search_events, args.addr, args.duplicate_url, args.csv, args.any_place)
 
 
 if __name__ == "__main__":
