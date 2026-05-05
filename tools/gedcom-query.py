@@ -645,8 +645,8 @@ def _get_obje_refs(el) -> list[str]:
     return result
 
 
-def _duplicate_url_rows(root_elements, ptr_index) -> list[tuple[str, list]]:
-    """Return [(url, [person_or_family_row, ...]), ...] for URLs in multiple OBJE records."""
+def _duplicate_url_rows(root_elements, ptr_index) -> list[tuple[str, list[tuple[str, list]]]]:
+    """Return [(url, [(obje_ptr, [row, ...]), ...]), ...] for URLs in multiple OBJE records."""
     url_to_objes: dict[str, list[str]] = {}
     url_display: dict[str, str] = {}
     for el in root_elements:
@@ -675,14 +675,10 @@ def _duplicate_url_rows(root_elements, ptr_index) -> list[tuple[str, list]]:
         if len(obje_ptrs) <= 1:
             continue
         url = url_display[url_lower]
-        seen: set[str] = set()
-        rows = []
+        groups = []
         for obje_ptr in obje_ptrs:
+            rows = []
             for record_el in obje_to_records.get(obje_ptr, []):
-                rptr = record_el.get_pointer().strip()
-                if rptr in seen:
-                    continue
-                seen.add(rptr)
                 if record_el.get_tag() == gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
                     given, surn = _get_name(record_el)
                     birth, _ = _get_event(record_el, gedcom.tags.GEDCOM_TAG_BIRTH)
@@ -699,7 +695,8 @@ def _duplicate_url_rows(root_elements, ptr_index) -> list[tuple[str, list]]:
                             if indi:
                                 wg, ws = _get_name(indi)
                     rows.append(("FAM", hg, hs, wg, ws))
-        result.append((url, rows))
+            groups.append((obje_ptr, rows))
+        result.append((url, groups))
     result.sort(key=lambda r: r[0].lower())
     return result
 
@@ -913,28 +910,31 @@ def query_file(
                 print()
             first_section = False
             if use_csv:
-                out.writerow(["URL", "Name", "Surname", "Birth"])
-                for url, rows in dup_rows:
-                    for row in rows:
-                        if row[0] == "INDI":
-                            _, given, surn, birth = row
-                            out.writerow([url, given, surn, birth])
-                        else:
-                            _, hg, hs, wg, ws = row
-                            out.writerow([url, f"{hg} {hs}".strip(), f"{wg} {ws}".strip(), ""])
+                out.writerow(["URL", "OBJE", "Name", "Surname", "Birth"])
+                for url, groups in dup_rows:
+                    for obje_ptr, rows in groups:
+                        for row in rows:
+                            if row[0] == "INDI":
+                                _, given, surn, birth = row
+                                out.writerow([url, obje_ptr, given, surn, birth])
+                            else:
+                                _, hg, hs, wg, ws = row
+                                out.writerow([url, obje_ptr, f"{hg} {hs}".strip(), f"{wg} {ws}".strip(), ""])
             else:
-                for url, rows in dup_rows:
+                for url, groups in dup_rows:
                     print(url)
-                    for row in rows:
-                        if row[0] == "INDI":
-                            _, given, surn, birth = row
-                            name = f"{given} {surn}".strip() or "?"
-                            print(f"  {name}" + (f" *{birth}" if birth else ""))
-                        else:
-                            _, hg, hs, wg, ws = row
-                            husb = f"{hg} {hs}".strip() or "?"
-                            wife = f"{wg} {ws}".strip() or "?"
-                            print(f"  {husb} ⚭ {wife}")
+                    for obje_ptr, rows in groups:
+                        print(f"  {obje_ptr}")
+                        for row in rows:
+                            if row[0] == "INDI":
+                                _, given, surn, birth = row
+                                name = f"{given} {surn}".strip() or "?"
+                                print(f"    {name}" + (f" *{birth}" if birth else ""))
+                            else:
+                                _, hg, hs, wg, ws = row
+                                husb = f"{hg} {hs}".strip() or "?"
+                                wife = f"{wg} {ws}".strip() or "?"
+                                print(f"    {husb} ⚭ {wife}")
 
 
 # ---------------------------------------------------------------------------
