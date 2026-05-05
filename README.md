@@ -116,14 +116,12 @@ Listed in execution order.
 | `addr_to_plac` | Merge `ADDR` values into event `PLAC` tags. |
 | `sour_peri_titl` | Rename `PERI` to `TITL` inside source records when `TITL` is not already present. |
 | `born75y_private` | Anonymize individuals born in the last 75 years regardless of death status: set name to `private` and remove all events. Partial years filled conservatively (e.g. `195_` → 1959). |
-| `born20y_private` | Remove individuals born in the last 20 years with no confirmed death record. |
 | `died20y_private` | Anonymize individuals whose death, burial, or cremation was recorded within the last 20 years (date must be present). Complies with ZVOP-2 post-mortem protection. |
-| `marriage20y_private` | Remove family records where marriage occurred in the last 20 years. |
 | `living100y_private` | Anonymize individuals with a birth year under 100 years ago and no death record: set name to `private` and remove all events. Partial years (e.g. `192_`, `19__`) are filled conservatively (underscores → 9) so anyone who could be under 100 is treated as living. Falls back to relative-based birth year estimation (parents +35y, children −35y) when birth date is entirely absent. Complies with ZVOP-2. |
 | `living75y_private` | Same as `living100y_private` but with a 75-year cutoff. |
 | `living100y_initials` | Same detection as `living100y_private` but reduces the full name to initials (e.g. `Luka /Renko/` → `L. /R./`). All events are still removed. |
 | `fam_partner_private` | If both spouses are `private`: remove the entire family record. If one spouse is `private`: replace all non-empty event field values with `private`. Runs after all individual-level privacy transformers. |
-| `dead_child_private` | Anonymize dead individuals who have at least one living parent (no DEAT/BURI/CREM and not born more than 100 years ago). Runs last, after all other individual-level privacy transformers. |
+
 
 ### Presets
 
