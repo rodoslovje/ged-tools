@@ -262,11 +262,8 @@ def _is_disguised_cp1250(raw: bytes) -> bool:
     return False
 
 
-def _detect_encoding(file_path: str) -> str:
-    """Detect encoding of a GEDCOM file. Returns a Python codec name."""
-    with open(file_path, "rb") as f:
-        raw = f.read()
-
+def _detect_encoding(raw: bytes) -> str:
+    """Detect encoding of GEDCOM raw bytes. Returns a Python codec name."""
     # 1. BOM detection
     if raw.startswith(b"\xef\xbb\xbf"):
         return "utf-8-sig"
@@ -314,7 +311,14 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
     with open(input_path, "rb") as f:
         raw = f.read()
 
-    encoding = _detect_encoding(input_path)
+    # Normalise CR-only line endings (old Mac format) to LF so the GEDCOM parser
+    # and all regex anchors work correctly. CRLF files are handled implicitly by
+    # Python's text-mode open(); CR-only files are not.
+    _cr_normalised = b'\r' in raw and b'\n' not in raw
+    if _cr_normalised:
+        raw = raw.replace(b'\r', b'\n')
+
+    encoding = _detect_encoding(raw)
 
     norm = encoding.lower().replace("-", "").replace("_", "")
     if norm in ("utf8", "utf8sig"):
@@ -323,7 +327,8 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
         else:
             try:
                 raw.decode(encoding)
-                return input_path, False  # genuine UTF-8 — pass through unchanged
+                if not _cr_normalised:
+                    return input_path, False  # genuine UTF-8 with normal line endings
             except UnicodeDecodeError:
                 # File claims to be UTF-8 but contains some invalid bytes.
                 # Check if it's mostly valid UTF-8 with minor corruption.
