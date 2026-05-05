@@ -53,6 +53,7 @@ python tools/gedcom-cleaner.py --input-dir DIR --output-dir DIR [STEM ...] [OPTI
 | `--verbose-clean` | Print every change performed by cleaners only |
 | `--verbose-transform` | Print every change performed by transformers only |
 | `--verbose-strip` | Print every change performed by strippers only |
+| `--verbose-private` | Print every privacy-related decision only (subset of `--verbose-transform`, covering `born*/died*/living*/marriage*/fam_partner*/dead_child*` transformers) |
 | `--input-dir DIR` | Process all `.ged` files in DIR (batch mode) |
 | `--output-dir DIR` | Write processed files to DIR (batch mode) |
 | `--workers N` | Parallel workers in batch mode (default: 16) |
@@ -83,19 +84,20 @@ At least one of `--preset`, `--clean`, `--strip`, or `--transform` must be speci
 
 | Name | Description |
 |---|---|
-| `ste`, `stf`, `sto`, `bkm` | Strip proprietary MacFamilyTree / other app tags. |
+| `ste`, `stf`, `sto`, `stp`, `bkm` | Strip proprietary MacFamilyTree / other app tags (`_STE`, `_STF`, `_STO`, `_STP`, `_BKM`). |
 | `labl` | Remove `_LABL` (label) tags. |
 | `place_tran` | Remove TRAN (translation) entries under PLAC tags. |
 | `mise` | Remove MISE tags. |
 | `object_crop` | Remove CROP entries under OBJE tags. |
-| `addr_longlati` | Remove coordinates (LATI/LONG) from addresses. |
-| `indi_race` | Remove RACE tags. |
+| `addr_longlati` | Remove coordinates (LATI/LONG/MAP) from ADDR tags. |
+| `indi_race` | Remove RACE tags from individuals. |
+| `sour_tags` | Remove AGNC (agency) tags from source records. |
 | `change_date` | Remove CHAN (change date) tags. |
 | `create_date` | Remove CREA (creation date) tags. |
 | `deat_placeholder` | Remove DEAT/BURI/CREM records that are entirely placeholder (no real date, no real place). Skipped for individuals born 100+ years ago. Runs before transformers. |
 | `noname_indi` | Remove individuals with no valid name. |
 | `noname_fam` | Remove families with no named spouses. |
-| `living` | Remove individuals who are likely still living. |
+| `living` | Remove individuals who are likely still living (no DEAT/BURI/CREM), and their families. |
 
 ### Transformers
 
@@ -103,18 +105,24 @@ Listed in execution order.
 
 | Name | Description |
 |---|---|
+| `fid_fsftid` | Rename `_FID` to `_FSFTID` (FamilySearch Family Tree ID tag normalisation). |
+| `nobi_fact` | Rename `NOBI` to `FACT`. |
+| `sour_filn_abbr` | Rename `FILN` to `ABBR` inside source records (file number → abbreviation). |
+| `sour_date_publ` | Rename `DATE` to `PUBL` inside source records (publication date fix). |
+| `sour_plac_auth` | Rename `PLAC` to `AUTH` inside source records when `AUTH` is not already present (place → authority/archive). |
+| `latr_even` | Convert `LATR` to `EVEN` with `TYPE = Land Transaction`. |
+| `prs_even_type` | Convert `_PRS` (civil partnership) to `EVEN` with `TYPE = Civil Partnership`. |
+| `secg_givn` | Append `NAME:SECG` content to `NAME:GIVN` and remove the `SECG` tag. |
+| `addr_to_plac` | Merge `ADDR` values into event `PLAC` tags. |
+| `sour_peri_titl` | Rename `PERI` to `TITL` inside source records when `TITL` is not already present. |
+| `born75y_private` | Anonymize individuals born in the last 75 years regardless of death status: set name to `private` and remove all events. Partial years filled conservatively (e.g. `195_` → 1959). |
 | `born20y_private` | Remove individuals born in the last 20 years with no confirmed death record. |
 | `died20y_private` | Anonymize individuals whose death, burial, or cremation was recorded within the last 20 years (date must be present). Complies with ZVOP-2 post-mortem protection. |
 | `marriage20y_private` | Remove family records where marriage occurred in the last 20 years. |
-| `born75y_private` | Anonymize individuals born in the last 75 years regardless of death status: set name to `private` and remove all events. Partial years filled conservatively (e.g. `195_` → 1959). |
 | `living100y_private` | Anonymize individuals with a birth year under 100 years ago and no death record: set name to `private` and remove all events. Partial years (e.g. `192_`, `19__`) are filled conservatively (underscores → 9) so anyone who could be under 100 is treated as living. Falls back to relative-based birth year estimation (parents +35y, children −35y) when birth date is entirely absent. Complies with ZVOP-2. |
 | `living100y_initials` | Same detection as `living100y_private` but reduces the full name to initials (e.g. `Luka /Renko/` → `L. /R./`). All events are still removed. |
-| `fam_partner_private` | If both spouses are private: remove the entire family record. If one spouse is private: replace all non-empty event field values with `private`. Runs after all individual-level privacy transformers. |
+| `fam_partner_private` | If both spouses are `private`: remove the entire family record. If one spouse is `private`: replace all non-empty event field values with `private`. Runs after all individual-level privacy transformers. |
 | `dead_child_private` | Anonymize dead individuals who have at least one living parent (no DEAT/BURI/CREM and not born more than 100 years ago). Runs last, after all other individual-level privacy transformers. |
-| `secg_givn` | Append NAME:SECG content to NAME:GIVN and remove the SECG tag. |
-| `fid_fsftid` | Rename `_FID` to `_FSFTID` (FamilySearch ID tag fix). |
-| `latr_even` | Convert LATR to EVEN type="Land Transaction". |
-| `addr_to_plac` | Merge ADDR values into event PLAC tags. |
 
 ### Presets
 
@@ -122,9 +130,9 @@ A preset is a named combination of processors for a common use case. Can be comb
 
 | Preset | Description |
 |---|---|
-| `mft_webtrees` | WebTrees compatibility for MacFamilyTree exports. Cleaners: `dd_mmm_yyyy`, `name_placeholder`. Strippers: `ste`, `stf`, `sto`, `bkm`, `labl`, `addr_longlati`, `place_tran`, `mise`, `object_crop`, `change_date`, `create_date`, `indi_race`. Transformers: `secg_givn`, `fid_fsftid`, `latr_even`. |
+| `mft_webtrees` | WebTrees compatibility for MacFamilyTree exports. Cleaners: `dd_mmm_yyyy`, `name_placeholder`. Strippers: `ste`, `stf`, `sto`, `stp`, `bkm`, `labl`, `addr_longlati`, `place_tran`, `mise`, `object_crop`, `change_date`, `create_date`, `indi_race`, `sour_tags`. Transformers: `secg_givn`, `fid_fsftid`, `latr_even`, `prs_even_type`, `nobi_fact`, `sour_peri_titl`, `sour_date_publ`, `sour_filn_abbr`, `sour_plac_auth`. |
 | `mft_sgi` | Slovenian Genealogy Institute formatting. Cleaners: `place_slovenia_rm`. Transformers: `addr_to_plac`, `living100y_private`. |
-| `mft_public` | Public sharing from MacFamilyTree exports. Cleaners: `place_country_only`. Transformers: `living100y_initials`. |
+| `mft_public` | Public sharing from MacFamilyTree exports. Cleaners: `place_country_only`. Transformers: `living100y_initials`, `fam_partner_private`. |
 | `index_cleanup_sgi` | Full cleanup and anonymization for public indices (Slovenia). Cleaners: `dd_mmm_yyyy`, `name_placeholder`, `place_placeholder`, `place_duplicate_rm`. Strippers: `noname_indi`, `noname_fam`. Transformers (in order): `died20y_private`, `living100y_private`, `fam_partner_private`. |
 | `index_cleanup_cgi` | Full cleanup and anonymization for public indices (Croatia). Same as `index_cleanup_sgi` without `died20y_private`. Cleaners: `dd_mmm_yyyy`, `name_placeholder`, `place_placeholder`, `place_duplicate_rm`. Strippers: `noname_indi`, `noname_fam`. Transformers (in order): `living100y_private`, `fam_partner_private`. |
 

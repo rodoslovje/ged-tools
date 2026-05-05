@@ -15,6 +15,11 @@ Options:
     --verbose-clean                 Print every change performed by cleaners only.
     --verbose-transform             Print every change performed by transformers only.
     --verbose-strip                 Print every change performed by strippers only.
+    --verbose-private               Print every privacy-related decision only (subset of
+                                    --verbose-transform).
+    --verbose-private               Print every privacy-related decision only (subset of
+                                    --verbose-transform covering born/died/living/fam_partner/
+                                    dead_child transformers).
     --input-dir DIR                 Process all .ged files in DIR (batch mode).
     --output-dir DIR                Write processed files to DIR (batch mode).
     --workers N                     Parallel workers in batch mode (default: 16).
@@ -53,13 +58,16 @@ Available Cleaners:
     place_country_only   Reduce place to two parts: place, country.
 
 Available Strippers:
-    ste, stf, sto, bkm   Strip proprietary MacFamilyTree / other app tags.
+    ste, stf, sto, stp, bkm
+                         Strip proprietary MacFamilyTree / other app tags
+                         (_STE, _STF, _STO, _STP, _BKM).
     labl                 Remove _LABL (label) tags.
     place_tran           Remove TRAN (translation) entries under PLAC tags.
     mise                 Remove MISE tags.
     object_crop          Remove CROP entries under OBJE tags.
-    addr_longlati        Remove coordinates (LATI/LONG) from addresses.
-    indi_race            Remove RACE tags.
+    addr_longlati        Remove coordinates (LATI/LONG/MAP) from ADDR tags.
+    indi_race            Remove RACE tags from individuals.
+    sour_tags            Remove AGNC (agency) tags from source records.
     change_date          Remove CHAN (change date) tags.
     create_date          Remove CREA (creation date) tags.
     deat_placeholder     Remove DEAT/BURI/CREM records that are entirely placeholder
@@ -68,9 +76,23 @@ Available Strippers:
                          Runs before transformers so privacy evaluation sees clean DEAT state.
     noname_indi          Remove individuals with no valid name.
     noname_fam           Remove families with no named spouses.
-    living               Remove individuals who are likely still living.
+    living               Remove individuals who are likely still living, and their families.
 
 Available Transformers (listed in execution order):
+    fid_fsftid           Rename _FID to _FSFTID (FamilySearch Family Tree ID fix).
+    nobi_fact            Rename NOBI to FACT.
+    sour_filn_abbr       Rename FILN to ABBR inside source records.
+    sour_date_publ       Rename DATE to PUBL inside source records.
+    sour_plac_auth       Rename PLAC to AUTH inside source records (when AUTH is absent).
+    latr_even            Convert LATR to EVEN type="Land Transaction".
+    prs_even_type        Convert _PRS (civil partnership) to EVEN type="Civil Partnership".
+    secg_givn            Append NAME:SECG content to NAME:GIVN and remove the SECG tag.
+    addr_to_plac         Merge ADDR values into event PLAC tags.
+    sour_peri_titl       Rename PERI to TITL inside source records (when TITL is absent).
+    born75y_private      Anonymize individuals born in the last 75 years regardless
+                         of death status: set name to "private" and remove all events.
+                         Uses birth, baptism, or christening date (BIRT preferred).
+                         Partial years are filled conservatively (e.g. "195_" → 1959).
     born20y_private      Remove individuals born in the last 20 years with no
                          confirmed death record.
     died20y_private      Anonymize individuals whose death, burial, or cremation
@@ -78,10 +100,6 @@ Available Transformers (listed in execution order):
                          present). Complies with ZVOP-2 post-mortem protection.
     marriage20y_private  Remove family records where marriage occurred in the last
                          20 years.
-    born75y_private      Anonymize individuals born in the last 75 years regardless
-                         of death status: set name to "private" and remove all events.
-                         Uses birth, baptism, or christening date (BIRT preferred).
-                         Partial years are filled conservatively (e.g. "195_" → 1959).
     living100y_private   Anonymize individuals with a birth year under 100 years
                          ago and no death record: set name to "private" and remove
                          all events. Uses birth, baptism, or christening date.
@@ -103,17 +121,16 @@ Available Transformers (listed in execution order):
                          year is known, the parent's birth year is inferred as at most
                          child_birth_year - 20 when no parent birth date is recorded.
                          Runs after all other individual-level privacy transformers.
-    secg_givn            Append NAME:SECG content to NAME:GIVN and remove the SECG tag.
-    fid_fsftid           Rename _FID to _FSFTID (FamilySearch ID tag fix).
-    latr_even            Convert LATR to EVEN type="Land Transaction".
-    addr_to_plac         Merge ADDR values into event PLAC tags.
 
 Available Presets:
     mft_webtrees         WebTrees compatibility for MacFamilyTree exports.
                          Cleaners: dd_mmm_yyyy, name_placeholder.
-                         Strippers: ste, stf, sto, bkm, labl, addr_longlati, place_tran, mise, object_crop,
-                           change_date, create_date, indi_race.
-                         Transformers: secg_givn, fid_fsftid, latr_even.
+                         Strippers: ste, stf, sto, stp, bkm, labl, addr_longlati,
+                           place_tran, mise, object_crop, change_date, create_date,
+                           indi_race, sour_tags.
+                         Transformers: secg_givn, fid_fsftid, latr_even, prs_even_type,
+                           nobi_fact, sour_peri_titl, sour_date_publ, sour_filn_abbr,
+                           sour_plac_auth.
     mft_sgi              Slovenian Genealogy Institute formatting.
                          Cleaners: place_slovenia_rm.
                          Transformers: addr_to_plac, living100y_private.
@@ -1830,6 +1847,7 @@ def process_file(
     verbose_clean: bool = False,
     verbose_transform: bool = False,
     verbose_strip: bool = False,
+    verbose_private: bool = False,
 ) -> tuple[
     dict[str, CleanerStats], dict[str, StripperStats], dict[str, TransformerStats]
 ]:
@@ -1837,6 +1855,7 @@ def process_file(
     verbose_clean = verbose or verbose_clean
     verbose_transform = verbose or verbose_transform
     verbose_strip = verbose or verbose_strip
+    verbose_private = verbose or verbose_transform or verbose_private
     parse_path, is_tmp = _transcode_to_utf8(input_path)
     try:
         parser = Parser()
@@ -2264,7 +2283,7 @@ def process_file(
             children.clear()
             children.extend(to_keep)
             ts.transformed += 1
-            if verbose_transform:
+            if verbose_transform or verbose_private:
                 print(f"  [transform:born75y_private] INDI {element.get_pointer()} — {_b75_name} b.{birth_year}")
 
     if "born20y_private" in transformers:
@@ -2312,7 +2331,7 @@ def process_file(
                 indis_to_remove.append(el)
         for el in indis_to_remove:
             ts.transformed += 1
-            if verbose_transform:
+            if verbose_transform or verbose_private:
                 print(f"  [transform:born20y_private] INDI {el.get_pointer()} — {_indi_label(el)}")
             root_elements.remove(el)
 
@@ -2383,7 +2402,7 @@ def process_file(
             if has_death_event and death_year is not None and (_curr_year - death_year) < 20:
                 _anonymise_indi(element)
                 ts.transformed += 1
-                if verbose_transform:
+                if verbose_transform or verbose_private:
                     _by2 = re.search(r"\b\d{3,4}\b", _birth_date_str).group() if _birth_date_str and re.search(r"\b\d{3,4}\b", _birth_date_str) else None
                     _dy2 = re.search(r"\b\d{3,4}\b", _death_date_str).group() if _death_date_str and re.search(r"\b\d{3,4}\b", _death_date_str) else None
                     parts = [_name_display or "?"]
@@ -2421,7 +2440,7 @@ def process_file(
                 fams_to_remove.append(fam)
         for fam in fams_to_remove:
             ts.transformed += 1
-            if verbose_transform:
+            if verbose_transform or verbose_private:
                 print(f"  [transform:marriage20y_private] removing {_fam_label(fam, _ptr_index_m20)}")
             root_elements.remove(fam)
 
@@ -2580,7 +2599,7 @@ def process_file(
 
                 _private_ptrs.add(element.get_pointer())
                 ts.transformed += 1
-                if verbose_transform:
+                if verbose_transform or verbose_private:
                     _msg = f"  [transform:living100y_private] INDI {element.get_pointer()}  {_indi_label_pre}"
                     if _100y_rel_reason:
                         _msg += f" {_100y_rel_reason}"
@@ -2752,7 +2771,7 @@ def process_file(
                 children.extend(to_keep)
 
                 ts.transformed += 1
-                if verbose_transform:
+                if verbose_transform or verbose_private:
                     _msg2 = f"  [transform:living100y_initials] INDI {element.get_pointer()}  {_indi_label_pre2}"
                     if _100y2_rel_reason:
                         _msg2 += f" {_100y2_rel_reason}"
@@ -2777,7 +2796,7 @@ def process_file(
                     ]
                     marr_children.clear()
                     marr_children.extend(stripped)
-                    if verbose_transform:
+                    if verbose_transform or verbose_private:
                         print(
                             f"  [transform:living100y_initials] stripped MARR date/place from {element.get_pointer()}"
                         )
@@ -2786,18 +2805,11 @@ def process_file(
         ts = transform_stats["fam_partner_private"]
 
         def _indi_is_private(indi_el) -> bool:
-            """Return True if the individual has been anonymised.
-
-            Covers living100y_private (NAME == 'private') and living100y_initials
-            (all life events stripped, only NAME/SEX/FAMS/FAMC remain).
-            """
+            """Return True if the individual has been anonymised by living100y_private (NAME == 'private')."""
             for ch in indi_el.get_child_elements():
                 if ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME:
-                    if ch.get_value().strip().lower() == "private":
-                        return True
-            _STRUCTURAL_TAGS = {gedcom.tags.GEDCOM_TAG_NAME, "SEX", "FAMS", "FAMC"}
-            tags = {ch.get_tag() for ch in indi_el.get_child_elements()}
-            return bool(tags) and tags.issubset(_STRUCTURAL_TAGS)
+                    return ch.get_value().strip().lower() == "private"
+            return False
 
         _ptr_index_fpp = {
             el.get_pointer(): el
@@ -2840,7 +2852,7 @@ def process_file(
                 # Both partners private — drop the whole family record
                 _fams_to_remove.append(element)
                 ts.transformed += 1
-                if verbose_transform:
+                if verbose_transform or verbose_private:
                     print(
                         f"  [transform:fam_partner_private] remove {_fam_label(element, _ptr_index_fpp)}"
                     )
@@ -2857,7 +2869,7 @@ def process_file(
                             changed_any = True
                 if changed_any:
                     ts.transformed += 1
-                    if verbose_transform:
+                    if verbose_transform or verbose_private:
                         print(
                             f"  [transform:fam_partner_private] redact event fields {_fam_label(element, _ptr_index_fpp)}"
                         )
@@ -3015,7 +3027,7 @@ def process_file(
                     break
             if has_living_parent:
                 ts.transformed += 1
-                if verbose_transform:
+                if verbose_transform or verbose_private:
                     print(f"  [transform:dead_child_private] INDI {el.get_pointer()} — {_indi_label(el)}")
                 _anonymise_dcp(el)
 
@@ -3296,6 +3308,7 @@ def _process_one_file_batch(
     verbose_clean: bool,
     verbose_transform: bool,
     verbose_strip: bool,
+    verbose_private: bool,
 ) -> tuple[str, dict, dict, dict, str, str]:
     """Process a single file for batch mode. Returns (filename, clean_stats, strip_stats,
     transform_stats, captured_stdout, captured_stderr)."""
@@ -3314,7 +3327,7 @@ def _process_one_file_batch(
     try:
         clean_stats, strip_stats, transform_stats = process_file(
             input_path, output_path, cleaners, strippers, transformers, warn, verbose,
-            verbose_clean, verbose_transform, verbose_strip,
+            verbose_clean, verbose_transform, verbose_strip, verbose_private,
         )
     except SystemExit:
         clean_stats, strip_stats, transform_stats = {}, {}, {}
@@ -3417,6 +3430,12 @@ def main():
         action="store_true",
         dest="verbose_strip",
         help="Print every change performed by strippers only",
+    )
+    parser.add_argument(
+        "--verbose-private",
+        action="store_true",
+        dest="verbose_private",
+        help="Print every privacy-related decision (born/died/living/fam_partner/dead_child transformers)",
     )
 
     args = parser.parse_args()
@@ -3542,6 +3561,7 @@ def main():
                     args.verbose_clean,
                     args.verbose_transform,
                     args.verbose_strip,
+                    args.verbose_private,
                 )] = filename
             pending = set(futures.values())
             for future in as_completed(futures):
@@ -3631,6 +3651,7 @@ def main():
         args.verbose_clean,
         args.verbose_transform,
         args.verbose_strip,
+        args.verbose_private,
     )
 
     total_warn = sum(s.warn for s in stats.values())
