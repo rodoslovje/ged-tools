@@ -148,7 +148,9 @@ def get_name_surname(individual):
     return "", ""
 
 
-MATRICULA_RE = re.compile(r"https?://data\.matricula-online\.eu(?:/[^/\"\s<]+){5,}[^\"\s<]*")
+MATRICULA_RE = re.compile(
+    r"https?://data\.matricula-online\.eu(?:/[^/\"\s<]+){5,}[^\"\s<]*"
+)
 GENEANET_CEMETERY_RE = re.compile(
     r"https?://[a-z]{2}\.geneanet\.org/(?:cemetery|friedhof)[^\"\s<]*"
 )
@@ -160,9 +162,7 @@ SISTORY_RE = re.compile(r"https?://(?:www\.)?sistory\.si/ww[12][^\"\s<]*")
 SISTORY_CENSUS_RE = re.compile(
     r"https?://(?:www\.)?sistory\.si/[^\"\s<]*popisi[^\"\s<]*"
 )
-FAMILYSEARCH_RE = re.compile(
-    r"https?://(?:www\.)?familysearch\.org/ark:/[^\"\s<]+"
-)
+FAMILYSEARCH_RE = re.compile(r"https?://(?:www\.)?familysearch\.org/ark:/[^\"\s<]+")
 DLIB_RE = re.compile(r"https?://(?:www\.)?dlib\.si/[^\"\s<]+")
 
 
@@ -171,7 +171,8 @@ _MATRICULA_LANG_RE = re.compile(r"(https://data\.matricula-online\.eu/)[a-z]{2}(
 
 def _normalize_matricula_url(url):
     """Normalize matricula URL: upgrade http to https only. Language code is
-    preserved as-is; deduplication across language variants is handled by _dedup_links."""
+    preserved as-is; deduplication across language variants is handled by _dedup_links.
+    """
     return url.replace("http://", "https://")
 
 
@@ -266,7 +267,9 @@ def _full_text(element):
     have already folded into get_value() with incorrect \\n separators.
     """
     val = element.get_value() or ""
-    cont_conc = [c for c in element.get_child_elements() if c.get_tag() in ("CONT", "CONC")]
+    cont_conc = [
+        c for c in element.get_child_elements() if c.get_tag() in ("CONT", "CONC")
+    ]
     if not cont_conc:
         return val
     parts = [val.split("\n")[0]]
@@ -372,8 +375,10 @@ def _indi_level_link(element, sources_dict, obje_dict=None):
 
 
 _URL_CACHE = {}
-_ERROR_CACHE = set()   # transient fetch failures (not persisted)
-_BROKEN_CACHE = set() # persisted 404s — not re-fetched until "broken" entry removed from cache
+_ERROR_CACHE = set()  # transient fetch failures (not persisted)
+_BROKEN_CACHE = (
+    set()
+)  # persisted 404s — not re-fetched until "broken" entry removed from cache
 
 
 def load_url_cache():
@@ -405,7 +410,6 @@ def save_url_cache():
             json.dump(combined, f, indent=4)
     except Exception as e:
         print(f"Warning: Could not save URL cache: {e}", file=sys.stderr)
-
 
 
 def _determine_link_type(url, context=None):
@@ -464,9 +468,32 @@ def _determine_link_type(url, context=None):
                 text_to_search = " ".join([m[0] or m[1] for m in headings])
 
                 types = []
-                BIRTH_KW = ["taufbuch", "krstna knjiga", "krsti", "taufen", "baptisms", "baptismal register"]
-                DEATH_KW = ["sterbebuch", "mrliška knjiga", "mrliči", "sterbefälle", "deaths", "burial register", "burials"]
-                MARRIAGE_KW = ["trauungsbuch", "poročna knjiga", "poroke", "trauungen", "kopulationsbuch", "marriages", "marriage register"]
+                BIRTH_KW = [
+                    "taufbuch",
+                    "krstna knjiga",
+                    "krsti",
+                    "taufen",
+                    "baptisms",
+                    "baptismal register",
+                ]
+                DEATH_KW = [
+                    "sterbebuch",
+                    "mrliška knjiga",
+                    "mrliči",
+                    "sterbefälle",
+                    "deaths",
+                    "burial register",
+                    "burials",
+                ]
+                MARRIAGE_KW = [
+                    "trauungsbuch",
+                    "poročna knjiga",
+                    "poroke",
+                    "trauungen",
+                    "kopulationsbuch",
+                    "marriages",
+                    "marriage register",
+                ]
 
                 if any(kw in text_to_search for kw in BIRTH_KW):
                     types.append("birth")
@@ -493,7 +520,10 @@ def _determine_link_type(url, context=None):
         except urllib.error.HTTPError as e:
             if e.code == 404:
                 ctx_str = f" (person: {context})" if context else ""
-                print(f"  [!] 404 Not Found (broken link) — cached: {base_url}{ctx_str}", file=sys.stderr)
+                print(
+                    f"  [!] 404 Not Found (broken link) — cached: {base_url}{ctx_str}",
+                    file=sys.stderr,
+                )
                 _BROKEN_CACHE.add(base_url)
                 return []
             if attempt < 2:
@@ -501,7 +531,10 @@ def _determine_link_type(url, context=None):
             else:
                 ctx_str = f" (person: {context})" if context else ""
                 display_url = url if url != base_url else base_url
-                print(f"  [!] Failed to fetch {display_url}{ctx_str} after 3 attempts: {e}", file=sys.stderr)
+                print(
+                    f"  [!] Failed to fetch {display_url}{ctx_str} after 3 attempts: {e}",
+                    file=sys.stderr,
+                )
                 _ERROR_CACHE.add(base_url)
                 return []
         except Exception as e:
@@ -510,7 +543,10 @@ def _determine_link_type(url, context=None):
             else:
                 ctx_str = f" (person: {context})" if context else ""
                 display_url = url if url != base_url else base_url
-                print(f"  [!] Failed to fetch {display_url}{ctx_str} after 3 attempts: {e}", file=sys.stderr)
+                print(
+                    f"  [!] Failed to fetch {display_url}{ctx_str} after 3 attempts: {e}",
+                    file=sys.stderr,
+                )
                 _ERROR_CACHE.add(base_url)
                 return []
 
@@ -735,7 +771,6 @@ def extract_year(date_str):
     return int(match.group(1)) if match else None
 
 
-
 def needs_processing(input_path, births_path, families_path):
     """
     Returns True if the GED file should be processed in update mode:
@@ -785,17 +820,13 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
             if os.path.exists(deaths_output_path):
                 with open(deaths_output_path, encoding="utf-8") as f:
                     deaths_data_skip = json.load(f)
-            ged_mtime = datetime.fromtimestamp(
-                os.path.getmtime(input_path)
-            ).isoformat()
+            ged_mtime = datetime.fromtimestamp(os.path.getmtime(input_path)).isoformat()
             meta = {
                 "contributor": contributor_id,
                 "births_count": len(births_data_skip),
                 "families_count": len(families_data_skip),
                 "deaths_count": len(deaths_data_skip),
-                "links_count": sum(
-                    1 for r in births_data_skip if r.get("links")
-                )
+                "links_count": sum(1 for r in births_data_skip if r.get("links"))
                 + sum(1 for r in families_data_skip if r.get("links"))
                 + sum(1 for r in deaths_data_skip if r.get("links")),
                 "filtered_count": 0,
@@ -820,7 +851,10 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
 
         fixed = fix_cp1252_as_cp1250(gedcom_content)
         if fixed is not gedcom_content:
-            print(f"  WARNING: cp1252→cp1250 encoding fix applied (è→č etc.) for {filename}", file=sys.stderr)
+            print(
+                f"  WARNING: cp1252→cp1250 encoding fix applied (è→č etc.) for {filename}",
+                file=sys.stderr,
+            )
             gedcom_content = fixed
 
         gedcom_content = re.sub(
@@ -835,7 +869,10 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
 
         os.remove(temp_path)
     except Exception as e:
-        print(f"  ERROR: Could not parse {filename}. Skipping file. Reason: {e}", file=sys.stderr)
+        print(
+            f"  ERROR: Could not parse {filename}. Skipping file. Reason: {e}",
+            file=sys.stderr,
+        )
         if os.path.exists(temp_path):
             os.remove(temp_path)
         return None, log
@@ -860,7 +897,9 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
             death_date, death_place, raw_death_links = get_event_data(
                 element, "DEAT", sources_dict, obje_dict
             )
-            for url in _get_all_event_links(element, {"BURI", "CREM"}, sources_dict, obje_dict):
+            for url in _get_all_event_links(
+                element, {"BURI", "CREM"}, sources_dict, obje_dict
+            ):
                 if url not in raw_death_links:
                     raw_death_links.append(url)
             for url in _get_all_event_links(element, {"BAPM"}, sources_dict, obje_dict):
@@ -868,8 +907,12 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                     raw_birth_links.append(url)
 
             person_context = f"{name} {surname} [{filename}]".strip()
-            birth_links, b_misplaced = sanitize_links(raw_birth_links, "birth", context=person_context)
-            death_links, d_misplaced = sanitize_links(raw_death_links, "death", context=person_context)
+            birth_links, b_misplaced = sanitize_links(
+                raw_birth_links, "birth", context=person_context
+            )
+            death_links, d_misplaced = sanitize_links(
+                raw_death_links, "death", context=person_context
+            )
 
             indi_b_links, indi_d_links, indi_m_links = _extract_indi_links(
                 element, sources_dict, obje_dict, context=person_context
@@ -890,7 +933,9 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
             for url in indi_d_links:
                 if url not in death_links:
                     death_links.append(url)
-            for url in _get_all_event_links(element, {"RESI", "OCCU"}, sources_dict, obje_dict):
+            for url in _get_all_event_links(
+                element, {"RESI", "OCCU"}, sources_dict, obje_dict
+            ):
                 if url not in birth_links:
                     birth_links.append(url)
 
@@ -905,6 +950,12 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                 if child.get_tag() == "FAMC"
             ]
 
+            fams_pointers = [
+                child.get_value()
+                for child in element.get_child_elements()
+                if child.get_tag() == "FAMS"
+            ]
+
             individuals_dict[pointer] = {
                 "name": name,
                 "surname": surname,
@@ -912,6 +963,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                 "is_deceased": is_deceased_flag,
                 "marr_links": marr_links,
                 "famc": famc_pointers,
+                "fams": fams_pointers,
             }
 
             if birth_date or birth_place or birth_links:
@@ -942,10 +994,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
             family_elements.append(element)
 
     def is_private_name(name, surname):
-        return (
-            name.strip().lower() == "private"
-            or surname.strip().lower() == "private"
-        )
+        return name.strip().lower() == "private" or surname.strip().lower() == "private"
 
     family_dict = {}
     for family in family_elements:
@@ -961,20 +1010,50 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
         ptr = record.pop("_ptr", None)
         if not ptr:
             return
-        famc_list = individuals_dict.get(ptr, {}).get("famc", [])
-        if not famc_list:
-            return
-        fam = family_dict.get(famc_list[0], {})
-        husb_ptr = fam.get("husb", "")
-        wife_ptr = fam.get("wife", "")
-        if husb_ptr:
-            hd = individuals_dict.get(husb_ptr, {})
-            record["father_name"] = hd.get("name", "")
-            record["father_surname"] = hd.get("surname", "")
-        if wife_ptr:
-            wd = individuals_dict.get(wife_ptr, {})
-            record["mother_name"] = wd.get("name", "")
-            record["mother_surname"] = wd.get("surname", "")
+
+        indi_data = individuals_dict.get(ptr, {})
+
+        famc_list = indi_data.get("famc", [])
+        if famc_list:
+            fam = family_dict.get(famc_list[0], {})
+            husb_ptr = fam.get("husb", "")
+            wife_ptr = fam.get("wife", "")
+            if husb_ptr:
+                hd = individuals_dict.get(husb_ptr, {})
+                record["father_name"] = hd.get("name", "")
+                record["father_surname"] = hd.get("surname", "")
+            if wife_ptr:
+                wd = individuals_dict.get(wife_ptr, {})
+                record["mother_name"] = wd.get("name", "")
+                record["mother_surname"] = wd.get("surname", "")
+
+        fams_list = indi_data.get("fams", [])
+        if fams_list:
+            partners = []
+            for fams_ptr in fams_list:
+                fam = family_dict.get(fams_ptr, {})
+                husb_ptr = fam.get("husb", "")
+                wife_ptr = fam.get("wife", "")
+                partner_ptr = ""
+                if husb_ptr and husb_ptr != ptr:
+                    partner_ptr = husb_ptr
+                elif wife_ptr and wife_ptr != ptr:
+                    partner_ptr = wife_ptr
+
+                if partner_ptr:
+                    pd = individuals_dict.get(partner_ptr, {})
+                    if pd:
+                        p_birth_year = extract_year(pd.get("birth_date", ""))
+                        partners.append(
+                            {
+                                "name": pd.get("name", "") or "unknown",
+                                "surname": pd.get("surname", ""),
+                                "year": str(p_birth_year) if p_birth_year else "",
+                            }
+                        )
+            if partners:
+                partners.sort(key=lambda p: (p["year"] == "", p["year"], p["name"]))
+                record["partners_list"] = partners
 
     for record in births_data:
         _resolve_parent_fields(record)
@@ -996,9 +1075,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                 fc_ptrs.append(ch.get_value())
         for sp_ptr in (fh_ptr, fw_ptr):
             if sp_ptr:
-                person_to_family_info.setdefault(sp_ptr, []).append(
-                    (fm_date, fc_ptrs)
-                )
+                person_to_family_info.setdefault(sp_ptr, []).append((fm_date, fc_ptrs))
 
     for ptr, data in individuals_dict.items():
         if data.get("birth_date") or data.get("is_deceased"):
@@ -1046,16 +1123,24 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
         husb = individuals_dict.get(husb_pointer, {})
         wife = individuals_dict.get(wife_pointer, {})
 
-        family_context = (" & ".join(filter(None, [
-            f"{husb.get('name', '')} {husb.get('surname', '')}".strip(),
-            f"{wife.get('name', '')} {wife.get('surname', '')}".strip(),
-        ])) or family.get_pointer()) + f" [{filename}]"
-        marr_links, _ = sanitize_links(raw_marr_links, "marriage", context=family_context)
+        family_context = (
+            " & ".join(
+                filter(
+                    None,
+                    [
+                        f"{husb.get('name', '')} {husb.get('surname', '')}".strip(),
+                        f"{wife.get('name', '')} {wife.get('surname', '')}".strip(),
+                    ],
+                )
+            )
+            or family.get_pointer()
+        ) + f" [{filename}]"
+        marr_links, _ = sanitize_links(
+            raw_marr_links, "marriage", context=family_context
+        )
 
         if not marr_links:
-            marr_links = list(
-                husb.get("marr_links", []) or wife.get("marr_links", [])
-            )
+            marr_links = list(husb.get("marr_links", []) or wife.get("marr_links", []))
 
         def get_parents_list(person_data):
             parents_list = []
@@ -1116,7 +1201,6 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                 record["date_of_marriage"] = "private"
             if record["place_of_marriage"]:
                 record["place_of_marriage"] = "private"
-
 
         if marr_links:
             record["links"] = _dedup_links(marr_links)
@@ -1224,7 +1308,10 @@ def main():
     args = parser.parse_args()
     full_mode = args.mode == "full"
 
-    print(f"Starting GEDCOM data extraction process (mode: {args.mode}, workers: {args.workers})...", file=sys.stderr)
+    print(
+        f"Starting GEDCOM data extraction process (mode: {args.mode}, workers: {args.workers})...",
+        file=sys.stderr,
+    )
 
     load_url_cache()
 
@@ -1237,7 +1324,10 @@ def main():
     # Check if the input directory exists.
     if not os.path.isdir(INPUT_DIR):
         print(f"Error: Input directory '{INPUT_DIR}' not found.", file=sys.stderr)
-        print("Please create it and place your GEDCOM (.ged) files inside.", file=sys.stderr)
+        print(
+            "Please create it and place your GEDCOM (.ged) files inside.",
+            file=sys.stderr,
+        )
         return
 
     # --- File Processing Loop ---
@@ -1263,7 +1353,12 @@ def main():
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
         futures = {
             executor.submit(
-                _process_one_file, filename, full_mode, contributor_urls, INPUT_DIR, OUTPUT_DIR
+                _process_one_file,
+                filename,
+                full_mode,
+                contributor_urls,
+                INPUT_DIR,
+                OUTPUT_DIR,
             ): filename
             for filename in gedcom_files
         }
@@ -1276,21 +1371,29 @@ def main():
             if meta is not None:
                 metadata.append(meta)
             if 0 < len(pending) <= args.workers:
-                print(f"Waiting for: {', '.join(sorted(pending, key=locale.strxfrm))}", file=sys.stderr)
+                print(
+                    f"Waiting for: {', '.join(sorted(pending, key=locale.strxfrm))}",
+                    file=sys.stderr,
+                )
 
     print("Completed!", file=sys.stderr)
 
     # Write global metadata.json for the frontend
     metadata.sort(key=lambda x: locale.strxfrm(x.get("contributor", "")))
     metadata_output_path = os.path.join(OUTPUT_DIR, "metadata.json")
-    metadata_out = [{k: v for k, v in m.items() if k not in ("filtered_count", "skipped")} for m in metadata]
+    metadata_out = [
+        {k: v for k, v in m.items() if k not in ("filtered_count", "skipped")}
+        for m in metadata
+    ]
     with open(metadata_output_path, "w", encoding="utf-8") as f:
         json.dump(metadata_out, f, ensure_ascii=False, indent=4)
 
     save_url_cache()
 
     # --- Summary table ---
-    col_w = max((len(m["contributor"]) for m in metadata if not m.get("skipped")), default=10)
+    col_w = max(
+        (len(m["contributor"]) for m in metadata if not m.get("skipped")), default=10
+    )
     header = f"{'File':<{col_w}}  {'Births':>7}  {'Families':>8}  {'Deaths':>7}  {'Links':>6}  {'Filtered':>8}"
     print(f"\n{header}")
     print("-" * len(header))
@@ -1311,7 +1414,9 @@ def main():
     total_l = sum(m["links_count"] for m in metadata if not m.get("skipped"))
     total_fi = sum(m.get("filtered_count", 0) for m in metadata if not m.get("skipped"))
     print("-" * len(header))
-    print(f"{'TOTAL':<{col_w}}  {total_b:>7}  {total_f:>8}  {total_d:>7}  {total_l:>6}  {total_fi:>8}")
+    print(
+        f"{'TOTAL':<{col_w}}  {total_b:>7}  {total_f:>8}  {total_d:>7}  {total_l:>6}  {total_fi:>8}"
+    )
 
 
 if __name__ == "__main__":
