@@ -1029,31 +1029,41 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
 
         fams_list = indi_data.get("fams", [])
         if fams_list:
-            partners = []
+            husbands = []
+            wifes = []
             for fams_ptr in fams_list:
                 fam = family_dict.get(fams_ptr, {})
                 husb_ptr = fam.get("husb", "")
                 wife_ptr = fam.get("wife", "")
-                partner_ptr = ""
-                if husb_ptr and husb_ptr != ptr:
-                    partner_ptr = husb_ptr
-                elif wife_ptr and wife_ptr != ptr:
-                    partner_ptr = wife_ptr
 
-                if partner_ptr:
-                    pd = individuals_dict.get(partner_ptr, {})
+                if husb_ptr == ptr and wife_ptr:
+                    pd = individuals_dict.get(wife_ptr, {})
                     if pd:
                         p_birth_year = extract_year(pd.get("birth_date", ""))
-                        partners.append(
+                        wifes.append(
                             {
                                 "name": pd.get("name", "") or "unknown",
                                 "surname": pd.get("surname", ""),
                                 "year": str(p_birth_year) if p_birth_year else "",
                             }
                         )
-            if partners:
-                partners.sort(key=lambda p: (p["year"] == "", p["year"], p["name"]))
-                record["partners_list"] = partners
+                elif wife_ptr == ptr and husb_ptr:
+                    pd = individuals_dict.get(husb_ptr, {})
+                    if pd:
+                        p_birth_year = extract_year(pd.get("birth_date", ""))
+                        husbands.append(
+                            {
+                                "name": pd.get("name", "") or "unknown",
+                                "surname": pd.get("surname", ""),
+                                "year": str(p_birth_year) if p_birth_year else "",
+                            }
+                        )
+            if husbands:
+                husbands.sort(key=lambda p: (p["year"] == "", p["year"], p["name"]))
+                record["husbands_list"] = husbands
+            if wifes:
+                wifes.sort(key=lambda p: (p["year"] == "", p["year"], p["name"]))
+                record["wifes_list"] = wifes
 
     for record in births_data:
         _resolve_parent_fields(record)
