@@ -173,10 +173,10 @@ from gedcom.element.element import Element
 from gedcom.parser import Parser
 import gedcom.tags
 
-
 # ---------------------------------------------------------------------------
 # Thread-local stdout/stderr proxy
 # ---------------------------------------------------------------------------
+
 
 class _ThreadLocalStream:
     """Proxy for sys.stdout/sys.stderr that dispatches to a per-thread override
@@ -303,32 +303,32 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
     # Normalise CR-only line endings (old Mac format) to LF so the GEDCOM parser
     # and all regex anchors work correctly. CRLF files are handled implicitly by
     # Python's text-mode open(); CR-only files are not.
-    _cr_normalised = b'\r' in raw and b'\n' not in raw
+    _cr_normalised = b"\r" in raw and b"\n" not in raw
     if _cr_normalised:
-        raw = raw.replace(b'\r', b'\n')
+        raw = raw.replace(b"\r", b"\n")
 
     encoding = _detect_encoding(raw)
 
     norm = encoding.lower().replace("-", "").replace("_", "")
     if norm in ("utf8", "utf8sig"):
-        if _is_disguised_cp1250(raw):
-            encoding = "windows-1250"
-        else:
-            try:
-                raw.decode(encoding)
-                if not _cr_normalised:
-                    return input_path, False  # genuine UTF-8 with normal line endings
-            except UnicodeDecodeError:
-                # File claims to be UTF-8 but contains some invalid bytes.
-                # Check if it's mostly valid UTF-8 with minor corruption.
-                test_decode = raw.decode(encoding, errors="replace")
-                if test_decode.count("\ufffd") < max(10, len(raw) // 1000):
-                    fd, tmp_path = tempfile.mkstemp(suffix=".ged")
-                    with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        f.write(test_decode)
-                    return tmp_path, True
+        try:
+            raw.decode(encoding)
+            if not _cr_normalised:
+                return input_path, False  # genuine UTF-8 with normal line endings
+        except UnicodeDecodeError:
+            # File claims to be UTF-8 but contains some invalid bytes.
+            # Check if it's mostly valid UTF-8 with minor corruption.
+            test_decode = raw.decode(encoding, errors="replace")
+            if test_decode.count("\ufffd") < max(10, len(raw) // 1000):
+                fd, tmp_path = tempfile.mkstemp(suffix=".ged")
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(test_decode)
+                return tmp_path, True
 
-                # Too many bad bytes: fall back to chardet.
+            # Too many bad bytes: fall back to chardet.
+            if _is_disguised_cp1250(raw):
+                encoding = "windows-1250"
+            else:
                 detected = chardet.detect(raw)
                 enc = (detected.get("encoding") or "") if detected else ""
                 confidence = (detected.get("confidence") or 0) if detected else 0
@@ -429,10 +429,15 @@ def _indi_label(indi_el) -> str:
                         death = m.group(1)
                     break
     label = name or "?"
-    dates = " ".join(filter(None, [
-        f"b.{birth}" if birth else "",
-        f"d.{death}" if death else "",
-    ]))
+    dates = " ".join(
+        filter(
+            None,
+            [
+                f"b.{birth}" if birth else "",
+                f"d.{death}" if death else "",
+            ],
+        )
+    )
     if dates:
         label += f" ({dates})"
     return label
@@ -456,7 +461,9 @@ def _indi_is_private_name(indi_el) -> bool:
     return False
 
 
-def _estimate_birth_year_from_relatives(indi_el, ptr_index: dict, curr_year: int) -> tuple[int | None, str]:
+def _estimate_birth_year_from_relatives(
+    indi_el, ptr_index: dict, curr_year: int
+) -> tuple[int | None, str]:
     """Estimate birth year from parents (+35y) and children (-35y).
 
     Returns (earliest_estimate, description) or (None, "") if no relatives found.
@@ -472,20 +479,30 @@ def _estimate_birth_year_from_relatives(indi_el, ptr_index: dict, curr_year: int
                 _parents = [
                     ptr_index.get(_fch.get_value().strip())
                     for _fch in _fam.get_child_elements()
-                    if _fch.get_tag() in (gedcom.tags.GEDCOM_TAG_HUSBAND, gedcom.tags.GEDCOM_TAG_WIFE)
+                    if _fch.get_tag()
+                    in (gedcom.tags.GEDCOM_TAG_HUSBAND, gedcom.tags.GEDCOM_TAG_WIFE)
                 ]
                 _parents = [p for p in _parents if p is not None]
                 if _parents and all(_indi_is_private_name(p) for p in _parents):
                     return curr_year - 1, "all parents private"
                 for _fch in _fam.get_child_elements():
-                    if _fch.get_tag() in (gedcom.tags.GEDCOM_TAG_HUSBAND, gedcom.tags.GEDCOM_TAG_WIFE):
+                    if _fch.get_tag() in (
+                        gedcom.tags.GEDCOM_TAG_HUSBAND,
+                        gedcom.tags.GEDCOM_TAG_WIFE,
+                    ):
                         _parent = ptr_index.get(_fch.get_value().strip())
                         if _parent:
                             _py = _get_exact_birth_year(_parent)
                             if _py:
                                 _est = _py + 35
-                                _role = "father" if _fch.get_tag() == gedcom.tags.GEDCOM_TAG_HUSBAND else "mother"
-                                estimates.append((_est, f"{_role} {_indi_label(_parent)} +35={_est}"))
+                                _role = (
+                                    "father"
+                                    if _fch.get_tag() == gedcom.tags.GEDCOM_TAG_HUSBAND
+                                    else "mother"
+                                )
+                                estimates.append(
+                                    (_est, f"{_role} {_indi_label(_parent)} +35={_est}")
+                                )
         elif _ch.get_tag() == "FAMS":
             _fam = ptr_index.get(_ch.get_value().strip())
             if _fam:
@@ -504,7 +521,9 @@ def _estimate_birth_year_from_relatives(indi_el, ptr_index: dict, curr_year: int
                             _cy = _get_exact_birth_year(_child)
                             if _cy:
                                 _est = _cy - 35
-                                estimates.append((_est, f"child {_indi_label(_child)} -35={_est}"))
+                                estimates.append(
+                                    (_est, f"child {_indi_label(_child)} -35={_est}")
+                                )
     if not estimates:
         return None, ""
     _min_year = min(e[0] for e in estimates)
@@ -573,8 +592,12 @@ def _anonymise_indi(el) -> None:
             name_kept = True
     if not name_kept:
         name_el = Element(
-            el.get_level() + 1, "", gedcom.tags.GEDCOM_TAG_NAME,
-            "private", "\n", multi_line=False,
+            el.get_level() + 1,
+            "",
+            gedcom.tags.GEDCOM_TAG_NAME,
+            "private",
+            "\n",
+            multi_line=False,
         )
         name_el.set_parent_element(el)
         to_keep.insert(0, name_el)
@@ -604,7 +627,10 @@ def _fam_label(fam_el, ptr_index: dict) -> str:
     """Return 'FAM @Fxxx@ — Name (YYYY) + Name (YYYY)' using resolved spouse pointers."""
     parts = []
     for ch in fam_el.get_child_elements():
-        if ch.get_tag() in (gedcom.tags.GEDCOM_TAG_HUSBAND, gedcom.tags.GEDCOM_TAG_WIFE):
+        if ch.get_tag() in (
+            gedcom.tags.GEDCOM_TAG_HUSBAND,
+            gedcom.tags.GEDCOM_TAG_WIFE,
+        ):
             ptr = ch.get_value().strip()
             indi = ptr_index.get(ptr)
             parts.append(_indi_label(indi) if indi is not None else ptr)
@@ -888,7 +914,7 @@ MONTHS_SHORT = {
     "jum": "JUN",  # typo for jun
     "manj": "MAY",  # typo for "maj"
     "maaj": "MAY",  # typo for "maj" (double a)
-    "fen": "FEB",   # typo for "feb" (n instead of b)
+    "fen": "FEB",  # typo for "feb" (n instead of b)
     "eog": "AUG",  # garbled form of "avg"/"ago" (Slovenian/Italian August)
     # Latin short forms
     "ian.": "JAN",
@@ -1759,9 +1785,13 @@ STRIPPERS: dict[str, StripSpec | None] = {
     "addr_longlati": StripSpec(
         tags={"LATI", "LONG", "MAP"}, parent_tag="ADDR"
     ),  # coords on ADDR unsupported by webtrees (direct or via MAP)
-    "place_tran": StripSpec(tags={"TRAN"}, parent_tag="PLAC"),  # remove place translations
+    "place_tran": StripSpec(
+        tags={"TRAN"}, parent_tag="PLAC"
+    ),  # remove place translations
     "mise": StripSpec(tags={"MISE"}, level=1),
-    "object_crop": StripSpec(tags={"CROP"}, parent_tag="OBJE"),  # remove crop rectangles from media objects
+    "object_crop": StripSpec(
+        tags={"CROP"}, parent_tag="OBJE"
+    ),  # remove crop rectangles from media objects
     "indi_race": StripSpec(tags={"RACE"}, parent_tag="INDI"),
     "sour_tags": StripSpec(tags={"AGNC"}, parent_tag="SOUR"),
     "change_date": StripSpec(tags={"CHAN"}, level=2),
@@ -1803,7 +1833,9 @@ TRANSFORMERS: dict[str, dict[str, str | TagTransform] | None] = {
         "LATR": TagTransform(rename="EVEN", add_children=[("TYPE", "Land Transaction")])
     },
     "prs_even_type": {
-        "_PRS": TagTransform(rename="EVEN", add_children=[("TYPE", "Civil Partnership")])
+        "_PRS": TagTransform(
+            rename="EVEN", add_children=[("TYPE", "Civil Partnership")]
+        )
     },
     # Custom transformers (None = handled separately):
     "secg_givn": None,  # append NAME:SECG content to NAME:GIVN and remove SECG
@@ -1815,7 +1847,6 @@ TRANSFORMERS: dict[str, dict[str, str | TagTransform] | None] = {
     "living100y_initials": None,
     "died20y_private": None,
     "fam_partner_private": None,
-
 }
 
 
@@ -1842,7 +1873,17 @@ PRESETS: dict[str, dict[str, list[str]]] = {
             "sour_tags",
             "stp",
         ],
-        "transform": ["secg_givn", "fid_fsftid", "latr_even", "prs_even_type", "nobi_fact", "sour_peri_titl", "sour_date_publ", "sour_filn_abbr", "sour_plac_auth"],
+        "transform": [
+            "secg_givn",
+            "fid_fsftid",
+            "latr_even",
+            "prs_even_type",
+            "nobi_fact",
+            "sour_peri_titl",
+            "sour_date_publ",
+            "sour_filn_abbr",
+            "sour_plac_auth",
+        ],
     },
     "mft_sgi": {
         "clean": ["place_slovenia_rm"],
@@ -1960,12 +2001,16 @@ def process_file(
                 if cleaned == "":
                     s.fixed += 1
                     if verbose_clean:
-                        print(f"  [clean:dd_mmm_yyyy] {raw!r} -> (removed)  — {_record_label(element)}")
+                        print(
+                            f"  [clean:dd_mmm_yyyy] {raw!r} -> (removed)  — {_record_label(element)}"
+                        )
                     element.get_parent_element().get_child_elements().remove(element)
                 elif cleaned != raw:
                     s.fixed += 1
                     if verbose_clean:
-                        print(f"  [clean:dd_mmm_yyyy] {raw!r} -> {cleaned!r}  — {_record_label(element)}")
+                        print(
+                            f"  [clean:dd_mmm_yyyy] {raw!r} -> {cleaned!r}  — {_record_label(element)}"
+                        )
                     element.set_value(cleaned)
 
     if "name_placeholder" in cleaners:
@@ -2003,7 +2048,9 @@ def process_file(
             if cleaned != raw:
                 s.fixed += 1
                 if verbose_clean:
-                    print(f"  [clean:place_placeholder] {raw!r} -> {cleaned!r}  — {_record_label(element)}")
+                    print(
+                        f"  [clean:place_placeholder] {raw!r} -> {cleaned!r}  — {_record_label(element)}"
+                    )
                 element.set_value(cleaned)
 
     if "place_slovenia_rm" in cleaners:
@@ -2017,7 +2064,9 @@ def process_file(
             if cleaned != raw:
                 s.fixed += 1
                 if verbose_clean:
-                    print(f"  [clean:place_slovenia_rm] {raw!r} -> {cleaned!r}  — {_record_label(element)}")
+                    print(
+                        f"  [clean:place_slovenia_rm] {raw!r} -> {cleaned!r}  — {_record_label(element)}"
+                    )
                 element.set_value(cleaned)
 
     if "place_duplicate_rm" in cleaners:
@@ -2031,7 +2080,9 @@ def process_file(
             if cleaned != raw:
                 s.fixed += 1
                 if verbose_clean:
-                    print(f"  [clean:place_duplicate_rm] {raw!r} -> {cleaned!r}  — {_record_label(element)}")
+                    print(
+                        f"  [clean:place_duplicate_rm] {raw!r} -> {cleaned!r}  — {_record_label(element)}"
+                    )
                 element.set_value(cleaned)
 
     if "place_country_only" in cleaners:
@@ -2045,7 +2096,9 @@ def process_file(
             if cleaned != raw:
                 s.fixed += 1
                 if verbose_clean:
-                    print(f"  [clean:place_country_only] {raw!r} -> {cleaned!r}  — {_record_label(element)}")
+                    print(
+                        f"  [clean:place_country_only] {raw!r} -> {cleaned!r}  — {_record_label(element)}"
+                    )
                 element.set_value(cleaned)
 
     for name in transformers:
@@ -2224,7 +2277,9 @@ def process_file(
             if element.get_tag() != gedcom.tags.GEDCOM_TAG_SOURCE:
                 continue
             children = element.get_child_elements()
-            plac_els = [ch for ch in children if ch.get_tag() == gedcom.tags.GEDCOM_TAG_PLACE]
+            plac_els = [
+                ch for ch in children if ch.get_tag() == gedcom.tags.GEDCOM_TAG_PLACE
+            ]
             if not plac_els:
                 continue
             auth_els = [ch for ch in children if ch.get_tag() == "AUTH"]
@@ -2243,6 +2298,7 @@ def process_file(
     # but before privacy transformers (so they see clean DEAT state).
     if "deat_placeholder" in strippers:
         import datetime as _dt_dp
+
         ss = strip_stats["deat_placeholder"]
         _death_tags = {"DEAT", "BURI", "CREM"}
         _curr_year_dp = _dt_dp.date.today().year
@@ -2260,7 +2316,9 @@ def process_file(
                             if y is not None:
                                 if birth_year_dp is None or ch.get_tag() == "BIRT":
                                     birth_year_dp = y
-            old_enough = birth_year_dp is not None and (_curr_year_dp - birth_year_dp) >= 100
+            old_enough = (
+                birth_year_dp is not None and (_curr_year_dp - birth_year_dp) >= 100
+            )
             to_remove = []
             for ch in element.get_child_elements():
                 if ch.get_tag() not in _death_tags:
@@ -2271,6 +2329,7 @@ def process_file(
                     continue  # non-empty value (e.g. "Killed in motorcycle accident") — keep
                 if old_enough:
                     continue  # born 100+ years ago: stub means dead, not a living template
+
                 # Remove only if tag value is empty AND all children are placeholder/empty.
                 # A DATE with no digits (e.g. "._.____", "__.__.____") counts as empty.
                 # A PLAC with only underscores/dots/spaces counts as empty.
@@ -2283,6 +2342,7 @@ def process_file(
                     if gch.get_tag() == gedcom.tags.GEDCOM_TAG_PLACE:
                         return not re.search(r"[A-Za-z0-9]", val)
                     return False
+
                 if all(_is_placeholder_child(gch) for gch in ch.get_child_elements()):
                     to_remove.append(ch)
             for ch in to_remove:
@@ -2291,7 +2351,9 @@ def process_file(
                     _dp_label = _indi_label(element)
                     if birth_year_dp and "(b." not in _dp_label:
                         _dp_label += f" (b.{birth_year_dp})"
-                    print(f"  [strip:deat_placeholder] INDI {element.get_pointer()} — {_dp_label}")
+                    print(
+                        f"  [strip:deat_placeholder] INDI {element.get_pointer()} — {_dp_label}"
+                    )
                 element.get_child_elements().remove(ch)
 
     if "born75y_private" in transformers:
@@ -2312,7 +2374,9 @@ def process_file(
             _anonymise_indi(element)
             ts.transformed += 1
             if verbose_transform or verbose_private:
-                print(f"  [transform:born75y_private] INDI {element.get_pointer()} — {_b75_name} b.{birth_year}")
+                print(
+                    f"  [transform:born75y_private] INDI {element.get_pointer()} — {_b75_name} b.{birth_year}"
+                )
 
     if "died20y_private" in transformers:
         import datetime as _dt
@@ -2351,12 +2415,24 @@ def process_file(
                             _birth_date_str = gch.get_value().strip()
                             if _tag == "BIRT":
                                 break
-            if has_death_event and death_year is not None and (_curr_year - death_year) < 20:
+            if (
+                has_death_event
+                and death_year is not None
+                and (_curr_year - death_year) < 20
+            ):
                 _anonymise_indi(element)
                 ts.transformed += 1
                 if verbose_transform or verbose_private:
-                    _by2 = (_EXACT_YEAR_RE.search(_birth_date_str).group(1) if _birth_date_str and _EXACT_YEAR_RE.search(_birth_date_str) else None)
-                    _dy2 = (_EXACT_YEAR_RE.search(_death_date_str).group(1) if _death_date_str and _EXACT_YEAR_RE.search(_death_date_str) else None)
+                    _by2 = (
+                        _EXACT_YEAR_RE.search(_birth_date_str).group(1)
+                        if _birth_date_str and _EXACT_YEAR_RE.search(_birth_date_str)
+                        else None
+                    )
+                    _dy2 = (
+                        _EXACT_YEAR_RE.search(_death_date_str).group(1)
+                        if _death_date_str and _EXACT_YEAR_RE.search(_death_date_str)
+                        else None
+                    )
                     parts = [_name_display or "?"]
                     parts.append(f"b.{_by2}" if _by2 else "b.?")
                     parts.append(f"d.{_dy2}" if _dy2 else "d.?")
@@ -2365,11 +2441,17 @@ def process_file(
                     )
 
     def _apply_living_private_transformer(
-        _parser, _ts: TransformerStats, cutoff_years: int, _name: str,
-        _verbose_transform: bool, _verbose_private: bool,
-        anonymise_fn=None, action_label: str = "PRIVATE",
+        _parser,
+        _ts: TransformerStats,
+        cutoff_years: int,
+        _name: str,
+        _verbose_transform: bool,
+        _verbose_private: bool,
+        anonymise_fn=None,
+        action_label: str = "PRIVATE",
     ) -> None:
         import datetime as _dt_lp
+
         _curr_year = _dt_lp.date.today().year
         _anon = anonymise_fn if anonymise_fn is not None else _anonymise_indi
         _ptr_idx = {
@@ -2404,17 +2486,23 @@ def process_file(
             elif not _indi_has_death(_element):
                 _birth_year, _birth_date_str = _indi_get_birth(_element)
                 if _birth_year is None:
-                    _ry, _rdescs = _estimate_birth_year_from_relatives(_element, _ptr_idx, _curr_year)
+                    _ry, _rdescs = _estimate_birth_year_from_relatives(
+                        _element, _ptr_idx, _curr_year
+                    )
                     if _ry is not None:
                         if (_curr_year - _ry) < cutoff_years:
                             _is_private = True
                             _rel_reason = f"estimate b.{_ry} ({_rdescs})"
                         elif _verbose_transform:
-                            print(f"  [transform:{_name}] INDI {_element.get_pointer()}  {_lp_label} estimate b.{_ry} ({_rdescs}) → NOT private")
+                            print(
+                                f"  [transform:{_name}] INDI {_element.get_pointer()}  {_lp_label} estimate b.{_ry} ({_rdescs}) → NOT private"
+                            )
                 elif (_curr_year - _birth_year) < cutoff_years:
                     _is_private = True
                     if _birth_date_str and _PARTIAL_YEAR_RE.search(_birth_date_str):
-                        _rel_reason = f"partial b.{_birth_date_str} → conservative {_birth_year}"
+                        _rel_reason = (
+                            f"partial b.{_birth_date_str} → conservative {_birth_year}"
+                        )
             if _is_private:
                 _anon(_element)
                 _ts.transformed += 1
@@ -2427,14 +2515,22 @@ def process_file(
 
     if "living100y_private" in transformers:
         _apply_living_private_transformer(
-            parser, transform_stats["living100y_private"], 100, "living100y_private",
-            verbose_transform, verbose_private,
+            parser,
+            transform_stats["living100y_private"],
+            100,
+            "living100y_private",
+            verbose_transform,
+            verbose_private,
         )
 
     if "living75y_private" in transformers:
         _apply_living_private_transformer(
-            parser, transform_stats["living75y_private"], 75, "living75y_private",
-            verbose_transform, verbose_private,
+            parser,
+            transform_stats["living75y_private"],
+            75,
+            "living75y_private",
+            verbose_transform,
+            verbose_private,
         )
 
     if "living100y_initials" in transformers:
@@ -2478,8 +2574,12 @@ def process_file(
                     name_kept = True
             if not name_kept:
                 name_el = Element(
-                    el.get_level() + 1, "", gedcom.tags.GEDCOM_TAG_NAME,
-                    _shorten_name_value(_display), "\n", multi_line=False,
+                    el.get_level() + 1,
+                    "",
+                    gedcom.tags.GEDCOM_TAG_NAME,
+                    _shorten_name_value(_display),
+                    "\n",
+                    multi_line=False,
                 )
                 name_el.set_parent_element(el)
                 to_keep.insert(0, name_el)
@@ -2487,9 +2587,14 @@ def process_file(
             children.extend(to_keep)
 
         _apply_living_private_transformer(
-            parser, transform_stats["living100y_initials"], 100, "living100y_initials",
-            verbose_transform, verbose_private,
-            anonymise_fn=_anonymise_initials, action_label="INITIALS",
+            parser,
+            transform_stats["living100y_initials"],
+            100,
+            "living100y_initials",
+            verbose_transform,
+            verbose_private,
+            anonymise_fn=_anonymise_initials,
+            action_label="INITIALS",
         )
 
         # Strip marriage date and place from families of anonymised individuals
@@ -2502,8 +2607,10 @@ def process_file(
                 if ch.get_tag() == "MARR":
                     marr_children = ch.get_child_elements()
                     stripped = [
-                        gch for gch in marr_children
-                        if gch.get_tag() not in (
+                        gch
+                        for gch in marr_children
+                        if gch.get_tag()
+                        not in (
                             gedcom.tags.GEDCOM_TAG_DATE,
                             gedcom.tags.GEDCOM_TAG_PLACE,
                         )
@@ -2533,7 +2640,10 @@ def process_file(
 
         _fam_event_tags = {
             gedcom.tags.GEDCOM_TAG_MARRIAGE,
-            "MARB", "MARC", "MARL", "MARS",  # marriage bann/contract/license/settlement
+            "MARB",
+            "MARC",
+            "MARL",
+            "MARS",  # marriage bann/contract/license/settlement
             "EVEN",
             "ENGA",  # engagement
         }
@@ -2547,7 +2657,8 @@ def process_file(
             refs = [
                 ch.get_value().strip()
                 for ch in element.get_child_elements()
-                if ch.get_tag() in (gedcom.tags.GEDCOM_TAG_HUSBAND, gedcom.tags.GEDCOM_TAG_WIFE)
+                if ch.get_tag()
+                in (gedcom.tags.GEDCOM_TAG_HUSBAND, gedcom.tags.GEDCOM_TAG_WIFE)
             ]
             if not refs:
                 continue
@@ -2622,7 +2733,10 @@ def process_file(
                         continue
                     if spec.grandparent_tag is not None:
                         grandparent = parent.get_parent_element()
-                        if grandparent is None or grandparent.get_tag() != spec.grandparent_tag:
+                        if (
+                            grandparent is None
+                            or grandparent.get_tag() != spec.grandparent_tag
+                        ):
                             continue
                 if spec.level is not None:
                     if el.get_level() != spec.level:
@@ -2676,22 +2790,21 @@ def process_file(
     if "ste" in strippers:
         ss = strip_stats["ste"]
         root_els = parser.get_root_child_elements()
-        candidates = (
-            [(el, root_els) for el in root_els if el.get_tag() == "_STE"]
-            + [
-                (el, el.get_parent_element().get_child_elements())
-                for el in parser.get_element_list()
-                if el.get_tag() == "_STE"
-                and el.get_parent_element() is not None
-                and el.get_parent_element().get_tag() == gedcom.tags.GEDCOM_TAG_SOURCE
-            ]
-        )
+        candidates = [(el, root_els) for el in root_els if el.get_tag() == "_STE"] + [
+            (el, el.get_parent_element().get_child_elements())
+            for el in parser.get_element_list()
+            if el.get_tag() == "_STE"
+            and el.get_parent_element() is not None
+            and el.get_parent_element().get_tag() == gedcom.tags.GEDCOM_TAG_SOURCE
+        ]
         for el, container in candidates:
             ss.processed += 1
             ss.removed += 1
             if verbose_strip:
                 parent = el.get_parent_element()
-                label = f"  — {_record_label(parent)}" if parent else f" {el.get_pointer()}"
+                label = (
+                    f"  — {_record_label(parent)}" if parent else f" {el.get_pointer()}"
+                )
                 print(f"  [strip:ste] removing _STE{label}")
             container.remove(el)
 
@@ -2801,7 +2914,9 @@ def process_file(
         for fam in fams_to_remove:
             ss.removed += 1
             if verbose_strip:
-                print(f"  [strip:living] removing {_fam_label(fam, {el.get_pointer(): el for el in root_elements if el.get_pointer()})}")
+                print(
+                    f"  [strip:living] removing {_fam_label(fam, {el.get_pointer(): el for el in root_elements if el.get_pointer()})}"
+                )
             root_elements.remove(fam)
 
     parser.invalidate_cache()
@@ -2851,8 +2966,17 @@ def _process_one_file_batch(
     sys.stderr._local.override = buf_err
     try:
         clean_stats, strip_stats, transform_stats = process_file(
-            input_path, output_path, cleaners, strippers, transformers, warn, verbose,
-            verbose_clean, verbose_transform, verbose_strip, verbose_private,
+            input_path,
+            output_path,
+            cleaners,
+            strippers,
+            transformers,
+            warn,
+            verbose,
+            verbose_clean,
+            verbose_transform,
+            verbose_strip,
+            verbose_private,
         )
     except SystemExit:
         clean_stats, strip_stats, transform_stats = {}, {}, {}
@@ -2863,10 +2987,22 @@ def _process_one_file_batch(
     def _prefix(text: str) -> str:
         if not text:
             return text
-        return "\n".join(f"[{filename}] {line}" if line.strip() else line
-                         for line in text.splitlines()) + "\n"
+        return (
+            "\n".join(
+                f"[{filename}] {line}" if line.strip() else line
+                for line in text.splitlines()
+            )
+            + "\n"
+        )
 
-    return filename, clean_stats, strip_stats, transform_stats, _prefix(buf_out.getvalue()), _prefix(buf_err.getvalue())
+    return (
+        filename,
+        clean_stats,
+        strip_stats,
+        transform_stats,
+        _prefix(buf_out.getvalue()),
+        _prefix(buf_err.getvalue()),
+    )
 
 
 def main():
@@ -3048,14 +3184,32 @@ def main():
         except locale.Error:
             locale.setlocale(locale.LC_COLLATE, "")
 
-        all_in_dir = [f for f in os.listdir(args.input_dir) if f.lower().endswith(".ged")]
+        all_in_dir = [
+            f for f in os.listdir(args.input_dir) if f.lower().endswith(".ged")
+        ]
         if args.stems:
             import unicodedata as _ud
+
             stems_lower = {_ud.normalize("NFC", s).lower() for s in args.stems}
-            ged_files = [f for f in all_in_dir if _ud.normalize("NFC", os.path.splitext(f)[0]).lower() in stems_lower]
-            missing = [s for s in args.stems if _ud.normalize("NFC", s).lower() not in {_ud.normalize("NFC", os.path.splitext(f)[0]).lower() for f in ged_files}]
+            ged_files = [
+                f
+                for f in all_in_dir
+                if _ud.normalize("NFC", os.path.splitext(f)[0]).lower() in stems_lower
+            ]
+            missing = [
+                s
+                for s in args.stems
+                if _ud.normalize("NFC", s).lower()
+                not in {
+                    _ud.normalize("NFC", os.path.splitext(f)[0]).lower()
+                    for f in ged_files
+                }
+            ]
             if missing:
-                print(f"WARNING: stems not found in '{args.input_dir}': {', '.join(missing)}", file=sys.stderr)
+                print(
+                    f"WARNING: stems not found in '{args.input_dir}': {', '.join(missing)}",
+                    file=sys.stderr,
+                )
         else:
             ged_files = all_in_dir
         ged_files = sorted(ged_files, key=locale.strxfrm)
@@ -3065,7 +3219,9 @@ def main():
 
         print(f"Input dir:    {args.input_dir}", file=sys.stderr)
         print(f"Output dir:   {args.output_dir}", file=sys.stderr)
-        print(f"Files:        {len(ged_files)}  Workers: {args.workers}", file=sys.stderr)
+        print(
+            f"Files:        {len(ged_files)}  Workers: {args.workers}", file=sys.stderr
+        )
         print(file=sys.stderr)
 
         all_results: list[tuple[str, dict, dict, dict]] = []
@@ -3073,21 +3229,23 @@ def main():
         with ThreadPoolExecutor(max_workers=args.workers) as executor:
             futures = {}
             for filename in ged_files:
-                futures[executor.submit(
-                    _process_one_file_batch,
-                    filename,
-                    args.input_dir,
-                    args.output_dir,
-                    requested_clean,
-                    requested_strip,
-                    requested_transform,
-                    True,
-                    args.verbose,
-                    args.verbose_clean,
-                    args.verbose_transform,
-                    args.verbose_strip,
-                    args.verbose_private,
-                )] = filename
+                futures[
+                    executor.submit(
+                        _process_one_file_batch,
+                        filename,
+                        args.input_dir,
+                        args.output_dir,
+                        requested_clean,
+                        requested_strip,
+                        requested_transform,
+                        True,
+                        args.verbose,
+                        args.verbose_clean,
+                        args.verbose_transform,
+                        args.verbose_strip,
+                        args.verbose_private,
+                    )
+                ] = filename
             pending = set(futures.values())
             for future in as_completed(futures):
                 pending.discard(futures[future])
@@ -3098,7 +3256,10 @@ def main():
                     print(err, end="", file=sys.stderr)
                 all_results.append((filename, c_stats, s_stats, t_stats))
                 if 0 < len(pending) <= args.workers:
-                    print(f"Waiting for: {', '.join(sorted(pending, key=locale.strxfrm))}", file=sys.stderr)
+                    print(
+                        f"Waiting for: {', '.join(sorted(pending, key=locale.strxfrm))}",
+                        file=sys.stderr,
+                    )
 
         print("Completed!", file=sys.stderr)
 
@@ -3119,7 +3280,11 @@ def main():
             return 0
 
         # Only keep processors that changed something in at least one file
-        active_procs = [p for p in proc_names if any(_changed(c, s, t, p) for _, c, s, t in all_results)]
+        active_procs = [
+            p
+            for p in proc_names
+            if any(_changed(c, s, t, p) for _, c, s, t in all_results)
+        ]
 
         all_results.sort(key=lambda x: locale.strxfrm(x[0]))
 
@@ -3158,7 +3323,10 @@ def main():
 
     # --- Single-file mode ---
     if not args.input or not args.output:
-        print("ERROR: provide input and output files, or use --input-dir / --output-dir", file=sys.stderr)
+        print(
+            "ERROR: provide input and output files, or use --input-dir / --output-dir",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     print(f"Input:        {args.input}", file=sys.stderr)
@@ -3191,9 +3359,7 @@ def main():
     for name, s in strip_stats.items():
         rows.append(("stripper", name, str(s.processed), str(s.removed), "-"))
     for name, s in transform_stats.items():
-        rows.append(
-            ("transformer", name, str(s.processed), str(s.transformed), "-")
-        )
+        rows.append(("transformer", name, str(s.processed), str(s.transformed), "-"))
 
     if rows:
         headers = ("type", "name", "processed", "changed", "warn")
