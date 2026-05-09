@@ -1166,16 +1166,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                             continue
                         p_data = individuals_dict.get(p_ptr)
                         if p_data:
-                            p_name = p_data.get("name", "") or "unknown"
-                            p_surname = p_data.get("surname", "")
-                            p_birth_year = extract_year(p_data.get("birth_date"))
-                            parents_list.append(
-                                {
-                                    "name": p_name,
-                                    "surname": p_surname,
-                                    "year": str(p_birth_year) if p_birth_year else "",
-                                }
-                            )
+                            parents_list.append(_person_entry(p_data))
             return parents_list
 
         husband_parents = get_parents_list(husb)
@@ -1185,34 +1176,37 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
         for child_ptr in child_pointers:
             child_data = individuals_dict.get(child_ptr)
             if child_data:
-                child_name = child_data.get("name", "") or "unknown"
-                child_surname = child_data.get("surname", "")
-                birth_year = extract_year(child_data.get("birth_date", ""))
-                children_list.append(
-                    {
-                        "name": child_name,
-                        "surname": child_surname,
-                        "year": str(birth_year) if birth_year else "",
-                    }
-                )
-        children_list.sort(key=lambda c: (c["year"] == "", c["year"], c["name"]))
+                children_list.append(_person_entry(child_data))
+
+        def _by_birth_year(p):
+            y = extract_year(p["date_of_birth"])
+            return (y is None, y or 0, p["name"])
+        children_list.sort(key=_by_birth_year)
+
+        def _spouse_entry(pd):
+            return {
+                "name": pd.get("name", ""),
+                "surname": pd.get("surname", ""),
+                "sex": pd.get("sex", ""),
+                "date_of_birth": pd.get("birth_date", "") or "",
+            }
 
         record = {
-            "husband_name": husb.get("name", ""),
-            "husband_surname": husb.get("surname", ""),
-            "wife_name": wife.get("name", ""),
-            "wife_surname": wife.get("surname", ""),
-            "date_of_marriage": marr_date or "",
-            "place_of_marriage": marr_place or "",
+            "husband": _spouse_entry(husb),
+            "wife": _spouse_entry(wife),
+            "marriage": {
+                "date": marr_date or "",
+                "place": marr_place or "",
+            },
         }
 
         if is_private_name(
-            record["husband_name"], record["husband_surname"]
-        ) or is_private_name(record["wife_name"], record["wife_surname"]):
-            if record["date_of_marriage"]:
-                record["date_of_marriage"] = "private"
-            if record["place_of_marriage"]:
-                record["place_of_marriage"] = "private"
+            record["husband"]["name"], record["husband"]["surname"]
+        ) or is_private_name(record["wife"]["name"], record["wife"]["surname"]):
+            if record["marriage"]["date"]:
+                record["marriage"]["date"] = "<private>"
+            if record["marriage"]["place"]:
+                record["marriage"]["place"] = "<private>"
 
         if marr_links:
             record["links"] = _dedup_links(marr_links)
@@ -1249,12 +1243,12 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
     )
     families_data.sort(
         key=lambda x: (
-            x.get("husband_surname", "") or "",
-            x.get("husband_name", "") or "",
-            x.get("wife_surname", "") or "",
-            x.get("wife_name", "") or "",
-            x.get("date_of_marriage", "") or "",
-            x.get("place_of_marriage", "") or "",
+            x.get("husband", {}).get("surname", "") or "",
+            x.get("husband", {}).get("name", "") or "",
+            x.get("wife", {}).get("surname", "") or "",
+            x.get("wife", {}).get("name", "") or "",
+            x.get("marriage", {}).get("date", "") or "",
+            x.get("marriage", {}).get("place", "") or "",
         )
     )
 
