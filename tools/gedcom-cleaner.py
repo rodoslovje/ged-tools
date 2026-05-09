@@ -49,7 +49,31 @@ processors from both sources are merged (preset first, then explicit flags).
 
 Available Cleaners:
     dd_mmm_yyyy          Normalize all dates to DD MMM YYYY format.
-    name_placeholder     Clear empty/placeholder names (e.g. "___", "???").
+    name_placeholder     Replace placeholder names with the conventional "NN"
+                         stub (Nomen Nescio — name unknown). Catches pure-
+                         punctuation forms like "___" / "???" / "..." and
+                         stub words "XY"/"XXY"/"XXX"/"NN"/"UNNAMED" (case-
+                         insensitive, with optional surrounding punctuation).
+                         Each placeholder given-name segment becomes "NN".
+                         A placeholder surname becomes "/NN/" only when no
+                         real given is present; if there IS a real given,
+                         the placeholder surname becomes empty ("//") —
+                         e.g. "___ /___/" → "NN /NN/", "Jane /___/" → "Jane //".
+    name_capitalization  Title-case all name parts ("JOŽE /KOVAČ/" -> "Jože /Kovač/").
+                         Particles like "de"/"von"/"der"/"des"/"v." stay lowercase
+                         in the middle of a name but are capitalized when they
+                         start a segment or are the whole value ("/De/", "De Coll
+                         Uršula /Ranga/", "Maria /Von der Leyen/"); compound
+                         prefixes like Mac/Mc/De/Di/Van/L'/O' are preserved (so
+                         "MacDonald" / "DePaula" are not flattened); text inside
+                         parentheses is left verbatim. Only INDI names are
+                         touched — NAME tags on SUBM / SOUR / FAM are unchanged.
+    name_lower           Conservative variant of name_capitalization that only
+                         fires on values that are entirely uppercase (ALL CAPS).
+                         Mixed-case and all-lowercase values are left untouched.
+                         When the value IS all caps, it is re-cased using the
+                         same particle/prefix/parens rules as name_capitalization.
+                         Only INDI names are touched.
     place_placeholder    Clear empty/placeholder places.
     place_slovenia_rm    Remove "Slovenia" / "Slovenija" suffix from places.
     place_duplicate_rm   Remove adjacent duplicate components in places.
@@ -127,16 +151,14 @@ Available Presets:
                          Cleaners: place_country_only.
                          Transformers: living100y_initials, fam_partner_private.
     index_cleanup_sgi    Full cleanup and anonymization for public indices (Slovenia).
-                         Cleaners: dd_mmm_yyyy, name_placeholder,
+                         Cleaners: dd_mmm_yyyy, name_placeholder, name_lower,
                            place_placeholder, place_duplicate_rm.
-                         Strippers: noname_indi, noname_fam.
                          Transformers (in order): died20y_private,
                            living75y_private, fam_partner_private.
     index_cleanup_cgi    Full cleanup and anonymization for public indices (Croatia).
                          Same as index_cleanup_sgi without died20y_private.
-                         Cleaners: dd_mmm_yyyy, name_placeholder,
+                         Cleaners: dd_mmm_yyyy, name_placeholder, name_lower,
                            place_placeholder, place_duplicate_rm.
-                         Strippers: noname_indi, noname_fam.
                          Transformers (in order): living75y_private,
                            fam_partner_private.
 
@@ -1614,48 +1636,334 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
 # plus whitespace. Handles any combination of these "unknown" markers.
 _NAME_PLACEHOLDER_RE = re.compile(r"^[_.?,\s/\-()\[\]<>]+$")
 
+# Matches "stub" placeholder words sometimes used when the real name is
+# unknown: XY, XXY, XXX, UNNAMED, and N–N variants (NN, N.N., N N, N. N., …)
+# — with optional surrounding underscores / dashes / spaces / parens /
+# brackets. Case-insensitive.
+_NAME_STUB_PLACEHOLDER_RE = re.compile(
+    r"^[_.?,\s\-()\[\]<>]*(?:UNNAMED|XXY|XXX|XY|N[\s.]*N)[_.?,\s\-()\[\]<>]*$",
+    re.IGNORECASE,
+)
+
+
+def _is_name_placeholder(value: str) -> bool:
+    """True iff `value` is a known name placeholder — either pure punctuation
+    (___, ???, ...) or a stub word (XY, XXY, XXX, NN, N.N., UNNAMED with
+    optional padding). Pure-whitespace strings are NOT considered placeholders
+    (they are just formatting padding around real or empty content)."""
+    if not value or not value.strip():
+        return False
+    return bool(
+        _NAME_PLACEHOLDER_RE.match(value) or _NAME_STUB_PLACEHOLDER_RE.match(value)
+    )
+
+
+def _normalize_name_whitespace(value: str) -> str:
+    """Collapse all runs of whitespace to a single space, strip leading /
+    trailing whitespace, and also trim whitespace inside slash-delimited
+    surnames. Used by every name_ cleaner so callers always get tidy spacing
+    regardless of which specific rule actually fired."""
+    if not value:
+        return value
+
+    # Trim whitespace inside slashes first: "/ Smith /" -> "/Smith/",
+    # "/Mary  Ann/" -> "/Mary Ann/".
+    def _trim_in_slashes(m):
+        inner = re.sub(r"\s+", " ", m.group(1)).strip()
+        return f"/{inner}/"
+
+    value = re.sub(r"/([^/]*)/", _trim_in_slashes, value)
+    # Then collapse outer whitespace runs and trim edges.
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _simplify_all_nn(value: str) -> str:
+    """If a slash-format value has no real name content — every segment is
+    either empty or "NN" — collapse it to just "NN". Examples:
+        "NN /NN/"  -> "NN"
+        "/NN/"     -> "NN"
+        "NN //"    -> "NN"
+        "Jane //"  -> "Jane //"   (real given preserved)
+        "//"       -> "//"        (no NN signal — leave as truly empty)
+    """
+    if "/" not in value:
+        return value
+    parts = re.split(r"(/[^/]*/)", value)
+    has_nn = False
+    has_real = False
+    for p in parts:
+        if p.startswith("/") and p.endswith("/"):
+            inner = p[1:-1].strip()
+            if inner == "NN":
+                has_nn = True
+            elif inner:
+                has_real = True
+        else:
+            stripped = p.strip()
+            if stripped == "NN":
+                has_nn = True
+            elif stripped:
+                has_real = True
+    return "NN" if has_nn and not has_real else value
+
 
 def clean_name_placeholder(raw: str) -> tuple[str, None]:
     """
-    Returns ("", None) if the name is a placeholder (all underscores or question marks).
-    Also clears placeholder surnames from within slashes (e.g. "Jane /___/" -> "Jane //"),
-    and placeholder given names (e.g. "___ /Smith/" -> "/Smith/").
-    Returns (cleaned, None) otherwise.
+    Replace placeholder name segments with the conventional "NN" stub
+    (Nomen Nescio — name unknown). Two refinements:
+      1. When a real given name is present, a placeholder surname becomes
+         an EMPTY surname ("//") instead of "/NN/" — we don't fabricate a
+         fake surname for someone with a known given name.
+      2. When no real name content remains (every segment is empty or "NN"),
+         the value is collapsed to a single "NN".
+        '___'              -> 'NN'
+        '___ /___/'        -> 'NN'              (was 'NN /NN/' — collapsed)
+        'NN /NN/'          -> 'NN'              (collapsed)
+        '/NN/'             -> 'NN'              (collapsed)
+        'NN //'            -> 'NN'              (collapsed)
+        '___ /Smith/'      -> 'NN /Smith/'
+        'XY /Smith/'       -> 'NN /Smith/'
+        'Jane /___/'       -> 'Jane //'         (real given → no fake surname)
+        'Jane /XY/'        -> 'Jane //'
+        'Jane /NN/'        -> 'Jane //'
+        'Jane //'          -> 'Jane //'         (empty surname preserved)
+    A placeholder is either pure punctuation (___, ???, ..., (?), . . .) or
+    a stub word (XY, XXY, XXX, NN, N.N., N N, UNNAMED — case-insensitive,
+    with optional surrounding punctuation). Truly empty input is left as ''.
+    Returns (cleaned, None).
     """
     if not raw:
         return raw, None
 
-    if _NAME_PLACEHOLDER_RE.match(raw):
-        return "", None
+    # No slashes: the whole value is a single (given-name-style) segment.
+    if "/" not in raw:
+        if _is_name_placeholder(raw):
+            return "NN", None
+        cleaned = _normalize_name_whitespace(raw)
+        if cleaned == raw:
+            return raw, None
+        return cleaned, None
 
-    # Clean placeholder surname between slashes
+    # Determine whether the given-name segment(s) of `raw` already contain a
+    # real (non-placeholder) name. Given parts are everything OUTSIDE slash-
+    # pairs. When a real given exists, a placeholder surname is rewritten to
+    # an EMPTY surname ("//") rather than "/NN/" — the given is the only
+    # name-bearing signal, so we don't fabricate a fake "NN" surname for it.
+    raw_parts = re.split(r"(/[^/]*/)", raw)
+    given_text = "".join(
+        p for p in raw_parts if not (p.startswith("/") and p.endswith("/"))
+    ).strip()
+    has_real_given = bool(given_text) and not _is_name_placeholder(given_text)
+    surname_target = "//" if has_real_given else "/NN/"
+
+    # Slash format: replace placeholder surname (between slashes).
     def repl_surname(match):
         inner = match.group(1)
-        if inner and _NAME_PLACEHOLDER_RE.match(inner):
-            return "//"
+        if inner and _is_name_placeholder(inner):
+            return surname_target
         return match.group(0)
 
     cleaned = re.sub(r"/([^/]*)/", repl_surname, raw)
 
-    # Clean placeholder given names (only if the ENTIRE part outside slashes is a placeholder)
+    # Replace placeholder given-name parts with "NN", preserving outer
+    # whitespace so "NN /Smith/" reads naturally.
     parts = re.split(r"(/[^/]*/)", cleaned)
     final_parts = []
     for p in parts:
         if p.startswith("/") and p.endswith("/"):
             final_parts.append(p)
+            continue
+        if p and _is_name_placeholder(p):
+            leading = p[: len(p) - len(p.lstrip())]
+            trailing = p[len(p.rstrip()) :]
+            final_parts.append(f"{leading}NN{trailing}")
         else:
-            if _NAME_PLACEHOLDER_RE.match(p):
-                final_parts.append("")
-            else:
-                final_parts.append(p)
+            final_parts.append(p)
 
-    cleaned = "".join(final_parts).strip()
-    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = "".join(final_parts)
+    cleaned = _normalize_name_whitespace(cleaned)
 
-    if not cleaned or _NAME_PLACEHOLDER_RE.match(cleaned):
-        return "", None
+    # If everything left is just "NN" markers (and empty bits), collapse to
+    # a single "NN" — there is no signal beyond "name unknown".
+    cleaned = _simplify_all_nn(cleaned)
 
+    if cleaned == raw:
+        return raw, None
     return cleaned, None
+
+
+# ---------------------------------------------------------------------------
+# Cleaner: name_capitalization
+# ---------------------------------------------------------------------------
+
+# Connecting words / nobiliary particles that should stay lowercase even when
+# the rest of the name is title-cased. Comparison is case-insensitive.
+_NAME_PARTICLES = frozenset({
+    # Romance: French / Italian / Spanish / Portuguese
+    "de", "da", "di", "du", "des", "del", "della", "dei",
+    "dos", "das", "do",
+    # Germanic / Dutch
+    "von", "van", "vom", "vor",
+    "der", "den", "ten", "ter", "te",
+    # French
+    "la", "le", "les",
+    # Slovenian / Slavic abbreviations
+    "v.", "vd.",
+    # English connectors
+    "of", "the",
+    # Spanish/Italian connectors
+    "y", "e",
+})
+
+# Known compound-name prefixes. A word that starts with one of these AND has
+# an uppercase letter immediately after AND only lowercase from there on is
+# treated as intentional internal capitalization (MacDonald, McDonald,
+# DePaula, DiCaprio, VanDijk, …) and left verbatim.
+_NAME_PREFIXES = (
+    "Mac", "Mc", "M'",
+    "De", "Di", "Da", "Du",
+    "Van", "Von", "Der", "Den", "Ten",
+    "La", "Le", "L'",
+    "St", "St.",
+    "O'", "D'",
+)
+
+
+def _has_intentional_prefix_cap(word: str) -> bool:
+    """True iff `word` matches a known name-prefix pattern with an internal
+    capital, e.g. 'MacDonald', 'DePaula', 'VanDijk'. The check is intentionally
+    narrow so noise like 'kOvAč' is NOT preserved."""
+    if word == word.upper() or word == word.lower():
+        return False
+    for prefix in _NAME_PREFIXES:
+        if not word.startswith(prefix):
+            continue
+        tail = word[len(prefix):]
+        if not tail or not tail[0].isupper():
+            continue
+        # Rest of the tail must be lowercase (so 'MacDonald' qualifies but
+        # 'MacDONALD' or 'MacDONald' do not).
+        if tail[1:] == tail[1:].lower():
+            return True
+    return False
+
+
+def _cap_word(word: str, is_first: bool) -> str:
+    if not word:
+        return word
+    # "NN" (Nomen Nescio — name unknown) is conventionally always uppercase.
+    # name_placeholder writes this token; name_capitalization / name_lower
+    # must not flatten it to "Nn".
+    if word.upper() == "NN":
+        return "NN"
+    # Intentional name-prefix capitalization → preserve verbatim.
+    if _has_intentional_prefix_cap(word):
+        return word
+    # Known particle: capitalize when it starts the segment (or is the only
+    # word — e.g. "/De/", "De Coll Uršula"); lowercase elsewhere.
+    if word.lower() in _NAME_PARTICLES:
+        return word.title() if is_first else word.lower()
+    # Default: title-case (unicode-aware; handles diacritics, hyphens, "'").
+    return word.title()
+
+
+def _cap_segment(text: str) -> str:
+    """Capitalize words in a free-text segment. Parenthesized groups are
+    preserved verbatim. The first non-whitespace, non-parenthesized token
+    is treated as the segment start (matters for particle handling)."""
+    if not text:
+        return text
+    # Split on parenthesized groups, keeping them as-is.
+    parts = re.split(r"(\([^)]*\))", text)
+    out = []
+    saw_word = False
+    for part in parts:
+        if part.startswith("(") and part.endswith(")"):
+            out.append(part)
+            continue
+        # Tokenize on whitespace, preserving the whitespace runs.
+        tokens = re.split(r"(\s+)", part)
+        new_toks = []
+        for tok in tokens:
+            if not tok or tok.isspace():
+                new_toks.append(tok)
+                continue
+            new_toks.append(_cap_word(tok, is_first=not saw_word))
+            saw_word = True
+        out.append("".join(new_toks))
+    return "".join(out)
+
+
+def clean_name_capitalization(raw: str) -> tuple[str, None]:
+    """
+    Capitalize name parts with these rules:
+      - Name particles ('de', 'von', 'der', 'des', 'v.', …) stay lowercase
+        in the middle of a segment, but are capitalized at the start of a
+        segment or when they are the whole value ('/De/', 'De Coll Uršula').
+      - Compound-name prefixes ('MacDonald', 'DePaula', 'VanDijk') are preserved.
+      - Parenthesized segments ('(Pepi)') are preserved verbatim.
+      - Everything else is title-cased (unicode-aware: 'KOVAČ' → 'Kovač').
+
+    Handles both the NAME format ('Given /Surname/') and plain-value tags
+    (GIVN, SURN, NICK, MARNM).
+    Returns (cleaned, None).
+    """
+    if not raw or not raw.strip():
+        return raw, None
+
+    if "/" in raw:
+        parts = re.split(r"(/[^/]*/)", raw)
+        out = []
+        for p in parts:
+            if p.startswith("/") and p.endswith("/"):
+                out.append(f"/{_cap_segment(p[1:-1])}/")
+            else:
+                out.append(_cap_segment(p))
+        cleaned = "".join(out)
+    else:
+        cleaned = _cap_segment(raw)
+
+    cleaned = _normalize_name_whitespace(cleaned)
+
+    if cleaned == raw:
+        return raw, None
+    return cleaned, None
+
+
+# ---------------------------------------------------------------------------
+# Cleaner: name_lower
+# ---------------------------------------------------------------------------
+
+
+def clean_name_lower(raw: str) -> tuple[str, None]:
+    """
+    Conservative variant of name_capitalization: only re-cases values that
+    are entirely uppercase (ALL CAPS). Mixed-case and lowercase values are
+    left unchanged. When the value IS all caps, it is converted to title
+    case using the name_capitalization rules (so particles, prefixes, and
+    parenthesized segments behave the same way).
+
+    Examples:
+        'JOŽE /KOVAČ/'      -> 'Jože /Kovač/'
+        'DE COLL URŠULA/RANGA/' -> 'De Coll Uršula/Ranga/'
+        'John /SMITH/'      -> 'John /SMITH/'   (mixed case; left alone)
+        'jože /kovač/'      -> 'jože /kovač/'   (no upper; left alone)
+    Returns (cleaned, None).
+    """
+    if not raw or not raw.strip():
+        return raw, None
+    # Trigger only when the value contains at least one letter and NO
+    # lowercase letter. Punctuation, slashes, and digits don't matter.
+    has_letter = any(ch.isalpha() for ch in raw)
+    has_lower = any(ch.islower() for ch in raw)
+    if not has_letter or has_lower:
+        # Mixed / all-lower values are not re-cased, but we still tidy up
+        # whitespace so the cleaner's behaviour is consistent across inputs.
+        cleaned = _normalize_name_whitespace(raw)
+        if cleaned == raw:
+            return raw, None
+        return cleaned, None
+    return clean_name_capitalization(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -1753,6 +2061,8 @@ def clean_place_country_only(raw: str) -> tuple[str, None]:
 CLEANERS = {
     "dd_mmm_yyyy": clean_date_dd_mmm_yyyy,
     "name_placeholder": clean_name_placeholder,
+    "name_capitalization": clean_name_capitalization,
+    "name_lower": clean_name_lower,
     "place_placeholder": clean_place_placeholder,
     "place_slovenia_rm": clean_place_slovenia_rm,
     "place_duplicate_rm": clean_place_duplicate_rm,
@@ -1897,20 +2207,22 @@ PRESETS: dict[str, dict[str, list[str]]] = {
         "clean": [
             "dd_mmm_yyyy",
             "name_placeholder",
+            "name_lower",
             "place_placeholder",
             "place_duplicate_rm",
         ],
-        "strip": ["noname_indi", "noname_fam"],
+        "strip": [],
         "transform": ["died20y_private", "living75y_private", "fam_partner_private"],
     },
     "index_cleanup_cgi": {
         "clean": [
             "dd_mmm_yyyy",
             "name_placeholder",
+            "name_lower",
             "place_placeholder",
             "place_duplicate_rm",
         ],
-        "strip": ["noname_indi", "noname_fam"],
+        "strip": [],
         "transform": ["living75y_private", "fam_partner_private"],
     },
 }
@@ -2013,16 +2325,17 @@ def process_file(
                         )
                     element.set_value(cleaned)
 
+    _NAME_TAGS = (
+        gedcom.tags.GEDCOM_TAG_NAME,
+        "SURN",
+        "GIVN",
+        "NICK",
+        "MARNM",
+        "_MARNM",
+    )
+
     if "name_placeholder" in cleaners:
         s = stats["name_placeholder"]
-        _NAME_TAGS = (
-            gedcom.tags.GEDCOM_TAG_NAME,
-            "SURN",
-            "GIVN",
-            "NICK",
-            "MARNM",
-            "_MARNM",
-        )
         for element in parser.get_element_list():
             if element.get_tag() not in _NAME_TAGS:
                 continue
@@ -2034,6 +2347,72 @@ def process_file(
                 if verbose_clean:
                     print(
                         f"  [clean:name_placeholder] {element.get_tag()} {raw!r} -> {cleaned!r}  — {_record_label(element)}"
+                    )
+                element.set_value(cleaned)
+
+        # Align SURN children to the surname between slashes in their parent
+        # NAME. If the NAME's surname collapsed to empty (e.g. "Jane /NN/" ->
+        # "Jane //"), the SURN child must not retain the now-orphaned "NN".
+        for element in parser.get_element_list():
+            if element.get_tag() != gedcom.tags.GEDCOM_TAG_NAME:
+                continue
+            name_val = element.get_value()
+            m = re.search(r"/([^/]*)/", name_val)
+            target_surname = m.group(1).strip() if m else ""
+            for ch in element.get_child_elements():
+                if ch.get_tag() != "SURN":
+                    continue
+                current = ch.get_value()
+                if current.strip() != target_surname:
+                    if verbose_clean:
+                        print(
+                            f"  [clean:name_placeholder] SURN {current!r} -> {target_surname!r}  — {_record_label(ch)}"
+                        )
+                    ch.set_value(target_surname)
+                    s.fixed += 1
+
+    if "name_capitalization" in cleaners:
+        s = stats["name_capitalization"]
+        for element in parser.get_element_list():
+            if element.get_tag() not in _NAME_TAGS:
+                continue
+            # Only re-case names that belong to an INDI record. NAME tags can
+            # also appear under SUBM, SOUR, etc. — those are not personal
+            # names and should not be touched.
+            top = element
+            while top.get_parent_element() and top.get_parent_element().get_level() >= 0:
+                top = top.get_parent_element()
+            if top.get_tag() != gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
+                continue
+            raw = element.get_value()
+            s.processed += 1
+            cleaned, _ = clean_name_capitalization(raw)
+            if cleaned != raw:
+                s.fixed += 1
+                if verbose_clean:
+                    print(
+                        f"  [clean:name_capitalization] {element.get_tag()} {raw!r} -> {cleaned!r}  — {_record_label(element)}"
+                    )
+                element.set_value(cleaned)
+
+    if "name_lower" in cleaners:
+        s = stats["name_lower"]
+        for element in parser.get_element_list():
+            if element.get_tag() not in _NAME_TAGS:
+                continue
+            top = element
+            while top.get_parent_element() and top.get_parent_element().get_level() >= 0:
+                top = top.get_parent_element()
+            if top.get_tag() != gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
+                continue
+            raw = element.get_value()
+            s.processed += 1
+            cleaned, _ = clean_name_lower(raw)
+            if cleaned != raw:
+                s.fixed += 1
+                if verbose_clean:
+                    print(
+                        f"  [clean:name_lower] {element.get_tag()} {raw!r} -> {cleaned!r}  — {_record_label(element)}"
                     )
                 element.set_value(cleaned)
 
@@ -2774,7 +3153,19 @@ def process_file(
                 for ch in indi_el.get_child_elements()
                 if ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME
             ]
-            return not names or all(ch.get_value().strip() == "" for ch in names)
+            if not names:
+                return True
+
+            def _is_nameless_value(v: str) -> bool:
+                # Strip slash-delimiters; what remains must be empty or only
+                # the "NN" placeholder tokens (Nomen Nescio — written by the
+                # name_placeholder cleaner).
+                cleaned = v.replace("/", " ").strip()
+                if not cleaned:
+                    return True
+                return all(tok == "NN" for tok in cleaned.split())
+
+            return all(_is_nameless_value(ch.get_value()) for ch in names)
 
         def _indi_is_anonymous(indi_el) -> bool:
             """True if the individual is nameless or has been reduced to 'private'."""
