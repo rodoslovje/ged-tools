@@ -148,6 +148,19 @@ def get_name_surname(individual):
     return "", ""
 
 
+def get_sex(individual):
+    """Return "m", "f", or "" based on the SEX tag of an individual."""
+    for child in individual.get_child_elements():
+        if child.get_tag() == "SEX":
+            val = (child.get_value() or "").strip().upper()
+            if val.startswith("M"):
+                return "m"
+            if val.startswith("F"):
+                return "f"
+            return ""
+    return ""
+
+
 MATRICULA_RE = re.compile(
     r"https?://data\.matricula-online\.eu(?:/[^/\"\s<]+){5,}[^\"\s<]*"
 )
@@ -771,13 +784,13 @@ def extract_year(date_str):
     return int(match.group(1)) if match else None
 
 
-def needs_processing(input_path, births_path, families_path):
+def needs_processing(input_path, *json_paths):
     """
     Returns True if the GED file should be processed in update mode:
     either JSON output is missing or older than the GED file.
     """
     ged_mtime = os.path.getmtime(input_path)
-    for json_path in (births_path, families_path):
+    for json_path in json_paths:
         if not os.path.exists(json_path):
             return True
         if os.path.getmtime(json_path) < ged_mtime:
@@ -801,34 +814,25 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
         ),
     )
     input_path = os.path.join(input_dir, filename)
-    births_output_path = os.path.join(output_dir, f"{contributor_id}-births.json")
+    persons_output_path = os.path.join(output_dir, f"{contributor_id}-persons.json")
     families_output_path = os.path.join(output_dir, f"{contributor_id}-families.json")
-    deaths_output_path = os.path.join(output_dir, f"{contributor_id}-deaths.json")
 
     # --- Update mode: skip if JSON is already up to date ---
-    if (
-        not full_mode
-        and not needs_processing(input_path, births_output_path, families_output_path)
-        and not needs_processing(input_path, deaths_output_path, deaths_output_path)
+    if not full_mode and not needs_processing(
+        input_path, persons_output_path, families_output_path
     ):
         try:
-            with open(births_output_path, encoding="utf-8") as f:
-                births_data_skip = json.load(f)
+            with open(persons_output_path, encoding="utf-8") as f:
+                persons_data_skip = json.load(f)
             with open(families_output_path, encoding="utf-8") as f:
                 families_data_skip = json.load(f)
-            deaths_data_skip = []
-            if os.path.exists(deaths_output_path):
-                with open(deaths_output_path, encoding="utf-8") as f:
-                    deaths_data_skip = json.load(f)
             ged_mtime = datetime.fromtimestamp(os.path.getmtime(input_path)).isoformat()
             meta = {
                 "contributor": contributor_id,
-                "births_count": len(births_data_skip),
+                "persons_count": len(persons_data_skip),
                 "families_count": len(families_data_skip),
-                "deaths_count": len(deaths_data_skip),
-                "links_count": sum(1 for r in births_data_skip if r.get("links"))
-                + sum(1 for r in families_data_skip if r.get("links"))
-                + sum(1 for r in deaths_data_skip if r.get("links")),
+                "links_count": sum(1 for r in persons_data_skip if r.get("links"))
+                + sum(1 for r in families_data_skip if r.get("links")),
                 "filtered_count": 0,
                 "skipped": True,
                 "last_modified": ged_mtime,
@@ -841,7 +845,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
     print(f"Processing: {filename}", file=sys.stderr)
 
     # Initialize lists to hold extracted records for this file.
-    births_data = []
+    persons_data = []
     families_data = []
 
     # --- Parsing ---
@@ -879,7 +883,6 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
 
     individuals_dict = {}
     family_elements = []
-    deaths_data = []
 
     root_elements = list(gedcom_parser.get_root_child_elements())
     obje_dict = build_obje_dict(root_elements)
@@ -891,6 +894,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
         if tag == "INDI":
             pointer = element.get_pointer()
             name, surname = get_name_surname(element)
+            sex = get_sex(element)
             birth_date, birth_place, raw_birth_links = get_event_data(
                 element, "BIRT", sources_dict, obje_dict
             )
@@ -939,6 +943,11 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                 if url not in birth_links:
                     birth_links.append(url)
 
+            person_links = list(birth_links)
+            for url in death_links:
+                if url not in person_links:
+                    person_links.append(url)
+
             is_deceased_flag = any(
                 child.get_tag() in ("DEAT", "BURI")
                 for child in element.get_child_elements()
@@ -959,6 +968,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
             individuals_dict[pointer] = {
                 "name": name,
                 "surname": surname,
+                "sex": sex,
                 "birth_date": birth_date,
                 "is_deceased": is_deceased_flag,
                 "marr_links": marr_links,
@@ -966,29 +976,31 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                 "fams": fams_pointers,
             }
 
-            if birth_date or birth_place or birth_links:
+            has_events = bool(
+                birth_date or birth_place or death_date or death_place or person_links
+            )
+            name_norm = name.strip().lower()
+            is_placeholder_only = name_norm in ("private", "<private>") or (
+                name.strip() == "NN" and not surname.strip()
+            )
+            if has_events or not is_placeholder_only:
                 record = {
                     "_ptr": pointer,
                     "name": name,
                     "surname": surname,
-                    "date_of_birth": birth_date or "",
-                    "place_of_birth": birth_place or "",
+                    "sex": sex,
+                    "birth": {
+                        "date": birth_date or "",
+                        "place": birth_place or "",
+                    },
+                    "death": {
+                        "date": death_date or "",
+                        "place": death_place or "",
+                    },
                 }
-                if birth_links:
-                    record["links"] = _dedup_links(birth_links)
-                births_data.append(record)
-
-            if death_date or death_place or death_links:
-                record = {
-                    "_ptr": pointer,
-                    "name": name,
-                    "surname": surname,
-                    "date_of_death": death_date or "",
-                    "place_of_death": death_place or "",
-                }
-                if death_links:
-                    record["links"] = _dedup_links(death_links)
-                deaths_data.append(record)
+                if person_links:
+                    record["links"] = _dedup_links(person_links)
+                persons_data.append(record)
 
         elif tag == "FAM":
             family_elements.append(element)
@@ -1006,6 +1018,14 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                 w_ptr = child.get_value()
         family_dict[family.get_pointer()] = {"husb": h_ptr, "wife": w_ptr}
 
+    def _person_entry(pd):
+        return {
+            "name": pd.get("name", "") or "unknown",
+            "surname": pd.get("surname", ""),
+            "sex": pd.get("sex", ""),
+            "date_of_birth": pd.get("birth_date", "") or "",
+        }
+
     def _resolve_parent_fields(record):
         ptr = record.pop("_ptr", None)
         if not ptr:
@@ -1013,61 +1033,43 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
 
         indi_data = individuals_dict.get(ptr, {})
 
+        parents_list = []
         famc_list = indi_data.get("famc", [])
         if famc_list:
             fam = family_dict.get(famc_list[0], {})
-            husb_ptr = fam.get("husb", "")
-            wife_ptr = fam.get("wife", "")
-            if husb_ptr:
-                hd = individuals_dict.get(husb_ptr, {})
-                record["father_name"] = hd.get("name", "")
-                record["father_surname"] = hd.get("surname", "")
-            if wife_ptr:
-                wd = individuals_dict.get(wife_ptr, {})
-                record["mother_name"] = wd.get("name", "")
-                record["mother_surname"] = wd.get("surname", "")
+            for parent_ptr in (fam.get("husb", ""), fam.get("wife", "")):
+                if parent_ptr:
+                    pd = individuals_dict.get(parent_ptr, {})
+                    if pd:
+                        parents_list.append(_person_entry(pd))
+        if parents_list:
+            record["parents_list"] = parents_list
 
         fams_list = indi_data.get("fams", [])
         if fams_list:
-            husbands = []
-            wifes = []
+            partners = []
             for fams_ptr in fams_list:
                 fam = family_dict.get(fams_ptr, {})
                 husb_ptr = fam.get("husb", "")
                 wife_ptr = fam.get("wife", "")
-
-                if husb_ptr == ptr and wife_ptr:
-                    pd = individuals_dict.get(wife_ptr, {})
+                partner_ptr = (
+                    wife_ptr if husb_ptr == ptr
+                    else husb_ptr if wife_ptr == ptr
+                    else ""
+                )
+                if partner_ptr:
+                    pd = individuals_dict.get(partner_ptr, {})
                     if pd:
-                        p_birth_year = extract_year(pd.get("birth_date", ""))
-                        wifes.append(
-                            {
-                                "name": pd.get("name", "") or "unknown",
-                                "surname": pd.get("surname", ""),
-                                "year": str(p_birth_year) if p_birth_year else "",
-                            }
-                        )
-                elif wife_ptr == ptr and husb_ptr:
-                    pd = individuals_dict.get(husb_ptr, {})
-                    if pd:
-                        p_birth_year = extract_year(pd.get("birth_date", ""))
-                        husbands.append(
-                            {
-                                "name": pd.get("name", "") or "unknown",
-                                "surname": pd.get("surname", ""),
-                                "year": str(p_birth_year) if p_birth_year else "",
-                            }
-                        )
-            if husbands:
-                husbands.sort(key=lambda p: (p["year"] == "", p["year"], p["name"]))
-                record["husbands_list"] = husbands
-            if wifes:
-                wifes.sort(key=lambda p: (p["year"] == "", p["year"], p["name"]))
-                record["wifes_list"] = wifes
+                        partners.append(_person_entry(pd))
 
-    for record in births_data:
-        _resolve_parent_fields(record)
-    for record in deaths_data:
+            if partners:
+                def _partner_sort_key(p):
+                    y = extract_year(p["date_of_birth"])
+                    return (y is None, y or 0, p["name"])
+                partners.sort(key=_partner_sort_key)
+                record["partners_list"] = partners
+
+    for record in persons_data:
         _resolve_parent_fields(record)
 
     person_to_family_info = {}
@@ -1225,24 +1227,24 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
 
     # --- 3. Filter recent records (privacy) ---
 
-    births_before = len(births_data)
+    persons_before = len(persons_data)
     families_before = len(families_data)
-    deaths_before = len(deaths_data)
 
-    filtered_births = births_before - len(births_data)
+    filtered_persons = persons_before - len(persons_data)
     filtered_families = families_before - len(families_data)
-    filtered_deaths = deaths_before - len(deaths_data)
-    filtered_count = filtered_births + filtered_families + filtered_deaths
+    filtered_count = filtered_persons + filtered_families
 
     # --- 4. Write Output JSON Files ---
     ged_mtime = os.path.getmtime(input_path)
 
-    births_data.sort(
+    persons_data.sort(
         key=lambda x: (
             x.get("surname", "") or "",
             x.get("name", "") or "",
-            x.get("date_of_birth", "") or "",
-            x.get("place_of_birth", "") or "",
+            x.get("birth", {}).get("date", "") or "",
+            x.get("death", {}).get("date", "") or "",
+            x.get("birth", {}).get("place", "") or "",
+            x.get("death", {}).get("place", "") or "",
         )
     )
     families_data.sort(
@@ -1255,37 +1257,22 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
             x.get("place_of_marriage", "") or "",
         )
     )
-    deaths_data.sort(
-        key=lambda x: (
-            x.get("surname", "") or "",
-            x.get("name", "") or "",
-            x.get("date_of_death", "") or "",
-            x.get("place_of_death", "") or "",
-        )
-    )
 
-    with open(births_output_path, "w", encoding="utf-8") as f:
-        json.dump(births_data, f, ensure_ascii=False, indent=4)
-    os.utime(births_output_path, (ged_mtime, ged_mtime))
+    with open(persons_output_path, "w", encoding="utf-8") as f:
+        json.dump(persons_data, f, ensure_ascii=False, indent=4)
+    os.utime(persons_output_path, (ged_mtime, ged_mtime))
 
     with open(families_output_path, "w", encoding="utf-8") as f:
         json.dump(families_data, f, ensure_ascii=False, indent=4)
     os.utime(families_output_path, (ged_mtime, ged_mtime))
 
-    with open(deaths_output_path, "w", encoding="utf-8") as f:
-        json.dump(deaths_data, f, ensure_ascii=False, indent=4)
-    os.utime(deaths_output_path, (ged_mtime, ged_mtime))
-
-    links_count = (
-        sum(1 for r in births_data if r.get("links"))
-        + sum(1 for r in families_data if r.get("links"))
-        + sum(1 for r in deaths_data if r.get("links"))
+    links_count = sum(1 for r in persons_data if r.get("links")) + sum(
+        1 for r in families_data if r.get("links")
     )
     meta = {
         "contributor": contributor_id,
-        "births_count": len(births_data),
+        "persons_count": len(persons_data),
         "families_count": len(families_data),
-        "deaths_count": len(deaths_data),
         "links_count": links_count,
         "filtered_count": filtered_count,
         "skipped": False,
@@ -1404,7 +1391,7 @@ def main():
     col_w = max(
         (len(m["contributor"]) for m in metadata if not m.get("skipped")), default=10
     )
-    header = f"{'File':<{col_w}}  {'Births':>7}  {'Families':>8}  {'Deaths':>7}  {'Links':>6}  {'Filtered':>8}"
+    header = f"{'File':<{col_w}}  {'Persons':>7}  {'Families':>8}  {'Links':>6}  {'Filtered':>8}"
     print(f"\n{header}")
     print("-" * len(header))
     for m in metadata:
@@ -1412,20 +1399,18 @@ def main():
             continue
         print(
             f"{m['contributor']:<{col_w}}  "
-            f"{m['births_count']:>7}  "
+            f"{m['persons_count']:>7}  "
             f"{m['families_count']:>8}  "
-            f"{m['deaths_count']:>7}  "
             f"{m['links_count']:>6}  "
             f"{m.get('filtered_count', 0):>8}"
         )
-    total_b = sum(m["births_count"] for m in metadata if not m.get("skipped"))
+    total_p = sum(m["persons_count"] for m in metadata if not m.get("skipped"))
     total_f = sum(m["families_count"] for m in metadata if not m.get("skipped"))
-    total_d = sum(m["deaths_count"] for m in metadata if not m.get("skipped"))
     total_l = sum(m["links_count"] for m in metadata if not m.get("skipped"))
     total_fi = sum(m.get("filtered_count", 0) for m in metadata if not m.get("skipped"))
     print("-" * len(header))
     print(
-        f"{'TOTAL':<{col_w}}  {total_b:>7}  {total_f:>8}  {total_d:>7}  {total_l:>6}  {total_fi:>8}"
+        f"{'TOTAL':<{col_w}}  {total_p:>7}  {total_f:>8}  {total_l:>6}  {total_fi:>8}"
     )
 
 

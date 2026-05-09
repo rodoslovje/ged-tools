@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 compare-links: Compare data.matricula-online.eu links between filtered GED files
-and output JSON files (births, families, deaths).
+and output JSON files (persons, families).
 
 Reports matricula links that are present in the GED but missing from all JSON files,
 together with the name and ID of the INDI/FAM record they are attached to.
@@ -10,7 +10,7 @@ Usage:
     python tools/compare_links.py <filtered_dir> <output_dir> [STEM ...]
 
     filtered_dir   Directory containing filtered .ged files.
-    output_dir     Directory containing *-births.json, *-families.json, *-deaths.json.
+    output_dir     Directory containing *-persons.json, *-families.json.
     STEM           Optional list of file stems to process (e.g. Renko Košir).
                    If omitted, all .ged files in filtered_dir are processed.
 """
@@ -228,9 +228,9 @@ def _ged_matricula_by_record(path: Path) -> list[tuple[str, str, str]]:
 # ---------------------------------------------------------------------------
 
 def _json_matricula_links(output_dir: Path, stem: str) -> set[str]:
-    """Return all matricula URLs found in the three JSON files for a stem."""
+    """Return all matricula URLs found in the JSON files for a stem."""
     links: set[str] = set()
-    for kind in ("births", "families", "deaths"):
+    for kind in ("persons", "families"):
         path = output_dir / f"{stem}-{kind}.json"
         if not path.exists():
             continue
@@ -296,7 +296,7 @@ def main():
         epilog=__doc__,
     )
     parser.add_argument("filtered_dir", help="Directory with filtered .ged files")
-    parser.add_argument("output_dir", help="Directory with *-births/families/deaths.json files")
+    parser.add_argument("output_dir", help="Directory with *-persons/families.json files")
     parser.add_argument("stems", nargs="*", metavar="STEM", help="File stems to process (default: all)")
     args = parser.parse_args()
 
