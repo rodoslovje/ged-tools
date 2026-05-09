@@ -34,7 +34,7 @@ Options:
     --siblings             Also keep all siblings of every included person
                            (i.e. all children in every kept parent family).
     --living-private       Redact all living individuals: replace name with
-                           "private" and remove all event data.
+                           "<private>" and remove all event data.
     --living-name          Redact all living individuals: keep full name but
                            remove all event data.
     --living-initials      Redact all living individuals: reduce name to
@@ -396,7 +396,7 @@ def _apply_living_privacy(indi_el, mode: str, verbose: bool) -> None:
     """Redact a living individual's record in-place.
 
     mode:
-      'private'  — set NAME to "private", clear all NAME sub-tags
+      '<private>'  — set NAME to "<private>", clear all NAME sub-tags
       'name'     — keep NAME (and its GIVN/SURN children) unchanged
       'initials' — reduce NAME to initials; keep GIVN/SURN as initials
 
@@ -413,8 +413,8 @@ def _apply_living_privacy(indi_el, mode: str, verbose: bool) -> None:
         if tag in ("SEX", "FAMC", "FAMS"):
             to_keep.append(ch)
         elif tag == gedcom.tags.GEDCOM_TAG_NAME and not name_kept:
-            if mode == "private":
-                ch.set_value("private")
+            if mode == "<private>":
+                ch.set_value("<private>")
                 ch.get_child_elements().clear()
             elif mode == "initials":
                 ch.set_value(_shorten_name_value(ch.get_value()))
@@ -433,10 +433,10 @@ def _apply_living_privacy(indi_el, mode: str, verbose: bool) -> None:
             to_keep.append(ch)
             name_kept = True
 
-    if not name_kept and mode == "private":
+    if not name_kept and mode == "<private>":
         name_el = Element(
             indi_el.get_level() + 1, "", gedcom.tags.GEDCOM_TAG_NAME,
-            "private", "\n", multi_line=False,
+            "<private>", "\n", multi_line=False,
         )
         name_el.set_parent_element(indi_el)
         to_keep.insert(0, name_el)
@@ -1089,7 +1089,7 @@ def main():
         "--living-private",
         action="store_true",
         dest="living_private",
-        help="Redact living individuals: replace name with 'private', remove all events",
+        help="Redact living individuals: replace name with '<private>', remove all events",
     )
     living_group.add_argument(
         "--living-name",
@@ -1119,7 +1119,7 @@ def main():
         sys.exit(1)
 
     living = (
-        "private" if args.living_private else
+        "<private>" if args.living_private else
         "name"    if args.living_name    else
         "initials" if args.living_initials else
         None

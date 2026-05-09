@@ -51,14 +51,16 @@ Available Cleaners:
     dd_mmm_yyyy          Normalize all dates to DD MMM YYYY format.
     name_placeholder     Replace placeholder names with the conventional "NN"
                          stub (Nomen Nescio — name unknown). Catches pure-
-                         punctuation forms like "___" / "???" / "..." and
-                         stub words "XY"/"XXY"/"XXX"/"NN"/"UNNAMED" (case-
-                         insensitive, with optional surrounding punctuation).
-                         Each placeholder given-name segment becomes "NN".
-                         A placeholder surname becomes "/NN/" only when no
-                         real given is present; if there IS a real given,
-                         the placeholder surname becomes empty ("//") —
-                         e.g. "___ /___/" → "NN /NN/", "Jane /___/" → "Jane //".
+                         punctuation forms like "___" / "???" / "..." / "//",
+                         stub words "XY"/"XX"/"XXY"/"XXX"/"NN"/"UNNAMED"/
+                         "NEZNAN" (case-insensitive, with optional surrounding
+                         punctuation), and any run of 3+ of the same letter
+                         ("AAA", "BBBB", "qqqq"). Each placeholder given-name
+                         segment becomes "NN". A placeholder surname becomes
+                         "/NN/" only when no real given is present; if there
+                         IS a real given, the placeholder surname becomes
+                         empty ("//") — e.g. "___ /___/" → "NN", "Jane /___/"
+                         → "Jane //", "//" → "NN", "AAAA /BBBB/" → "NN".
     name_capitalization  Title-case all name parts ("JOŽE /KOVAČ/" -> "Jože /Kovač/").
                          Particles like "de"/"von"/"der"/"des"/"v." stay lowercase
                          in the middle of a name but are capitalized when they
@@ -112,14 +114,14 @@ Available Transformers (listed in execution order):
     addr_to_plac         Merge ADDR values into event PLAC tags.
     sour_peri_titl       Rename PERI to TITL inside source records (when TITL is absent).
     born75y_private      Anonymize individuals born in the last 75 years regardless
-                         of death status: set name to "private" and remove all events.
+                         of death status: set name to "<private>" and remove all events.
                          Uses birth, baptism, or christening date (BIRT preferred).
                          Partial years are filled conservatively (e.g. "195_" → 1959).
     died20y_private      Anonymize individuals whose death, burial, or cremation
                          was recorded within the last 20 years (date must be
                          present). Complies with ZVOP-2 post-mortem protection.
     living100y_private   Anonymize individuals with a birth year under 100 years
-                         ago and no death record: set name to "private" and remove
+                         ago and no death record: set name to "<private>" and remove
                          all events. Uses birth, baptism, or christening date.
                          Partial years (e.g. "192_", "19__") are filled
                          conservatively (underscores → 9, e.g. "192_" → 1929) so
@@ -133,7 +135,7 @@ Available Transformers (listed in execution order):
                          All events are still removed.
     fam_partner_private  If both spouses are private: remove the entire family record.
                          If one spouse is private: replace all non-empty event field
-                         values (date, place, note, links, etc.) with "private".
+                         values (date, place, note, links, etc.) with "<private>".
 
 Available Presets:
     mft_webtrees         WebTrees compatibility for MacFamilyTree exports.
@@ -479,7 +481,7 @@ def _get_exact_birth_year(indi_el) -> int | None:
 def _indi_is_private_name(indi_el) -> bool:
     for _c in indi_el.get_child_elements():
         if _c.get_tag() == gedcom.tags.GEDCOM_TAG_NAME:
-            return _c.get_value().strip().lower() == "private"
+            return _c.get_value().strip().lower() == "<private>"
     return False
 
 
@@ -491,7 +493,7 @@ def _estimate_birth_year_from_relatives(
     Returns (earliest_estimate, description) or (None, "") if no relatives found.
     Only uses exact birth years to avoid cascading partial-year errors.
     Short-circuits with a current-year signal when all parents or all children
-    in a family are already private (name == "private").
+    in a family are already private (name == "<private>").
     """
     estimates: list[tuple[int, str]] = []
     for _ch in indi_el.get_child_elements():
@@ -600,7 +602,7 @@ def _indi_get_birth(el) -> tuple[int | None, str | None]:
 
 
 def _anonymise_indi(el) -> None:
-    """Set NAME to 'private', keep FAMC/FAMS/SEX, drop all other children."""
+    """Set NAME to '<private>', keep FAMC/FAMS/SEX, drop all other children."""
     children = el.get_child_elements()
     to_keep = []
     name_kept = False
@@ -608,7 +610,7 @@ def _anonymise_indi(el) -> None:
         if ch.get_tag() in ("FAMC", "FAMS", "SEX"):
             to_keep.append(ch)
         elif ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME and not name_kept:
-            ch.set_value("private")
+            ch.set_value("<private>")
             ch.get_child_elements().clear()
             to_keep.append(ch)
             name_kept = True
@@ -617,7 +619,7 @@ def _anonymise_indi(el) -> None:
             el.get_level() + 1,
             "",
             gedcom.tags.GEDCOM_TAG_NAME,
-            "private",
+            "<private>",
             "\n",
             multi_line=False,
         )
@@ -1637,24 +1639,36 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
 _NAME_PLACEHOLDER_RE = re.compile(r"^[_.?,\s/\-()\[\]<>]+$")
 
 # Matches "stub" placeholder words sometimes used when the real name is
-# unknown: XY, XXY, XXX, UNNAMED, and N–N variants (NN, N.N., N N, N. N., …)
-# — with optional surrounding underscores / dashes / spaces / parens /
-# brackets. Case-insensitive.
+# unknown: XY, XX, XXY, XXX, UNNAMED, NEZNAN, and N–N variants (NN, N.N.,
+# N N, N. N., …) — with optional surrounding underscores / dashes / spaces
+# / parens / brackets. Case-insensitive.
 _NAME_STUB_PLACEHOLDER_RE = re.compile(
-    r"^[_.?,\s\-()\[\]<>]*(?:UNNAMED|XXY|XXX|XY|N[\s.]*N)[_.?,\s\-()\[\]<>]*$",
+    r"^[_.?,\s\-()\[\]<>]*(?:UNNAMED|NEZNAN|XXY|XXX|XX|XY|N[\s.]*N)[_.?,\s\-()\[\]<>]*$",
+    re.IGNORECASE,
+)
+
+# Matches any run of 3+ of the same letter (case-insensitive) optionally
+# wrapped in punctuation: "AAA", "BBBB", "qqqq", "_AAA_", "(BBBB)". The 3+
+# threshold avoids false positives on common 2-char Roman-numeral suffixes
+# like "II" or "VV".
+_NAME_REPEATED_LETTER_RE = re.compile(
+    r"^[_.?,\s\-()\[\]<>]*([A-Za-z])\1{2,}[_.?,\s\-()\[\]<>]*$",
     re.IGNORECASE,
 )
 
 
 def _is_name_placeholder(value: str) -> bool:
     """True iff `value` is a known name placeholder — either pure punctuation
-    (___, ???, ...) or a stub word (XY, XXY, XXX, NN, N.N., UNNAMED with
-    optional padding). Pure-whitespace strings are NOT considered placeholders
-    (they are just formatting padding around real or empty content)."""
+    (___, ???, ...), a stub word (XY, XXY, XXX, XX, NN, N.N., UNNAMED, NEZNAN
+    with optional padding), or any run of 3+ of the same letter (AAA, BBBB,
+    qqqq). Pure-whitespace strings are NOT considered placeholders (they are
+    just formatting padding around real or empty content)."""
     if not value or not value.strip():
         return False
     return bool(
-        _NAME_PLACEHOLDER_RE.match(value) or _NAME_STUB_PLACEHOLDER_RE.match(value)
+        _NAME_PLACEHOLDER_RE.match(value)
+        or _NAME_STUB_PLACEHOLDER_RE.match(value)
+        or _NAME_REPEATED_LETTER_RE.match(value)
     )
 
 
@@ -1727,10 +1741,11 @@ def clean_name_placeholder(raw: str) -> tuple[str, None]:
         'Jane /XY/'        -> 'Jane //'
         'Jane /NN/'        -> 'Jane //'
         'Jane //'          -> 'Jane //'         (empty surname preserved)
-    A placeholder is either pure punctuation (___, ???, ..., (?), . . .) or
-    a stub word (XY, XXY, XXX, NN, N.N., N N, UNNAMED — case-insensitive,
-    with optional surrounding punctuation). Truly empty input is left as ''.
-    Returns (cleaned, None).
+    A placeholder is either pure punctuation (___, ???, ..., (?), . . .),
+    an "all slashes" value (//, /  /), a stub word (XY, XX, XXY, XXX, NN,
+    N.N., N N, UNNAMED, NEZNAN — case-insensitive, with optional surrounding
+    punctuation), or a run of 3+ of the same letter (AAA, BBBB, qqqq).
+    Truly empty input ('') is left as ''. Returns (cleaned, None).
     """
     if not raw:
         return raw, None
@@ -1786,6 +1801,13 @@ def clean_name_placeholder(raw: str) -> tuple[str, None]:
     # If everything left is just "NN" markers (and empty bits), collapse to
     # a single "NN" — there is no signal beyond "name unknown".
     cleaned = _simplify_all_nn(cleaned)
+
+    # If the value carries no name content whatsoever — just slashes and
+    # whitespace, like "//" or "/  /" — output "NN" (the whole record has
+    # no name signal). A real given like "Jane //" is preserved by the
+    # earlier branch logic and does NOT trip this check.
+    if not cleaned.replace("/", "").strip():
+        cleaned = "NN"
 
     if cleaned == raw:
         return raw, None
@@ -2353,11 +2375,14 @@ def process_file(
         # Align SURN children to the surname between slashes in their parent
         # NAME. If the NAME's surname collapsed to empty (e.g. "Jane /NN/" ->
         # "Jane //"), the SURN child must not retain the now-orphaned "NN".
+        # The match is greedy from the first "/" to the last "/", so multi-
+        # variant surnames like "Helena /Wershnig/Verschnig/Berschnik/" keep
+        # their full inner content "Wershnig/Verschnig/Berschnik" in SURN.
         for element in parser.get_element_list():
             if element.get_tag() != gedcom.tags.GEDCOM_TAG_NAME:
                 continue
             name_val = element.get_value()
-            m = re.search(r"/([^/]*)/", name_val)
+            m = re.search(r"/(.*)/", name_val)
             target_surname = m.group(1).strip() if m else ""
             for ch in element.get_child_elements():
                 if ch.get_tag() != "SURN":
@@ -2852,7 +2877,7 @@ def process_file(
                     break
             _name_val = _raw_name.replace("/", "").strip().lower()
             if (
-                _name_val == "private"
+                _name_val == "<private>"
                 and "/" not in _raw_name
                 and not any(
                     _c.get_tag() == "SURN" and _c.get_value().strip()
@@ -3005,10 +3030,10 @@ def process_file(
         ts = transform_stats["fam_partner_private"]
 
         def _indi_is_private(indi_el) -> bool:
-            """Return True if the individual has been anonymised by living100y_private (NAME == 'private')."""
+            """Return True if the individual has been anonymised by living100y_private (NAME == '<private>')."""
             for ch in indi_el.get_child_elements():
                 if ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME:
-                    return ch.get_value().strip().lower() == "private"
+                    return ch.get_value().strip().lower() == "<private>"
             return False
 
         _ptr_index_fpp = {
@@ -3061,14 +3086,14 @@ def process_file(
                         f"  [transform:fam_partner_private] remove {_fam_label(element, _ptr_index_fpp)}"
                     )
             else:
-                # Mixed — replace all non-empty event field values with "private"
+                # Mixed — replace all non-empty event field values with "<private>"
                 changed_any = False
                 for ch in element.get_child_elements():
                     if ch.get_tag() not in _fam_event_tags:
                         continue
                     for gch in ch.get_child_elements():
                         if gch.get_value().strip():
-                            gch.set_value("private")
+                            gch.set_value("<private>")
                             gch.get_child_elements().clear()
                             changed_any = True
                 if changed_any:
@@ -3168,7 +3193,7 @@ def process_file(
             return all(_is_nameless_value(ch.get_value()) for ch in names)
 
         def _indi_is_anonymous(indi_el) -> bool:
-            """True if the individual is nameless or has been reduced to 'private'."""
+            """True if the individual is nameless or has been reduced to '<private>'."""
             if _indi_is_nameless(indi_el):
                 return True
             names = [
@@ -3176,7 +3201,7 @@ def process_file(
                 for ch in indi_el.get_child_elements()
                 if ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME
             ]
-            return all(ch.get_value().strip().lower() == "private" for ch in names)
+            return all(ch.get_value().strip().lower() == "<private>" for ch in names)
 
     if "ste" in strippers:
         ss = strip_stats["ste"]

@@ -47,7 +47,7 @@ def test_living100y_private_anonymises_recent_birth():
         1 OCCU Farmer
         0 TRLR
     """), ["living100y_private"])
-    assert "1 NAME private" in content
+    assert "1 NAME <private>" in content
     assert "Janez" not in content
     assert "OCCU" not in content
     assert "1 SEX M" in content
@@ -106,7 +106,7 @@ def test_living100y_private_named_living():
         1 SEX F
         0 TRLR
     """), ["living100y_private"])
-    assert "1 NAME private" in content
+    assert "1 NAME <private>" in content
     assert stats["living100y_private"].transformed == 1
 
 
@@ -120,7 +120,7 @@ def test_living100y_private_uses_baptism_as_fallback():
         2 DATE {_NEW}
         0 TRLR
     """), ["living100y_private"])
-    assert "1 NAME private" in content
+    assert "1 NAME <private>" in content
     assert stats["living100y_private"].transformed == 1
 
 
@@ -196,7 +196,7 @@ def test_died20y_private_anonymises_recent_death():
         1 OCCU Teacher
         0 TRLR
     """), ["died20y_private"])
-    assert "1 NAME private" in content
+    assert "1 NAME <private>" in content
     assert "Ana" not in content
     assert "OCCU" not in content
     assert "1 SEX F" in content

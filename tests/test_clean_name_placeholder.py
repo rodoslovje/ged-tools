@@ -62,6 +62,35 @@ from tools.gedcom_cleaner import clean_name_placeholder, process_file
         ("(Unnamed)",    "NN"),
         ("  unnamed  ",  "NN"),
 
+        # "XX" — placeholder (any case, with optional padding)
+        ("XX",           "NN"),
+        ("xx",           "NN"),
+        ("Xx",           "NN"),
+        ("_XX_",         "NN"),
+        ("(XX)",         "NN"),
+        ("  xx  ",       "NN"),
+
+        # "NEZNAN" / "Neznan" / "neznan" — Slovenian for "unknown"
+        ("NEZNAN",       "NN"),
+        ("Neznan",       "NN"),
+        ("neznan",       "NN"),
+        ("NeZnAn",       "NN"),
+        ("_Neznan_",     "NN"),
+        ("(neznan)",     "NN"),
+
+        # Repeated-letter runs (3+ of the same letter, case-insensitive).
+        ("AAA",          "NN"),
+        ("aaa",          "NN"),
+        ("AaA",          "NN"),
+        ("AAAA",         "NN"),
+        ("BBBB",         "NN"),
+        ("ZZZZZZ",       "NN"),
+        ("qqqq",         "NN"),
+        ("YyYyY",        "NN"),
+        ("_AAA_",        "NN"),
+        ("(BBBB)",       "NN"),
+        ("  cccc  ",     "NN"),
+
         # "N.N." family — N + dots/spaces + N (any case) → NN.
         ("N.N.",         "NN"),
         ("N.N",          "NN"),
@@ -139,6 +168,29 @@ def test_whole_value_placeholder_to_nn(raw, expected):
         ("Jane /UNNAMED/",    "Jane //"),       # real given → empty surname
         ("UNNAMED /Smith/",   "NN /Smith/"),
         ("Unnamed /unnamed/", "NN"),            # both placeholders → collapsed
+
+        # "XX" / "NEZNAN" in slash-format
+        ("/XX/",              "NN"),
+        ("/Neznan/",          "NN"),
+        ("Jane /XX/",         "Jane //"),
+        ("Jane /Neznan/",     "Jane //"),
+        ("XX /Smith/",        "NN /Smith/"),
+        ("Neznan /Smith/",    "NN /Smith/"),
+        ("XX /Neznan/",       "NN"),
+        ("Neznan /XX/",       "NN"),
+
+        # All-slashes / whitespace — no signal at all → NN
+        ("//",                "NN"),
+        ("/  /",              "NN"),
+        ("  //  ",            "NN"),
+
+        # Repeated-letter runs in slash-format
+        ("/AAAA/",            "NN"),
+        ("/qqqq/",            "NN"),
+        ("Jane /AAAA/",       "Jane //"),
+        ("AAAA /Smith/",      "NN /Smith/"),
+        ("AAAA /BBBB/",       "NN"),
+        ("ZZZ /YYY/",         "NN"),
     ],
 )
 def test_slash_placeholder_to_nn(raw, expected):
@@ -176,12 +228,26 @@ def test_slash_placeholder_to_nn(raw, expected):
         "Unnameds",
         "Unnamedfoo",
         "/Unnameds/",
-        # Empty surname (literally //) is NOT a placeholder — leave it alone.
-        # It means "surname intentionally absent / unrecorded", which is
-        # different from a placeholder marker like "___" or "XY".
+        # 2-char same-letter strings stay (Roman numeral suffixes etc.).
+        "II",
+        "VV",
+        "MM",
+        # Real names with repeated letters but mixed with other characters.
+        "Aaron",
+        "Lee",
+        "Anna",
+        "/Aaron/",
+        "Aaron /Smith/",
+        # 2-char Roman-numeral suffix as part of a full name stays.
+        "John /Smith/ II",
+        # Note: 3+ same-letter sequences are aggressive — e.g. "III" suffix
+        # would be mistaken for a placeholder. The user explicitly requested
+        # this rule, so that trade-off is accepted.
+        # Empty surname is preserved when there is a real given:
+        # "Jane //" means "surname intentionally absent / unrecorded",
+        # which is different from a placeholder marker like "___" or "XY".
         "Jane //",
         "John //",
-        "//",
         "Jane Marie //",
     ],
 )
@@ -276,7 +342,11 @@ def test_placeholder_surname_with_real_given(raw, expected):
         ("NN /Smith/",         "NN /Smith/"),
         ("Jane /NN/",          "Jane //"),
         ("Jane //",            "Jane //"),
-        ("//",                 "//"),
+        # Empty/all-slashes — no name signal at all → "NN".
+        ("//",                 "NN"),
+        ("/ /",                "NN"),
+        ("  //  ",             "NN"),
+        ("/  /",               "NN"),
     ],
 )
 def test_all_nn_collapse(raw, expected):
@@ -296,6 +366,41 @@ def _write_tmp(content: str) -> str:
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(content)
     return path
+
+
+def test_surn_sync_preserves_multi_variant_surname():
+    """Multi-slash NAME values like Helena /Wershnig/Verschnig/Berschnik/ are
+    surname-variant lists; the SURN child must keep the full inner content
+    (the slash-greedy match), not just the first variant."""
+    sample = textwrap.dedent("""\
+        0 HEAD
+        1 CHAR UTF-8
+        0 @I1@ INDI
+        1 NAME Helena /Wershnig/Verschnig/Berschnik/
+        2 GIVN Helena
+        2 SURN Wershnig/Verschnig/Berschnik
+        0 TRLR
+    """)
+    inp = _write_tmp(sample)
+    out = _write_tmp("")
+    try:
+        process_file(
+            inp, out,
+            cleaners=["name_placeholder"],
+            strippers=[],
+            transformers=[],
+            warn=False,
+        )
+        content = open(out, encoding="utf-8").read()
+        # NAME left alone (no placeholder content).
+        assert "1 NAME Helena /Wershnig/Verschnig/Berschnik/" in content
+        # SURN preserves the full surname-variant string.
+        assert "2 SURN Wershnig/Verschnig/Berschnik" in content
+        # Make sure we didn't truncate to just the first variant.
+        assert "2 SURN Wershnig\n" not in content
+    finally:
+        os.unlink(inp)
+        os.unlink(out)
 
 
 def test_surn_synced_to_empty_when_name_surname_empty():
