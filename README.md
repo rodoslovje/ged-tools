@@ -43,97 +43,96 @@ python tools/gedcom-cleaner.py --input-dir DIR --output-dir DIR [STEM ...] [OPTI
 
 ### Options
 
-| Option | Description |
-|---|---|
-| `--preset PRESET` | Apply a predefined combination of processors |
-| `--clean CLEANER[,CLEANER,...]` | Apply specific formatting cleaners |
-| `--strip STRIPPER[,STRIPPER,...]` | Strip specific tags or records |
-| `--transform TRANS[,TRANS,...]` | Transform specific tags or structures |
-| `--verbose` | Print every change performed (all types) |
-| `--verbose-clean` | Print every change performed by cleaners only |
-| `--verbose-transform` | Print every change performed by transformers only |
-| `--verbose-strip` | Print every change performed by strippers only |
-| `--verbose-private` | Print every privacy-related decision only (subset of `--verbose-transform`, covering `born*/died*/living*/marriage*/fam_partner*/dead_child*` transformers) |
-| `--input-dir DIR` | Process all `.ged` files in DIR (batch mode) |
-| `--output-dir DIR` | Write processed files to DIR (batch mode) |
-| `--workers N` | Parallel workers in batch mode (default: 16) |
-| `STEM ...` | File stems to process in batch mode (default: all) |
+| Option                            | Description                                                                                                                                                 |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--preset PRESET`                 | Apply a predefined combination of processors                                                                                                                |
+| `--clean CLEANER[,CLEANER,...]`   | Apply specific formatting cleaners                                                                                                                          |
+| `--strip STRIPPER[,STRIPPER,...]` | Strip specific tags or records                                                                                                                              |
+| `--transform TRANS[,TRANS,...]`   | Transform specific tags or structures                                                                                                                       |
+| `--verbose`                       | Print every change performed (all types)                                                                                                                    |
+| `--verbose-clean`                 | Print every change performed by cleaners only                                                                                                               |
+| `--verbose-transform`             | Print every change performed by transformers only                                                                                                           |
+| `--verbose-strip`                 | Print every change performed by strippers only                                                                                                              |
+| `--verbose-private`               | Print every privacy-related decision only (subset of `--verbose-transform`, covering `born*/died*/living*/marriage*/fam_partner*/dead_child*` transformers) |
+| `--input-dir DIR`                 | Process all `.ged` files in DIR (batch mode)                                                                                                                |
+| `--output-dir DIR`                | Write processed files to DIR (batch mode)                                                                                                                   |
+| `--workers N`                     | Parallel workers in batch mode (default: 16)                                                                                                                |
+| `STEM ...`                        | File stems to process in batch mode (default: all)                                                                                                          |
 
 At least one of `--preset`, `--clean`, `--strip`, or `--transform` must be specified.
 
 ### Processor types
 
-| Type | Purpose |
-|---|---|
-| **Cleaner** | Normalizes field values in-place (e.g. date formats, placeholder text). Record structure is unchanged. |
-| **Transformer** | Restructures or reclassifies records — renames tags, moves values, or anonymizes individuals. |
-| **Stripper** | Removes unwanted tags or entire records. Runs last, after cleaners and transformers. |
+| Type            | Purpose                                                                                                |
+| --------------- | ------------------------------------------------------------------------------------------------------ |
+| **Cleaner**     | Normalizes field values in-place (e.g. date formats, placeholder text). Record structure is unchanged. |
+| **Transformer** | Restructures or reclassifies records — renames tags, moves values, or anonymizes individuals.          |
+| **Stripper**    | Removes unwanted tags or entire records. Runs last, after cleaners and transformers.                   |
 
 ### Cleaners
 
-| Name | Description |
-|---|---|
-| `dd_mmm_yyyy` | Normalize all dates to DD MMM YYYY format. |
-| `name_placeholder` | Clear empty/placeholder names (e.g. `___`, `???`). |
-| `place_placeholder` | Clear empty/placeholder places. |
-| `place_slovenia_rm` | Remove "Slovenia" / "Slovenija" suffix from places. |
-| `place_duplicate_rm` | Remove adjacent duplicate components in places. |
+| Name                 | Description                                                           |
+| -------------------- | --------------------------------------------------------------------- |
+| `dd_mmm_yyyy`        | Normalize all dates to DD MMM YYYY format.                            |
+| `name_placeholder`   | Clear empty/placeholder names (e.g. `___`, `???`).                    |
+| `place_placeholder`  | Clear empty/placeholder places.                                       |
+| `place_slovenia_rm`  | Remove "Slovenia" / "Slovenija" suffix from places.                   |
+| `place_duplicate_rm` | Remove adjacent duplicate components in places.                       |
 | `place_country_only` | Reduce place to two parts: place, country (first and last component). |
 
 ### Strippers
 
-| Name | Description |
-|---|---|
-| `ste`, `stf`, `sto`, `stp`, `bkm` | Strip proprietary MacFamilyTree / other app tags (`_STE`, `_STF`, `_STO`, `_STP`, `_BKM`). |
-| `labl` | Remove `_LABL` (label) tags. |
-| `place_tran` | Remove TRAN (translation) entries under PLAC tags. |
-| `mise` | Remove MISE tags. |
-| `object_crop` | Remove CROP entries under OBJE tags. |
-| `addr_longlati` | Remove coordinates (LATI/LONG/MAP) from ADDR tags. |
-| `indi_race` | Remove RACE tags from individuals. |
-| `sour_tags` | Remove AGNC (agency) tags from source records. |
-| `change_date` | Remove CHAN (change date) tags. |
-| `create_date` | Remove CREA (creation date) tags. |
-| `deat_placeholder` | Remove DEAT/BURI/CREM records that are entirely placeholder (no real date, no real place). Skipped for individuals born 100+ years ago. Runs before transformers. |
-| `noname_indi` | Remove individuals with no valid name. |
-| `noname_fam` | Remove families with no named spouses. |
-| `living` | Remove individuals who are likely still living (no DEAT/BURI/CREM), and their families. |
+| Name                              | Description                                                                                                                                                       |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ste`, `stf`, `sto`, `stp`, `bkm` | Strip proprietary MacFamilyTree / other app tags (`_STE`, `_STF`, `_STO`, `_STP`, `_BKM`).                                                                        |
+| `labl`                            | Remove `_LABL` (label) tags.                                                                                                                                      |
+| `place_tran`                      | Remove TRAN (translation) entries under PLAC tags.                                                                                                                |
+| `mise`                            | Remove MISE tags.                                                                                                                                                 |
+| `object_crop`                     | Remove CROP entries under OBJE tags.                                                                                                                              |
+| `addr_longlati`                   | Remove coordinates (LATI/LONG/MAP) from ADDR tags.                                                                                                                |
+| `indi_race`                       | Remove RACE tags from individuals.                                                                                                                                |
+| `sour_tags`                       | Remove AGNC (agency) tags from source records.                                                                                                                    |
+| `change_date`                     | Remove CHAN (change date) tags.                                                                                                                                   |
+| `create_date`                     | Remove CREA (creation date) tags.                                                                                                                                 |
+| `deat_placeholder`                | Remove DEAT/BURI/CREM records that are entirely placeholder (no real date, no real place). Skipped for individuals born 100+ years ago. Runs before transformers. |
+| `noname_indi`                     | Remove individuals with no valid name.                                                                                                                            |
+| `noname_fam`                      | Remove families with no named spouses.                                                                                                                            |
+| `living`                          | Remove individuals who are likely still living (no DEAT/BURI/CREM), and their families.                                                                           |
 
 ### Transformers
 
 Listed in execution order.
 
-| Name | Description |
-|---|---|
-| `fid_fsftid` | Rename `_FID` to `_FSFTID` (FamilySearch Family Tree ID tag normalisation). |
-| `nobi_fact` | Rename `NOBI` to `FACT`. |
-| `sour_filn_abbr` | Rename `FILN` to `ABBR` inside source records (file number → abbreviation). |
-| `sour_date_publ` | Rename `DATE` to `PUBL` inside source records (publication date fix). |
-| `sour_plac_auth` | Rename `PLAC` to `AUTH` inside source records when `AUTH` is not already present (place → authority/archive). |
-| `latr_even` | Convert `LATR` to `EVEN` with `TYPE = Land Transaction`. |
-| `prs_even_type` | Convert `_PRS` (civil partnership) to `EVEN` with `TYPE = Civil Partnership`. |
-| `secg_givn` | Append `NAME:SECG` content to `NAME:GIVN` and remove the `SECG` tag. |
-| `addr_to_plac` | Merge `ADDR` values into event `PLAC` tags. |
-| `sour_peri_titl` | Rename `PERI` to `TITL` inside source records when `TITL` is not already present. |
-| `born75y_private` | Anonymize individuals born in the last 75 years regardless of death status: set name to `private` and remove all events. Partial years filled conservatively (e.g. `195_` → 1959). |
-| `died20y_private` | Anonymize individuals whose death, burial, or cremation was recorded within the last 20 years (date must be present). Complies with ZVOP-2 post-mortem protection. |
-| `living100y_private` | Anonymize individuals with a birth year under 100 years ago and no death record: set name to `private` and remove all events. Partial years (e.g. `192_`, `19__`) are filled conservatively (underscores → 9) so anyone who could be under 100 is treated as living. Falls back to relative-based birth year estimation (parents +35y, children −35y) when birth date is entirely absent. Complies with ZVOP-2. |
-| `living75y_private` | Same as `living100y_private` but with a 75-year cutoff. |
-| `living100y_initials` | Same detection as `living100y_private` but reduces the full name to initials (e.g. `Luka /Renko/` → `L. /R./`). All events are still removed. |
-| `fam_partner_private` | If both spouses are `private`: remove the entire family record. If one spouse is `private`: replace all non-empty event field values with `private`. Runs after all individual-level privacy transformers. |
-
+| Name                  | Description                                                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fid_fsftid`          | Rename `_FID` to `_FSFTID` (FamilySearch Family Tree ID tag normalisation).                                                                                                                                                                                                                                                                                                                                     |
+| `nobi_fact`           | Rename `NOBI` to `FACT`.                                                                                                                                                                                                                                                                                                                                                                                        |
+| `sour_filn_abbr`      | Rename `FILN` to `ABBR` inside source records (file number → abbreviation).                                                                                                                                                                                                                                                                                                                                     |
+| `sour_date_publ`      | Rename `DATE` to `PUBL` inside source records (publication date fix).                                                                                                                                                                                                                                                                                                                                           |
+| `sour_plac_auth`      | Rename `PLAC` to `AUTH` inside source records when `AUTH` is not already present (place → authority/archive).                                                                                                                                                                                                                                                                                                   |
+| `latr_even`           | Convert `LATR` to `EVEN` with `TYPE = Land Transaction`.                                                                                                                                                                                                                                                                                                                                                        |
+| `prs_even_type`       | Convert `_PRS` (civil partnership) to `EVEN` with `TYPE = Civil Partnership`.                                                                                                                                                                                                                                                                                                                                   |
+| `secg_givn`           | Append `NAME:SECG` content to `NAME:GIVN` and remove the `SECG` tag.                                                                                                                                                                                                                                                                                                                                            |
+| `addr_to_plac`        | Merge `ADDR` values into event `PLAC` tags.                                                                                                                                                                                                                                                                                                                                                                     |
+| `sour_peri_titl`      | Rename `PERI` to `TITL` inside source records when `TITL` is not already present.                                                                                                                                                                                                                                                                                                                               |
+| `born75y_private`     | Anonymize individuals born in the last 75 years regardless of death status: set name to `private` and remove all events. Partial years filled conservatively (e.g. `195_` → 1959).                                                                                                                                                                                                                              |
+| `died20y_private`     | Anonymize individuals whose death, burial, or cremation was recorded within the last 20 years (date must be present). Complies with ZVOP-2 post-mortem protection.                                                                                                                                                                                                                                              |
+| `living100y_private`  | Anonymize individuals with a birth year under 100 years ago and no death record: set name to `private` and remove all events. Partial years (e.g. `192_`, `19__`) are filled conservatively (underscores → 9) so anyone who could be under 100 is treated as living. Falls back to relative-based birth year estimation (parents +35y, children −35y) when birth date is entirely absent. Complies with ZVOP-2. |
+| `living75y_private`   | Same as `living100y_private` but with a 75-year cutoff.                                                                                                                                                                                                                                                                                                                                                         |
+| `living100y_initials` | Same detection as `living100y_private` but reduces the full name to initials (e.g. `Luka /Renko/` → `L. /R./`). All events are still removed.                                                                                                                                                                                                                                                                   |
+| `fam_partner_private` | If both spouses are `private`: remove the entire family record. If one spouse is `private`: replace all non-empty event field values with `private`. Runs after all individual-level privacy transformers.                                                                                                                                                                                                      |
 
 ### Presets
 
 A preset is a named combination of processors for a common use case. Can be combined with explicit `--clean`/`--strip`/`--transform` flags.
 
-| Preset | Description |
-|---|---|
-| `mft_webtrees` | WebTrees compatibility for MacFamilyTree exports. Cleaners: `dd_mmm_yyyy`, `name_placeholder`. Strippers: `ste`, `stf`, `sto`, `bkm`, `labl`, `addr_longlati`, `place_tran`, `mise`, `object_crop`, `change_date`, `create_date`, `indi_race`, `sour_tags`, `stp`. Transformers: `secg_givn`, `fid_fsftid`, `latr_even`, `prs_even_type`, `nobi_fact`, `sour_peri_titl`, `sour_date_publ`, `sour_filn_abbr`, `sour_plac_auth`. |
-| `mft_sgi` | Slovenian Genealogy Institute formatting. Cleaners: `place_slovenia_rm`. Transformers: `addr_to_plac`, `living100y_private`. |
-| `mft_public` | Public sharing from MacFamilyTree exports. Cleaners: `place_country_only`. Transformers: `living100y_initials`, `fam_partner_private`. |
-| `index_cleanup_sgi` | Full cleanup and anonymization for public indices (Slovenia). Cleaners: `dd_mmm_yyyy`, `name_placeholder`, `place_placeholder`, `place_duplicate_rm`. Strippers: `noname_indi`, `noname_fam`. Transformers (in order): `died20y_private`, `living75y_private`, `fam_partner_private`. |
-| `index_cleanup_cgi` | Full cleanup and anonymization for public indices (Croatia). Same as `index_cleanup_sgi` without `died20y_private`. Cleaners: `dd_mmm_yyyy`, `name_placeholder`, `place_placeholder`, `place_duplicate_rm`. Strippers: `noname_indi`, `noname_fam`. Transformers (in order): `living75y_private`, `fam_partner_private`. |
+| Preset              | Description                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `mft_webtrees`      | WebTrees compatibility for MacFamilyTree exports. Cleaners: `dd_mmm_yyyy`, `name_placeholder`. Strippers: `ste`, `stf`, `sto`, `bkm`, `labl`, `addr_longlati`, `place_tran`, `mise`, `object_crop`, `change_date`, `create_date`, `indi_race`, `sour_tags`, `stp`. Transformers: `secg_givn`, `fid_fsftid`, `latr_even`, `prs_even_type`, `nobi_fact`, `sour_peri_titl`, `sour_date_publ`, `sour_filn_abbr`, `sour_plac_auth`. |
+| `mft_sgi`           | Slovenian Genealogy Institute formatting. Cleaners: `place_slovenia_rm`. Transformers: `addr_to_plac`, `living100y_private`.                                                                                                                                                                                                                                                                                                   |
+| `mft_public`        | Public sharing from MacFamilyTree exports. Cleaners: `place_country_only`. Transformers: `living100y_initials`, `fam_partner_private`.                                                                                                                                                                                                                                                                                         |
+| `index_cleanup_sgi` | Full cleanup and anonymization for public indices (Slovenia). Cleaners: `dd_mmm_yyyy`, `name_placeholder`, `place_placeholder`, `place_duplicate_rm`. Strippers: `noname_indi`, `noname_fam`. Transformers (in order): `died20y_private`, `living100y_private`, `fam_partner_private`.                                                                                                                                         |
+| `index_cleanup_cgi` | Full cleanup and anonymization for public indices (Croatia). Same as `index_cleanup_sgi` without `died20y_private`. Cleaners: `dd_mmm_yyyy`, `name_placeholder`, `place_placeholder`, `place_duplicate_rm`. Strippers: `noname_indi`, `noname_fam`. Transformers (in order): `living100y_private`, `fam_partner_private`.                                                                                                      |
 
 ### Examples
 
@@ -168,30 +167,30 @@ At least one of `--ancestors` or `--descendants` must be specified.
 
 ### Options
 
-| Option | Description |
-|---|---|
-| `--person PERSON [PERSON ...]` | One or more root persons: GEDCOM pointer (`@I123@`), full name, partial name, or name with birth year (`"Franc Renko 1901"`). Results are unioned across all specified persons. |
-| `--ancestors` | Keep direct ancestors (parents, grandparents, …) and their connecting families |
-| `--descendants` | Keep all descendants (children, grandchildren, …) and their connecting families |
-| `--related` | Also keep all descendants of every ancestor (cousins, aunts/uncles, …). Use with `--ancestors`. Does not include the root person's own descendants unless `--descendants` is also set. |
-| `--siblings` | Also keep all siblings of every included person |
-| `--living-private` | Redact living individuals: replace name with `private`, remove all events |
-| `--living-name` | Redact living individuals: keep full name, remove all events |
-| `--living-initials` | Redact living individuals: reduce name to initials, remove all events |
-| `--verbose` | Print each kept/removed/redacted record |
+| Option                         | Description                                                                                                                                                                            |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--person PERSON [PERSON ...]` | One or more root persons: GEDCOM pointer (`@I123@`), full name, partial name, or name with birth year (`"Franc Renko 1901"`). Results are unioned across all specified persons.        |
+| `--ancestors`                  | Keep direct ancestors (parents, grandparents, …) and their connecting families                                                                                                         |
+| `--descendants`                | Keep all descendants (children, grandchildren, …) and their connecting families                                                                                                        |
+| `--related`                    | Also keep all descendants of every ancestor (cousins, aunts/uncles, …). Use with `--ancestors`. Does not include the root person's own descendants unless `--descendants` is also set. |
+| `--siblings`                   | Also keep all siblings of every included person                                                                                                                                        |
+| `--living-private`             | Redact living individuals: replace name with `private`, remove all events                                                                                                              |
+| `--living-name`                | Redact living individuals: keep full name, remove all events                                                                                                                           |
+| `--living-initials`            | Redact living individuals: reduce name to initials, remove all events                                                                                                                  |
+| `--verbose`                    | Print each kept/removed/redacted record                                                                                                                                                |
 
 `--ancestors` and `--descendants` can be combined to produce a full hourglass tree. `--related` extends `--ancestors` to pull in all blood relatives reachable through the ancestor tree (cousins, aunts, uncles, and their descendants), but stops at the root person so their own children are not added unless `--descendants` is also present. The three `--living-*` flags are mutually exclusive.
 
 ### Person specification
 
-| Form | Example |
-|---|---|
-| GEDCOM pointer | `@I123@` or `I123` |
-| Full name | `"Luka Renko"` |
-| Partial name (surname only) | `Renko` |
-| Name with inline birth year | `"Franc Renko 1901"` |
-| Name + separate birth year option | `--person Renko --birth-year 1952` |
-| Multiple persons | `--person @I123@ @I456@` or `--person "Franc Renko 1901" "Ana Kovač 1905"` |
+| Form                              | Example                                                                    |
+| --------------------------------- | -------------------------------------------------------------------------- |
+| GEDCOM pointer                    | `@I123@` or `I123`                                                         |
+| Full name                         | `"Luka Renko"`                                                             |
+| Partial name (surname only)       | `Renko`                                                                    |
+| Name with inline birth year       | `"Franc Renko 1901"`                                                       |
+| Name + separate birth year option | `--person Renko --birth-year 1952`                                         |
+| Multiple persons                  | `--person @I123@ @I456@` or `--person "Franc Renko 1901" "Ana Kovač 1905"` |
 
 If a name matches multiple individuals the tool prints all candidates with their pointers and exits. When specifying multiple persons, use pointers or inline birth years to avoid ambiguity. `--birth-year` applies to all persons and overrides any inline year.
 
@@ -242,10 +241,10 @@ python tools/gedcom-to-json.py [OPTIONS]
 
 ### Options
 
-| Option | Description |
-|---|---|
+| Option                | Description                                                                                                                    |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `--mode update\|full` | `update` (default): skip files whose JSON output is already up to date. `full`: process all files and overwrite existing JSON. |
-| `--workers N` | Number of parallel workers (default: 16) |
+| `--workers N`         | Number of parallel workers (default: 16)                                                                                       |
 
 ### Examples
 
@@ -274,20 +273,20 @@ At least one of `--person`, `--surnames`, `--family`, `--url`, `--addr`, or `--d
 
 ### Options
 
-| Option | Description |
-|---|---|
-| `--person [PERSON ...]` | List individuals. Without names: all individuals. With names: only the listed persons. |
-| `--ancestors` | With named `--person`: also include all ancestors. |
-| `--descendants` | With named `--person`: also include all descendants. |
-| `--surnames` | Output unique surnames instead of full person rows. |
-| `--location` | With `--surnames`: also output the place of the oldest occurrence of each surname. |
-| `--family` | List all families: `Husband Wife ⚭yyyy Place` |
-| `--url [URL]` | List INDI and FAM records whose media (OBJE) subtree contains URL as a case-insensitive substring. Omit value to match any URL. |
-| `--search-events` | With `--url`: also search within event subtrees (e.g. birth, death) for linked media. |
-| `--addr [ADDR]` | List INDI and FAM records that have an ADDR value matching ADDR as a case-insensitive substring. Omit value to match any address. |
-| `--duplicate-url` | List all URLs that appear in more than one media (OBJE) record, grouped by OBJE, with the persons/families referencing each duplicate. |
-| `--any-place` | When birth place is absent, fall back to baptism, residence, or death place (checked in that order). |
-| `--csv` | Output as CSV instead of plain text |
+| Option                  | Description                                                                                                                            |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `--person [PERSON ...]` | List individuals. Without names: all individuals. With names: only the listed persons.                                                 |
+| `--ancestors`           | With named `--person`: also include all ancestors.                                                                                     |
+| `--descendants`         | With named `--person`: also include all descendants.                                                                                   |
+| `--surnames`            | Output unique surnames instead of full person rows.                                                                                    |
+| `--location`            | With `--surnames`: also output the place of the oldest occurrence of each surname.                                                     |
+| `--family`              | List all families: `Husband Wife ⚭yyyy Place`                                                                                          |
+| `--url [URL]`           | List INDI and FAM records whose media (OBJE) subtree contains URL as a case-insensitive substring. Omit value to match any URL.        |
+| `--search-events`       | With `--url`: also search within event subtrees (e.g. birth, death) for linked media.                                                  |
+| `--addr [ADDR]`         | List INDI and FAM records that have an ADDR value matching ADDR as a case-insensitive substring. Omit value to match any address.      |
+| `--duplicate-url`       | List all URLs that appear in more than one media (OBJE) record, grouped by OBJE, with the persons/families referencing each duplicate. |
+| `--any-place`           | When birth place is absent, fall back to baptism, residence, or death place (checked in that order).                                   |
+| `--csv`                 | Output as CSV instead of plain text                                                                                                    |
 
 `--url` and `--addr` can be combined with a named `--person` (including `--ancestors`/`--descendants`) to filter results within a person set. When combined, the plain `--person` listing is suppressed and replaced by the filtered `--url`/`--addr` output.
 
@@ -295,38 +294,43 @@ At least one of `--person`, `--surnames`, `--family`, `--url`, `--addr`, or `--d
 
 Persons can be identified by GEDCOM pointer, full name, or name with birth year to disambiguate:
 
-| Form | Example |
-|---|---|
-| GEDCOM pointer | `@I123@` |
-| Full name | `"Luka Renko"` |
-| Name with birth year | `"Franc Renko 1901"` |
-| Multiple persons | `--person "Franc Renko 1901" "Ana Kovač 1905"` |
+| Form                 | Example                                        |
+| -------------------- | ---------------------------------------------- |
+| GEDCOM pointer       | `@I123@`                                       |
+| Full name            | `"Luka Renko"`                                 |
+| Name with birth year | `"Franc Renko 1901"`                           |
+| Multiple persons     | `--person "Franc Renko 1901" "Ana Kovač 1905"` |
 
 ### Output formats
 
 **`--person`** (plain text): `Name Surname *yyyy +yyyy Place`
+
 ```
 Franc Renko *1901 +1964 Stara Sušica,Primorje-Gorski Kotar,Croatia
 ```
 
 **`--family`** (plain text): `Husband Wife ⚭yyyy Place`
+
 ```
 Franc Renko Marija Kovač ⚭1925 Zagreb,Zagreb,Croatia
 ```
 
 **`--surnames`** (plain text):
+
 ```
 Kovač
 Renko
 ```
 
 **`--surnames --location`** (plain text): `Surname Place`
+
 ```
 Kovač Zagreb,Zagreb,Croatia
 Renko Stara Sušica,Primorje-Gorski Kotar,Croatia
 ```
 
 **`--url`** (plain text): person row followed by matching URLs
+
 ```
 Franc Renko *1901 +1964 Stara Sušica,Primorje-Gorski Kotar,Croatia
   https://www.familysearch.org/ark:/61903/...
@@ -335,6 +339,7 @@ Franc Renko *1901 +1964 Stara Sušica,Primorje-Gorski Kotar,Croatia
 **`--addr`** (plain text): same person/family rows as `--person`/`--family`, filtered to those with a matching ADDR
 
 **`--duplicate-url`** (plain text): duplicate URL, then per-OBJE groups with referencing persons
+
 ```
 https://www.familysearch.org/ark:/61903/3:1:3QS7-L99C-5C34?view=index&lang=en
   @81553968@
@@ -346,15 +351,15 @@ https://www.familysearch.org/ark:/61903/3:1:3QS7-L99C-5C34?view=index&lang=en
 
 ### CSV columns
 
-| Mode | Columns |
-|---|---|
-| `--person` | `Name, Surname, Birth, Death, Place` |
-| `--family` | `Husband_Given, Husband_Surname, Wife_Given, Wife_Surname, Marriage, Marriage_Place` |
-| `--surnames` | `Surname` |
-| `--surnames --location` | `Surname, Location` |
-| `--url` | `Name, Surname, Birth, Death, Place, URLs` |
-| `--addr` | `Name, Surname, Birth, Death, Place, Addresses` |
-| `--duplicate-url` | `URL, OBJE, Name, Surname, Birth` |
+| Mode                    | Columns                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------ |
+| `--person`              | `Name, Surname, Birth, Death, Place`                                                 |
+| `--family`              | `Husband_Given, Husband_Surname, Wife_Given, Wife_Surname, Marriage, Marriage_Place` |
+| `--surnames`            | `Surname`                                                                            |
+| `--surnames --location` | `Surname, Location`                                                                  |
+| `--url`                 | `Name, Surname, Birth, Death, Place, URLs`                                           |
+| `--addr`                | `Name, Surname, Birth, Death, Place, Addresses`                                      |
+| `--duplicate-url`       | `URL, OBJE, Name, Surname, Birth`                                                    |
 
 Output is sorted alphabetically by surname (then given name), respecting Slovenian/Croatian collation (č after c, š after s, ž after z).
 
@@ -413,11 +418,11 @@ python tools/gedcom-links.py <file.ged> [<file.ged> ...] [OPTIONS]
 
 ### Options
 
-| Option | Description |
-|---|---|
-| `--top N` | Show only the top N entries per group |
+| Option       | Description                                                          |
+| ------------ | -------------------------------------------------------------------- |
+| `--top N`    | Show only the top N entries per group                                |
 | `--levels N` | Number of path segments to include in domain+path stats (default: 1) |
-| `--verbose` | Print per-file link counts |
+| `--verbose`  | Print per-file link counts                                           |
 
 ### Example output
 
@@ -447,11 +452,11 @@ python tools/compare-links.py <filtered_dir> <output_dir> [STEM ...]
 
 ### Arguments
 
-| Argument | Description |
-|---|---|
-| `filtered_dir` | Directory containing filtered `.ged` files |
-| `output_dir` | Directory containing `*-births.json`, `*-families.json`, `*-deaths.json` |
-| `STEM ...` | Optional list of file stems to check (default: all `.ged` files in `filtered_dir`) |
+| Argument       | Description                                                                        |
+| -------------- | ---------------------------------------------------------------------------------- |
+| `filtered_dir` | Directory containing filtered `.ged` files                                         |
+| `output_dir`   | Directory containing `*-births.json`, `*-families.json`, `*-deaths.json`           |
+| `STEM ...`     | Optional list of file stems to check (default: all `.ged` files in `filtered_dir`) |
 
 ### Example output
 

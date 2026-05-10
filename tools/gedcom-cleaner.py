@@ -156,12 +156,12 @@ Available Presets:
                          Cleaners: dd_mmm_yyyy, name_placeholder, name_lower,
                            place_placeholder, place_duplicate_rm.
                          Transformers (in order): died20y_private,
-                           living75y_private, fam_partner_private.
+                           living100y_private, fam_partner_private.
     index_cleanup_cgi    Full cleanup and anonymization for public indices (Croatia).
                          Same as index_cleanup_sgi without died20y_private.
                          Cleaners: dd_mmm_yyyy, name_placeholder, name_lower,
                            place_placeholder, place_duplicate_rm.
-                         Transformers (in order): living75y_private,
+                         Transformers (in order): living100y_private,
                            fam_partner_private.
 
 Examples:
@@ -1820,34 +1820,70 @@ def clean_name_placeholder(raw: str) -> tuple[str, None]:
 
 # Connecting words / nobiliary particles that should stay lowercase even when
 # the rest of the name is title-cased. Comparison is case-insensitive.
-_NAME_PARTICLES = frozenset({
-    # Romance: French / Italian / Spanish / Portuguese
-    "de", "da", "di", "du", "des", "del", "della", "dei",
-    "dos", "das", "do",
-    # Germanic / Dutch
-    "von", "van", "vom", "vor",
-    "der", "den", "ten", "ter", "te",
-    # French
-    "la", "le", "les",
-    # Slovenian / Slavic abbreviations
-    "v.", "vd.",
-    # English connectors
-    "of", "the",
-    # Spanish/Italian connectors
-    "y", "e",
-})
+_NAME_PARTICLES = frozenset(
+    {
+        # Romance: French / Italian / Spanish / Portuguese
+        "de",
+        "da",
+        "di",
+        "du",
+        "des",
+        "del",
+        "della",
+        "dei",
+        "dos",
+        "das",
+        "do",
+        # Germanic / Dutch
+        "von",
+        "van",
+        "vom",
+        "vor",
+        "der",
+        "den",
+        "ten",
+        "ter",
+        "te",
+        # French
+        "la",
+        "le",
+        "les",
+        # Slovenian / Slavic abbreviations
+        "v.",
+        "vd.",
+        # English connectors
+        "of",
+        "the",
+        # Spanish/Italian connectors
+        "y",
+        "e",
+    }
+)
 
 # Known compound-name prefixes. A word that starts with one of these AND has
 # an uppercase letter immediately after AND only lowercase from there on is
 # treated as intentional internal capitalization (MacDonald, McDonald,
 # DePaula, DiCaprio, VanDijk, …) and left verbatim.
 _NAME_PREFIXES = (
-    "Mac", "Mc", "M'",
-    "De", "Di", "Da", "Du",
-    "Van", "Von", "Der", "Den", "Ten",
-    "La", "Le", "L'",
-    "St", "St.",
-    "O'", "D'",
+    "Mac",
+    "Mc",
+    "M'",
+    "De",
+    "Di",
+    "Da",
+    "Du",
+    "Van",
+    "Von",
+    "Der",
+    "Den",
+    "Ten",
+    "La",
+    "Le",
+    "L'",
+    "St",
+    "St.",
+    "O'",
+    "D'",
 )
 
 
@@ -1860,7 +1896,7 @@ def _has_intentional_prefix_cap(word: str) -> bool:
     for prefix in _NAME_PREFIXES:
         if not word.startswith(prefix):
             continue
-        tail = word[len(prefix):]
+        tail = word[len(prefix) :]
         if not tail or not tail[0].isupper():
             continue
         # Rest of the tail must be lowercase (so 'MacDonald' qualifies but
@@ -2234,7 +2270,7 @@ PRESETS: dict[str, dict[str, list[str]]] = {
             "place_duplicate_rm",
         ],
         "strip": [],
-        "transform": ["died20y_private", "living75y_private", "fam_partner_private"],
+        "transform": ["died20y_private", "living100y_private", "fam_partner_private"],
     },
     "index_cleanup_cgi": {
         "clean": [
@@ -2245,7 +2281,7 @@ PRESETS: dict[str, dict[str, list[str]]] = {
             "place_duplicate_rm",
         ],
         "strip": [],
-        "transform": ["living75y_private", "fam_partner_private"],
+        "transform": ["living100y_private", "fam_partner_private"],
     },
 }
 
@@ -2405,7 +2441,9 @@ def process_file(
             # also appear under SUBM, SOUR, etc. — those are not personal
             # names and should not be touched.
             top = element
-            while top.get_parent_element() and top.get_parent_element().get_level() >= 0:
+            while (
+                top.get_parent_element() and top.get_parent_element().get_level() >= 0
+            ):
                 top = top.get_parent_element()
             if top.get_tag() != gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
                 continue
@@ -2426,7 +2464,9 @@ def process_file(
             if element.get_tag() not in _NAME_TAGS:
                 continue
             top = element
-            while top.get_parent_element() and top.get_parent_element().get_level() >= 0:
+            while (
+                top.get_parent_element() and top.get_parent_element().get_level() >= 0
+            ):
                 top = top.get_parent_element()
             if top.get_tag() != gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
                 continue
