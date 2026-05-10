@@ -275,6 +275,120 @@ def _is_disguised_cp1250(raw: bytes) -> bool:
     return False
 
 
+# Brother's Keeper "A-prefix" encoding: a custom 2-byte scheme observed in some
+# BROSKEEP exports where Slavic / Central-European diacritics are written as
+# literal ASCII 'A' (0x41) followed by a marker byte. Polish characters use a
+# second prefix 'Â' (0xC2). The CHAR header still claims UTF-8, so this needs
+# explicit detection. Mapping reverse-engineered from real-world data; some
+# bytes are genuinely ambiguous (e.g. 0x21 used for Slavic 'š' as well as
+# Hungarian 'á') and are mapped to the dominant Slavic interpretation.
+_BROSKEEP_APREFIX_MAP: dict[int, str] = {
+    # ASCII second bytes
+    0x21: "š",  # also 'á' in some Hungarian names — Slavic dominant
+    0x31: "Ž",
+    0x32: "ň",
+    0x33: "ž",
+    0x3F: "í",  # also 'ý' / 'Í' / 'Ý' in some contexts — ambiguous
+    0x5E: "Č",
+    0x7E: "Ř",
+    # High-bit second bytes
+    0x81: "Á",
+    0x84: "Ä",
+    0x85: "Å",
+    0x86: "Ć",
+    0x89: "É",
+    0x90: "Đ",
+    0x91: "ń",
+    0x92: "Ś",
+    0x93: "ś",
+    0x96: "Ö",
+    0x97: "ď",
+    0x99: "ů",
+    0x9A: "Ú",
+    0xA0: "Š",
+    0xA4: "ä",
+    0xA6: "ć",
+    0xA7: "ç",
+    0xA8: "č",
+    0xA9: "é",
+    0xAB: "ë",
+    0xAC: "ě",
+    0xAD: "í",
+    0xAE: "î",
+    0xB0: "đ",
+    0xB1: "ñ",
+    0xB4: "ô",
+    0xB5: "ő",
+    0xB6: "ö",
+    0xB8: "ř",
+    0xBB: "ü",
+    0xC2: "Ą",
+}
+
+# Polish characters use 'Â' (0xC2) as the prefix byte instead of 'A'.
+_BROSKEEP_C2_PREFIX_MAP: dict[int, str] = {
+    0x31: "ą",
+    0x33: "ł",
+    0x3F: "ż",
+    0x4C: "Ł",
+    0x61: "ş",  # Romanian s-cedilla (also rendered as ș in modern Romanian)
+    0x6F: "ș",  # Romanian s-comma
+    0x97: "Ż",
+}
+
+# Subset of high-bit map entries used purely for detection — avoids triggering
+# on normal text that happens to contain "A" + ASCII punctuation.
+_BROSKEEP_APREFIX_HIGHBIT_KEYS = frozenset(
+    k for k in _BROSKEEP_APREFIX_MAP if k >= 0x80
+)
+
+
+def _is_broskeep_aprefix(raw: bytes) -> bool:
+    """
+    Detect Brother's Keeper "A-prefix" custom encoding. Triggered when many
+    'A'+high-byte pairs match known mapping entries — a pattern that's
+    mathematically unlikely in normal Latin-1 / cp1250 / UTF-8 text where 'A'
+    is rarely followed by an isolated high byte.
+    """
+    hits = 0
+    for i in range(len(raw) - 1):
+        if raw[i] == 0x41 and raw[i + 1] in _BROSKEEP_APREFIX_HIGHBIT_KEYS:
+            hits += 1
+            if hits >= 50:
+                return True
+    return False
+
+
+def _decode_broskeep_aprefix(raw: bytes) -> str:
+    """
+    Decode bytes from Brother's Keeper "A-prefix" encoding to a Python string.
+    Each 'A'+marker (or 'Â'+marker, for Polish) pair maps to a single Unicode
+    character; bare prefix bytes and other content pass through. Standalone
+    high bytes (e.g. one stray cp1250-style 0xE6 = ć in an otherwise A-prefix
+    file) are decoded as windows-1250, which matches the modern data in mixed
+    BK files.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(raw)
+    while i < n:
+        b = raw[i]
+        if b == 0x41 and i + 1 < n and raw[i + 1] in _BROSKEEP_APREFIX_MAP:
+            out.append(_BROSKEEP_APREFIX_MAP[raw[i + 1]])
+            i += 2
+            continue
+        if b == 0xC2 and i + 1 < n and raw[i + 1] in _BROSKEEP_C2_PREFIX_MAP:
+            out.append(_BROSKEEP_C2_PREFIX_MAP[raw[i + 1]])
+            i += 2
+            continue
+        if b < 0x80:
+            out.append(chr(b))
+        else:
+            out.append(bytes([b]).decode("windows-1250", errors="replace"))
+        i += 1
+    return "".join(out)
+
+
 def _detect_encoding(raw: bytes) -> str:
     """Detect encoding of GEDCOM raw bytes. Returns a Python codec name."""
     # 1. BOM detection
@@ -330,6 +444,15 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
     _cr_normalised = b"\r" in raw and b"\n" not in raw
     if _cr_normalised:
         raw = raw.replace(b"\r", b"\n")
+
+    # Brother's Keeper "A-prefix" custom encoding (the CHAR header lies and
+    # claims UTF-8). Detected and decoded before standard codec dispatch.
+    if _is_broskeep_aprefix(raw):
+        text = _decode_broskeep_aprefix(raw)
+        fd, tmp_path = tempfile.mkstemp(suffix=".ged")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        return tmp_path, True
 
     encoding = _detect_encoding(raw)
 
