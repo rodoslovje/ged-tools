@@ -189,15 +189,33 @@ def _normalize_matricula_url(url):
     return url.replace("http://", "https://")
 
 
+def _link_sort_key(url):
+    if MATRICULA_RE.search(url):
+        return (1, url)
+    if FAMILYSEARCH_RE.search(url):
+        return (2, url)
+    if SISTORY_CENSUS_RE.search(url):
+        return (3, url)
+    if SISTORY_RE.search(url):
+        return (4, url)
+    if GENEANET_CEMETERY_RE.search(url):
+        return (5, url)
+    if FINDAGRAVE_RE.search(url) or BILLIONGRAVES_RE.search(url):
+        return (6, url)
+    return (7, url)
+
+
 def _dedup_links(links):
     """Deduplicate and sort links. Matricula URLs differing only in language code
     (e.g. /en/ vs /sl/) are treated as the same link; the last occurrence is kept
-    so that explicitly written URLs (from NOTEs) override template-derived ones."""
+    so that explicitly written URLs (from NOTEs) override template-derived ones.
+    Links are sorted by category: Matricula, FamilySearch, SiStory Census, SiStory, Geneanet Cemetery, Other Cemeteries, Others.
+    """
     seen = {}
     for url in links:
         key = _MATRICULA_LANG_RE.sub(r"\1*\2", url)
         seen[key] = url  # last wins
-    return sorted(seen.values())
+    return sorted(seen.values(), key=_link_sort_key)
 
 
 def _find_matricula_url(text):
@@ -1053,9 +1071,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                 husb_ptr = fam.get("husb", "")
                 wife_ptr = fam.get("wife", "")
                 partner_ptr = (
-                    wife_ptr if husb_ptr == ptr
-                    else husb_ptr if wife_ptr == ptr
-                    else ""
+                    wife_ptr if husb_ptr == ptr else husb_ptr if wife_ptr == ptr else ""
                 )
                 if partner_ptr:
                     pd = individuals_dict.get(partner_ptr, {})
@@ -1063,9 +1079,11 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                         partners.append(_person_entry(pd))
 
             if partners:
+
                 def _partner_sort_key(p):
                     y = extract_year(p["date_of_birth"])
                     return (y is None, y or 0, p["name"])
+
                 partners.sort(key=_partner_sort_key)
                 record["partners_list"] = partners
 
@@ -1181,6 +1199,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
         def _by_birth_year(p):
             y = extract_year(p["date_of_birth"])
             return (y is None, y or 0, p["name"])
+
         children_list.sort(key=_by_birth_year)
 
         def _spouse_entry(pd):
