@@ -191,18 +191,18 @@ def _normalize_matricula_url(url):
 
 def _link_sort_key(url):
     if MATRICULA_RE.search(url):
-        return (1, url)
+        return 1
     if FAMILYSEARCH_RE.search(url):
-        return (2, url)
+        return 2
     if SISTORY_CENSUS_RE.search(url):
-        return (3, url)
+        return 3
     if SISTORY_RE.search(url):
-        return (4, url)
+        return 4
     if GENEANET_CEMETERY_RE.search(url):
-        return (5, url)
+        return 5
     if FINDAGRAVE_RE.search(url) or BILLIONGRAVES_RE.search(url):
-        return (6, url)
-    return (7, url)
+        return 6
+    return 7
 
 
 def _dedup_links(links):
