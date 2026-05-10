@@ -79,6 +79,7 @@ from gedcom.element.element import Element
 from gedcom.parser import Parser
 import gedcom.tags
 
+
 # ---------------------------------------------------------------------------
 # Encoding detection & transcoding  (mirrors gedcom-cleaner.py)
 # ---------------------------------------------------------------------------
@@ -130,18 +131,12 @@ def _detect_encoding(file_path: str) -> str:
         char_value = m.group(1).strip().upper()
         if char_value in _GEDCOM_CHAR_MAP:
             return _GEDCOM_CHAR_MAP[char_value]
-    detected = chardet.detect(raw[:100000])
+    detected = chardet.detect(raw)
     if detected:
         enc = detected.get("encoding") or ""
         confidence = detected.get("confidence") or 0
         if enc and confidence >= 0.2 and enc.lower() not in ("mac_roman", "ascii"):
-            if enc.lower() in (
-                "windows-1252",
-                "cp1252",
-                "iso-8859-1",
-                "iso-8859-2",
-                "utf-8",
-            ):
+            if enc.lower() in ("windows-1252", "cp1252", "iso-8859-1", "iso-8859-2", "utf-8"):
                 if _is_disguised_cp1250(raw):
                     return "windows-1250"
             return enc
@@ -167,24 +162,14 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
                     with os.fdopen(fd, "w", encoding="utf-8") as f:
                         f.write(test_decode)
                     return tmp_path, True
-                detected = chardet.detect(raw[:100000])
+                detected = chardet.detect(raw)
                 enc = (detected.get("encoding") or "") if detected else ""
                 confidence = (detected.get("confidence") or 0) if detected else 0
-                if (
-                    enc
-                    and confidence >= 0.2
-                    and enc.lower() not in ("mac_roman", "ascii")
-                ):
+                if enc and confidence >= 0.2 and enc.lower() not in ("mac_roman", "ascii"):
                     encoding = enc
                 else:
                     encoding = "windows-1250"
-                if encoding.lower() in (
-                    "windows-1252",
-                    "cp1252",
-                    "iso-8859-1",
-                    "iso-8859-2",
-                    "utf-8",
-                ):
+                if encoding.lower() in ("windows-1252", "cp1252", "iso-8859-1", "iso-8859-2", "utf-8"):
                     if _is_disguised_cp1250(raw):
                         encoding = "windows-1250"
     try:
@@ -202,7 +187,6 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
 # ---------------------------------------------------------------------------
 # Serialization  (mirrors gedcom-cleaner.py)
 # ---------------------------------------------------------------------------
-
 
 def _serialize(element) -> str:
     """Recursively serialize an element and all its descendants."""
@@ -237,7 +221,6 @@ def _update_char_tag(parser: Parser) -> None:
 # Individual helpers
 # ---------------------------------------------------------------------------
 
-
 def _indi_label(indi_el) -> str:
     """Return 'FirstName Surname (b.YYYY d.YYYY)' for an INDI element."""
     name = ""
@@ -263,15 +246,10 @@ def _indi_label(indi_el) -> str:
                         death = m.group()
                     break
     label = name or "?"
-    dates = " ".join(
-        filter(
-            None,
-            [
-                f"b.{birth}" if birth else "",
-                f"d.{death}" if death else "",
-            ],
-        )
-    )
+    dates = " ".join(filter(None, [
+        f"b.{birth}" if birth else "",
+        f"d.{death}" if death else "",
+    ]))
     if dates:
         label += f" ({dates})"
     return label
@@ -300,7 +278,6 @@ def _name_parts(raw_name: str) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 # Person lookup
 # ---------------------------------------------------------------------------
-
 
 def _find_person(
     root_elements: list,
@@ -386,7 +363,6 @@ def _find_person(
 # Living privacy
 # ---------------------------------------------------------------------------
 
-
 def _is_living(indi_el) -> bool:
     """Return True if the individual has no DEAT, BURI, or CREM record."""
     for ch in indi_el.get_child_elements():
@@ -459,12 +435,8 @@ def _apply_living_privacy(indi_el, mode: str, verbose: bool) -> None:
 
     if not name_kept and mode == "<private>":
         name_el = Element(
-            indi_el.get_level() + 1,
-            "",
-            gedcom.tags.GEDCOM_TAG_NAME,
-            "<private>",
-            "\n",
-            multi_line=False,
+            indi_el.get_level() + 1, "", gedcom.tags.GEDCOM_TAG_NAME,
+            "<private>", "\n", multi_line=False,
         )
         name_el.set_parent_element(indi_el)
         to_keep.insert(0, name_el)
@@ -481,7 +453,6 @@ def _apply_living_privacy(indi_el, mode: str, verbose: bool) -> None:
 # ---------------------------------------------------------------------------
 # Ancestor collection
 # ---------------------------------------------------------------------------
-
 
 def _collect_ancestors(
     target_ptr: str,
@@ -547,7 +518,6 @@ def _collect_ancestors(
 # Descendant collection
 # ---------------------------------------------------------------------------
 
-
 def _collect_descendants(
     target_ptr: str,
     ptr_index: dict,
@@ -608,7 +578,6 @@ def _collect_descendants(
 # Sibling collection
 # ---------------------------------------------------------------------------
 
-
 def _collect_siblings(
     targets: set[str],
     indi_ptrs: set[str],
@@ -664,7 +633,6 @@ def _collect_siblings(
 # ---------------------------------------------------------------------------
 # Related collection
 # ---------------------------------------------------------------------------
-
 
 def _collect_related(
     indi_ptrs: set[str],
@@ -736,14 +704,10 @@ def _collect_related(
                     queue.append(fptr)
                     if verbose:
                         print(f"  [keep:related] {fptr}  {_indi_label(el)}")
-                elif (
-                    ftag
-                    in (
-                        gedcom.tags.GEDCOM_TAG_HUSBAND,
-                        gedcom.tags.GEDCOM_TAG_WIFE,
-                    )
-                    and fptr != ptr
-                ):
+                elif ftag in (
+                    gedcom.tags.GEDCOM_TAG_HUSBAND,
+                    gedcom.tags.GEDCOM_TAG_WIFE,
+                ) and fptr != ptr:
                     spouses.add(fptr)
                     if verbose:
                         print(f"  [keep:spouse ] {fptr}  {_indi_label(el)}")
@@ -789,7 +753,6 @@ def _collect_related(
 # Main filter logic
 # ---------------------------------------------------------------------------
 
-
 def filter_file(
     input_path: str,
     output_path: str,
@@ -819,7 +782,9 @@ def filter_file(
 
     # Build pointer -> element index for all top-level records
     ptr_index: dict = {
-        el.get_pointer().strip(): el for el in root_elements if el.get_pointer()
+        el.get_pointer().strip(): el
+        for el in root_elements
+        if el.get_pointer()
     }
 
     # Locate all root persons
@@ -853,10 +818,10 @@ def filter_file(
     descendant_walked: set[str] = set()
 
     totals = {
-        "ancestors": [0, 0],
-        "descendants": [0, 0],
-        "siblings": [0, 0],
-        "related": [0, 0],
+        "ancestors":       [0, 0],
+        "descendants":     [0, 0],
+        "siblings":        [0, 0],
+        "related":         [0, 0],
         "siblings_inlaws": [0, 0],
     }
 
@@ -886,9 +851,7 @@ def filter_file(
             totals["descendants"][1] += len(fam_ptrs) - before[1]
         if siblings:
             before = (len(indi_ptrs), len(fam_ptrs))
-            s_indi, s_fam = _collect_siblings(
-                set(indi_ptrs), indi_ptrs, ptr_index, verbose, forbidden
-            )
+            s_indi, s_fam = _collect_siblings(set(indi_ptrs), indi_ptrs, ptr_index, verbose, forbidden)
             indi_ptrs.update(s_indi)
             fam_ptrs.update(s_fam)
             totals["siblings"][0] += len(indi_ptrs) - before[0]
@@ -911,18 +874,14 @@ def filter_file(
             before_set = set(indi_ptrs)
 
             stop_ptrs = set() if mode_descendants else set(target_ptrs)
-            indi_ptrs, fam_ptrs = _collect_related(
-                indi_ptrs, fam_ptrs, ptr_index, stop_ptrs, verbose, forbidden
-            )
+            indi_ptrs, fam_ptrs = _collect_related(indi_ptrs, fam_ptrs, ptr_index, stop_ptrs, verbose, forbidden)
             totals["related"][0] += len(indi_ptrs) - before_size[0]
             totals["related"][1] += len(fam_ptrs) - before_size[1]
 
             if siblings:
                 before = (len(indi_ptrs), len(fam_ptrs))
                 new_in_laws = indi_ptrs - before_set
-                s2_indi, s2_fam = _collect_siblings(
-                    new_in_laws, indi_ptrs, ptr_index, verbose, forbidden
-                )
+                s2_indi, s2_fam = _collect_siblings(new_in_laws, indi_ptrs, ptr_index, verbose, forbidden)
                 indi_ptrs.update(s2_indi)
                 fam_ptrs.update(s2_fam)
                 totals["siblings_inlaws"][0] += len(indi_ptrs) - before[0]
@@ -937,10 +896,7 @@ def filter_file(
             if (len(indi_ptrs), len(fam_ptrs)) == before_size:
                 break  # fixed point
             if iteration >= SAFETY_CAP:
-                print(
-                    f"WARN: closure stopped at safety cap ({SAFETY_CAP} iterations)",
-                    file=sys.stderr,
-                )
+                print(f"WARN: closure stopped at safety cap ({SAFETY_CAP} iterations)", file=sys.stderr)
                 break
 
     if mode_ancestors:
@@ -1001,9 +957,7 @@ def filter_file(
                 indi_ptrs.add(parent_ptr)
                 parent_added += 1
                 if verbose:
-                    print(
-                        f"  [keep:parent ] {parent_ptr}  {_indi_label(ptr_index[parent_ptr])}"
-                    )
+                    print(f"  [keep:parent ] {parent_ptr}  {_indi_label(ptr_index[parent_ptr])}")
     print(
         f"Consistency:  {parent_added} additional individuals kept "
         f"(parents of kept families)",
@@ -1031,8 +985,7 @@ def filter_file(
         if el.get_tag() != gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
             continue
         stale = [
-            ch
-            for ch in el.get_child_elements()
+            ch for ch in el.get_child_elements()
             if ch.get_tag() in ("FAMS", "FAMC")
             and ch.get_value().strip() not in fam_ptrs
         ]
@@ -1045,10 +998,8 @@ def filter_file(
         if el.get_tag() != gedcom.tags.GEDCOM_TAG_FAMILY:
             continue
         stale = [
-            ch
-            for ch in el.get_child_elements()
-            if ch.get_tag()
-            in (
+            ch for ch in el.get_child_elements()
+            if ch.get_tag() in (
                 gedcom.tags.GEDCOM_TAG_HUSBAND,
                 gedcom.tags.GEDCOM_TAG_WIFE,
                 gedcom.tags.GEDCOM_TAG_CHILD,
@@ -1067,9 +1018,7 @@ def filter_file(
             if _is_living(el):
                 _apply_living_privacy(el, living, verbose)
                 living_count += 1
-        print(
-            f"Living ({living}): {living_count} individuals redacted", file=sys.stderr
-        )
+        print(f"Living ({living}): {living_count} individuals redacted", file=sys.stderr)
 
     parser.invalidate_cache()
     try:
@@ -1084,7 +1033,6 @@ def filter_file(
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
-
 
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
@@ -1103,7 +1051,7 @@ def main():
         nargs="+",
         metavar="PERSON",
         help="Root person(s): GEDCOM pointer (@I123@), name, or partial name. "
-        "Specify multiple to union their results.",
+             "Specify multiple to union their results.",
     )
     arg_parser.add_argument(
         "--ancestors",
@@ -1119,7 +1067,7 @@ def main():
         "--related",
         action="store_true",
         help="Also keep all descendants of every ancestor (cousins, aunts/uncles, …). "
-        "Use with --ancestors.",
+             "Use with --ancestors.",
     )
     arg_parser.add_argument(
         "--related-depth",
@@ -1127,9 +1075,9 @@ def main():
         default=1,
         metavar="N",
         help="How many marriage hops --related should chase. Each in-law added "
-        "by --related is always run back through --ancestors / --siblings. "
-        "1 (default) = one fan-out, 2 = two (in-laws of in-laws), "
-        "0 = run until fixed point (full transitive closure).",
+             "by --related is always run back through --ancestors / --siblings. "
+             "1 (default) = one fan-out, 2 = two (in-laws of in-laws), "
+             "0 = run until fixed point (full transitive closure).",
     )
     arg_parser.add_argument(
         "--siblings",
@@ -1171,11 +1119,10 @@ def main():
         sys.exit(1)
 
     living = (
-        "<private>"
-        if args.living_private
-        else (
-            "name" if args.living_name else "initials" if args.living_initials else None
-        )
+        "<private>" if args.living_private else
+        "name"    if args.living_name    else
+        "initials" if args.living_initials else
+        None
     )
 
     filter_file(

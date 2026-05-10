@@ -294,7 +294,7 @@ def _detect_encoding(raw: bytes) -> str:
     # 3. chardet fallback — require reasonable confidence; mac_roman and ascii are unreliable
     #    for GEDCOM files with Slovenian/Central European content. Below threshold, prefer
     #    windows-1250 which is the most common encoding for this region.
-    detected = chardet.detect(raw[:100000])
+    detected = chardet.detect(raw)
     if detected:
         enc = detected.get("encoding") or ""
         confidence = detected.get("confidence") or 0
@@ -353,7 +353,7 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
             if _is_disguised_cp1250(raw):
                 encoding = "windows-1250"
             else:
-                detected = chardet.detect(raw[:100000])
+                detected = chardet.detect(raw)
                 enc = (detected.get("encoding") or "") if detected else ""
                 confidence = (detected.get("confidence") or 0) if detected else 0
                 if (
@@ -3625,18 +3625,11 @@ def main():
 
     # --- Batch mode ---
     if args.input_dir:
-        # argparse assigns positional args left-to-right: the first stems typed after
-        # the flags end up in args.input and args.output instead of args.stems. Fold them back.
-        extra_stems = []
+        # argparse assigns positional args left-to-right: the first stem typed after
+        # the flags ends up in args.input instead of args.stems.  Fold it back.
         if args.input:
-            extra_stems.append(args.input)
+            args.stems = [args.input] + list(args.stems)
             args.input = None
-        if args.output:
-            extra_stems.append(args.output)
-            args.output = None
-        if extra_stems:
-            args.stems = extra_stems + list(args.stems)
-
         if not args.output_dir:
             print("ERROR: --output-dir is required with --input-dir", file=sys.stderr)
             sys.exit(1)
