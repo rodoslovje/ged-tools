@@ -345,18 +345,35 @@ _BROSKEEP_APREFIX_HIGHBIT_KEYS = frozenset(
 
 def _is_broskeep_aprefix(raw: bytes) -> bool:
     """
-    Detect Brother's Keeper "A-prefix" custom encoding. Triggered when many
-    'A'+high-byte pairs match known mapping entries — a pattern that's
-    mathematically unlikely in normal Latin-1 / cp1250 / UTF-8 text where 'A'
-    is rarely followed by an isolated high byte.
+    Detect Brother's Keeper "A-prefix" custom encoding. BK only emits the
+    A-prefix scheme when it labels the file CHAR UTF-8 — its CHAR ANSI exports
+    are genuine cp1250. Otherwise the heuristic is dominance of 'A'+marker
+    pairs over cp1250 Slavic single-byte codes; this avoids false positives on
+    cp1250 surnames like "Aškerc" where 0x9A (cp1250 š) sits after a literal A.
     """
-    hits = 0
+    header = raw[:4096].decode("latin-1", errors="replace")
+    m = re.search(r"^\d\s+CHAR\s+(.+)$", header, re.MULTILINE | re.IGNORECASE)
+    if m:
+        char_value = m.group(1).strip().upper()
+        if char_value not in ("UTF-8", "UTF8"):
+            return False
+
+    a_hits = 0
     for i in range(len(raw) - 1):
         if raw[i] == 0x41 and raw[i + 1] in _BROSKEEP_APREFIX_HIGHBIT_KEYS:
-            hits += 1
-            if hits >= 50:
-                return True
-    return False
+            a_hits += 1
+    if a_hits < 50:
+        return False
+
+    # Reject when cp1250 Slavic continuation bytes vastly outnumber A-pairs —
+    # that's a genuine cp1250 file with incidental "A"+0x9A sequences.
+    cp1250_slavic = sum(
+        1 for b in raw if b in (0x9A, 0x9E, 0x8A, 0x8E, 0xE8, 0xC8)
+    )
+    if cp1250_slavic > a_hits:
+        return False
+
+    return True
 
 
 def _decode_broskeep_aprefix(raw: bytes) -> str:
