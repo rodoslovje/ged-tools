@@ -62,9 +62,7 @@ def fix_cp1252_as_cp1250(content):
     cp1252-specific characters (like è/È) but lacks the expected cp1250 equivalents
     (like č/Č), which is the telltale sign of the mis-conversion.
     """
-    has_cp1252_chars = "è" in content or "È" in content
-    has_cp1250_chars = "č" in content or "Č" in content
-    if has_cp1252_chars and not has_cp1250_chars:
+    if "è" in content or "È" in content or "æ" in content or "Æ" in content:
         return content.translate(_CP1252_TO_CP1250)
     return content
 

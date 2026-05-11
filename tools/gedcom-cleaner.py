@@ -367,9 +367,7 @@ def _is_broskeep_aprefix(raw: bytes) -> bool:
 
     # Reject when cp1250 Slavic continuation bytes vastly outnumber A-pairs —
     # that's a genuine cp1250 file with incidental "A"+0x9A sequences.
-    cp1250_slavic = sum(
-        1 for b in raw if b in (0x9A, 0x9E, 0x8A, 0x8E, 0xE8, 0xC8)
-    )
+    cp1250_slavic = sum(1 for b in raw if b in (0x9A, 0x9E, 0x8A, 0x8E, 0xE8, 0xC8))
     if cp1250_slavic > a_hits:
         return False
 
@@ -404,6 +402,29 @@ def _decode_broskeep_aprefix(raw: bytes) -> str:
             out.append(bytes([b]).decode("windows-1250", errors="replace"))
         i += 1
     return "".join(out)
+
+
+def _build_cp1252_to_cp1250_map():
+    mapping = {}
+    for byte_val in range(0x80, 0x100):
+        b = bytes([byte_val])
+        try:
+            cp1250_char = b.decode("cp1250")
+            cp1252_char = b.decode("cp1252")
+            if cp1250_char != cp1252_char:
+                mapping[cp1252_char] = cp1250_char
+        except (UnicodeDecodeError, ValueError):
+            pass
+    return str.maketrans(mapping)
+
+
+_CP1252_TO_CP1250 = _build_cp1252_to_cp1250_map()
+
+
+def fix_cp1252_as_cp1250(content: str) -> str:
+    if "è" in content or "È" in content or "æ" in content or "Æ" in content:
+        return content.translate(_CP1252_TO_CP1250)
+    return content
 
 
 def _detect_encoding(raw: bytes) -> str:
@@ -476,23 +497,23 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
     norm = encoding.lower().replace("-", "").replace("_", "")
     if norm in ("utf8", "utf8sig"):
         try:
-            raw.decode(encoding)
-            if not _cr_normalised:
-                return input_path, False  # genuine UTF-8 with normal line endings
+            text = raw.decode(encoding)
+            fixed_text = fix_cp1252_as_cp1250(text)
+            if not _cr_normalised and fixed_text == text:
+                return input_path, False
+            text = fixed_text
         except UnicodeDecodeError:
-            # File claims to be UTF-8 but contains some invalid bytes.
-            # Check if it's mostly valid UTF-8 with minor corruption.
-            test_decode = raw.decode(encoding, errors="replace")
-            if test_decode.count("\ufffd") < max(10, len(raw) // 1000):
-                fd, tmp_path = tempfile.mkstemp(suffix=".ged")
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    f.write(test_decode)
-                return tmp_path, True
-
-            # Too many bad bytes: fall back to chardet.
             if _is_disguised_cp1250(raw):
                 encoding = "windows-1250"
             else:
+                test_decode = raw.decode(encoding, errors="replace")
+                if test_decode.count("\ufffd") < max(10, len(raw) // 1000):
+                    text = fix_cp1252_as_cp1250(test_decode)
+                    fd, tmp_path = tempfile.mkstemp(suffix=".ged")
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        f.write(text)
+                    return tmp_path, True
+
                 detected = chardet.detect(raw)
                 enc = (detected.get("encoding") or "") if detected else ""
                 confidence = (detected.get("confidence") or 0) if detected else 0

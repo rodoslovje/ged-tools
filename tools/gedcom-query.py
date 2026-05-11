@@ -67,16 +67,16 @@ import chardet
 from gedcom.parser import Parser
 import gedcom.tags
 
-
 # ---------------------------------------------------------------------------
 # Locale-aware collation key (č after c, š after s, ž after z)
 # ---------------------------------------------------------------------------
 
 _COLLATION_SPECIAL = {
-    'č': 'c\x7d', 'ć': 'c\x7e',
-    'đ': 'd\x7f',
-    'š': 's\x7f',
-    'ž': 'z\x7f',
+    "č": "c\x7d",
+    "ć": "c\x7e",
+    "đ": "d\x7f",
+    "š": "s\x7f",
+    "ž": "z\x7f",
 }
 
 
@@ -87,8 +87,8 @@ def _collation_key(s: str) -> str:
         if mapped:
             result.append(mapped)
         else:
-            result.append(unicodedata.normalize('NFD', ch)[0])
-    return ''.join(result)
+            result.append(unicodedata.normalize("NFD", ch)[0])
+    return "".join(result)
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +129,29 @@ def _is_disguised_cp1250(raw: bytes) -> bool:
     return False
 
 
+def _build_cp1252_to_cp1250_map():
+    mapping = {}
+    for byte_val in range(0x80, 0x100):
+        b = bytes([byte_val])
+        try:
+            cp1250_char = b.decode("cp1250")
+            cp1252_char = b.decode("cp1252")
+            if cp1250_char != cp1252_char:
+                mapping[cp1252_char] = cp1250_char
+        except (UnicodeDecodeError, ValueError):
+            pass
+    return str.maketrans(mapping)
+
+
+_CP1252_TO_CP1250 = _build_cp1252_to_cp1250_map()
+
+
+def fix_cp1252_as_cp1250(content: str) -> str:
+    if "è" in content or "È" in content or "æ" in content or "Æ" in content:
+        return content.translate(_CP1252_TO_CP1250)
+    return content
+
+
 def _detect_encoding(file_path: str) -> str:
     with open(file_path, "rb") as f:
         raw = f.read()
@@ -147,7 +170,13 @@ def _detect_encoding(file_path: str) -> str:
         enc = detected.get("encoding") or ""
         confidence = detected.get("confidence") or 0
         if enc and confidence >= 0.2 and enc.lower() not in ("mac_roman", "ascii"):
-            if enc.lower() in ("windows-1252", "cp1252", "iso-8859-1", "iso-8859-2", "utf-8"):
+            if enc.lower() in (
+                "windows-1252",
+                "cp1252",
+                "iso-8859-1",
+                "iso-8859-2",
+                "utf-8",
+            ):
                 if _is_disguised_cp1250(raw):
                     return "windows-1250"
             return enc
@@ -160,35 +189,52 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
     encoding = _detect_encoding(input_path)
     norm = encoding.lower().replace("-", "").replace("_", "")
     if norm in ("utf8", "utf8sig"):
-        if _is_disguised_cp1250(raw):
-            encoding = "windows-1250"
-        else:
-            try:
-                raw.decode(encoding)
+        try:
+            text = raw.decode(encoding)
+            fixed_text = fix_cp1252_as_cp1250(text)
+            if fixed_text == text:
                 return input_path, False
-            except UnicodeDecodeError:
+            text = fixed_text
+        except UnicodeDecodeError:
+            if _is_disguised_cp1250(raw):
+                encoding = "windows-1250"
+            else:
                 test_decode = raw.decode(encoding, errors="replace")
-                if test_decode.count("�") < max(10, len(raw) // 1000):
+                if test_decode.count("") < max(10, len(raw) // 1000):
+                    text = fix_cp1252_as_cp1250(test_decode)
                     fd, tmp_path = tempfile.mkstemp(suffix=".ged")
                     with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        f.write(test_decode)
+                        f.write(text)
                     return tmp_path, True
                 detected = chardet.detect(raw)
                 enc = (detected.get("encoding") or "") if detected else ""
                 confidence = (detected.get("confidence") or 0) if detected else 0
-                if enc and confidence >= 0.2 and enc.lower() not in ("mac_roman", "ascii"):
+                if (
+                    enc
+                    and confidence >= 0.2
+                    and enc.lower() not in ("mac_roman", "ascii")
+                ):
                     encoding = enc
                 else:
                     encoding = "windows-1250"
-                if encoding.lower() in ("windows-1252", "cp1252", "iso-8859-1", "iso-8859-2", "utf-8"):
+                if encoding.lower() in (
+                    "windows-1252",
+                    "cp1252",
+                    "iso-8859-1",
+                    "iso-8859-2",
+                    "utf-8",
+                ):
                     if _is_disguised_cp1250(raw):
                         encoding = "windows-1250"
-    try:
-        text = raw.decode(encoding)
-    except UnicodeDecodeError:
-        text = raw.decode(encoding, errors="replace")
-    except LookupError:
-        text = raw.decode("latin-1", errors="replace")
+    if "text" not in locals():
+        try:
+            text = raw.decode(encoding)
+        except UnicodeDecodeError:
+            text = raw.decode(encoding, errors="replace")
+        except LookupError:
+            text = raw.decode("latin-1", errors="replace")
+        text = fix_cp1252_as_cp1250(text)
+
     fd, tmp_path = tempfile.mkstemp(suffix=".ged")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(text)
@@ -198,6 +244,7 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _extract_year(date_str: str) -> str:
     """Extract 4-digit year from a GEDCOM date string, or '' if none found."""
@@ -226,9 +273,11 @@ def _get_name(indi_el) -> tuple[str, str]:
         if ch.get_tag() != gedcom.tags.GEDCOM_TAG_NAME:
             continue
         name_type = next(
-            (sc.get_value().strip().lower()
-             for sc in ch.get_child_elements()
-             if sc.get_tag() == "TYPE"),
+            (
+                sc.get_value().strip().lower()
+                for sc in ch.get_child_elements()
+                if sc.get_tag() == "TYPE"
+            ),
             None,
         )
         if name_type and name_type != "birth":
@@ -274,6 +323,7 @@ def _get_marriage(fam_el) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 # Query logic
 # ---------------------------------------------------------------------------
+
 
 def _get_place(indi_el, *event_tags: str) -> str:
     """Return the first non-empty place found across the given event tags."""
@@ -346,7 +396,10 @@ def _collect_ancestors(ptr_set: set[str], ptr_index) -> set[str]:
             if fam is None:
                 continue
             for fch in fam.get_child_elements():
-                if fch.get_tag() not in (gedcom.tags.GEDCOM_TAG_HUSBAND, gedcom.tags.GEDCOM_TAG_WIFE):
+                if fch.get_tag() not in (
+                    gedcom.tags.GEDCOM_TAG_HUSBAND,
+                    gedcom.tags.GEDCOM_TAG_WIFE,
+                ):
                     continue
                 parent_ptr = fch.get_value().strip()
                 if parent_ptr not in result:
@@ -403,7 +456,10 @@ def _get_surname_location(start_el, surn: str, ptr_index, any_place: bool) -> st
                 if fam is None:
                     continue
                 for fch in fam.get_child_elements():
-                    if fch.get_tag() not in (gedcom.tags.GEDCOM_TAG_HUSBAND, gedcom.tags.GEDCOM_TAG_WIFE):
+                    if fch.get_tag() not in (
+                        gedcom.tags.GEDCOM_TAG_HUSBAND,
+                        gedcom.tags.GEDCOM_TAG_WIFE,
+                    ):
                         continue
                     parent = ptr_index.get(fch.get_value().strip())
                     if parent is None:
@@ -415,7 +471,13 @@ def _get_surname_location(start_el, surn: str, ptr_index, any_place: bool) -> st
     return ""
 
 
-def _surname_rows(root_elements, any_place: bool, ptr_filter: set | None, with_location: bool, ptr_index=None) -> list:
+def _surname_rows(
+    root_elements,
+    any_place: bool,
+    ptr_filter: set | None,
+    with_location: bool,
+    ptr_index=None,
+) -> list:
     if with_location:
         # Group all persons by surname, then iterate oldest-first until a place is found.
         groups: dict[str, list] = {}  # surname -> [(year, el), ...]
@@ -458,7 +520,9 @@ def _surname_rows(root_elements, any_place: bool, ptr_filter: set | None, with_l
         return rows
 
 
-def _person_rows(root_elements, any_place: bool, ptr_filter: set | None = None) -> list[tuple]:
+def _person_rows(
+    root_elements, any_place: bool, ptr_filter: set | None = None
+) -> list[tuple]:
     rows = []
     for el in root_elements:
         if el.get_tag() != gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
@@ -475,24 +539,70 @@ def _person_rows(root_elements, any_place: bool, ptr_filter: set | None = None) 
     return rows
 
 
-_EVENT_TAGS = frozenset({
-    # Individual events
-    "BIRT", "CHR", "DEAT", "BURI", "CREM", "ADOP", "BAPM", "BARM", "BASM",
-    "BLES", "CHRA", "CONF", "FCOM", "ORDN", "NATU", "EMIG", "IMMI", "CENS",
-    "PROB", "WILL", "GRAD", "RETI", "EVEN",
-    # Individual attributes
-    "CAST", "DSCR", "EDUC", "IDNO", "NATI", "NCHI", "NMR", "OCCU", "PROP",
-    "RELI", "RESI", "SSN", "TITL", "FACT",
-    # Family events
-    "MARS", "DIV", "DIVF", "ENGA", "MARR", "MARB", "MARC", "MARL",
-})
+_EVENT_TAGS = frozenset(
+    {
+        # Individual events
+        "BIRT",
+        "CHR",
+        "DEAT",
+        "BURI",
+        "CREM",
+        "ADOP",
+        "BAPM",
+        "BARM",
+        "BASM",
+        "BLES",
+        "CHRA",
+        "CONF",
+        "FCOM",
+        "ORDN",
+        "NATU",
+        "EMIG",
+        "IMMI",
+        "CENS",
+        "PROB",
+        "WILL",
+        "GRAD",
+        "RETI",
+        "EVEN",
+        # Individual attributes
+        "CAST",
+        "DSCR",
+        "EDUC",
+        "IDNO",
+        "NATI",
+        "NCHI",
+        "NMR",
+        "OCCU",
+        "PROP",
+        "RELI",
+        "RESI",
+        "SSN",
+        "TITL",
+        "FACT",
+        # Family events
+        "MARS",
+        "DIV",
+        "DIVF",
+        "ENGA",
+        "MARR",
+        "MARB",
+        "MARC",
+        "MARL",
+    }
+)
 
 
-_PTR_RE = re.compile(r'^@[^@]+@$')
+_PTR_RE = re.compile(r"^@[^@]+@$")
 
 
-def _collect_url_values(el, include_events: bool, ptr_index: dict,
-                        _toplevel: bool = True, _visited: set | None = None) -> list[str]:
+def _collect_url_values(
+    el,
+    include_events: bool,
+    ptr_index: dict,
+    _toplevel: bool = True,
+    _visited: set | None = None,
+) -> list[str]:
     """
     Collect all text values from el's subtree.
     - At top level of an INDI/FAM record, event subtrees are skipped unless include_events is set.
@@ -517,19 +627,38 @@ def _collect_url_values(el, include_events: bool, ptr_index: dict,
             _visited.add(val)
             ref = ptr_index.get(val)
             if ref is not None:
-                values.extend(_collect_url_values(ref, True, ptr_index, False, _visited))
-        elif not is_ptr or tag not in ("OBJE", "FAMC", "FAMS", "HUSB", "WIFE", "CHIL", "SOUR", "REPO"):
-            values.extend(_collect_url_values(ch, include_events, ptr_index, False, _visited))
+                values.extend(
+                    _collect_url_values(ref, True, ptr_index, False, _visited)
+                )
+        elif not is_ptr or tag not in (
+            "OBJE",
+            "FAMC",
+            "FAMS",
+            "HUSB",
+            "WIFE",
+            "CHIL",
+            "SOUR",
+            "REPO",
+        ):
+            values.extend(
+                _collect_url_values(ch, include_events, ptr_index, False, _visited)
+            )
 
     return values
 
 
-def _matching_urls(el, url_lower: str, include_events: bool, ptr_index: dict) -> list[str]:
+def _matching_urls(
+    el, url_lower: str, include_events: bool, ptr_index: dict
+) -> list[str]:
     seen: set[str] = set()
     result = []
     for v in _collect_url_values(el, include_events, ptr_index):
         vl = v.lower()
-        if (vl.startswith("http://") or vl.startswith("https://")) and (url_lower == "" or url_lower in vl) and v not in seen:
+        if (
+            (vl.startswith("http://") or vl.startswith("https://"))
+            and (url_lower == "" or url_lower in vl)
+            and v not in seen
+        ):
             seen.add(v)
             result.append(v)
     return result
@@ -539,8 +668,14 @@ def _has_url(el, url_lower: str, include_events: bool, ptr_index: dict) -> bool:
     return bool(_matching_urls(el, url_lower, include_events, ptr_index))
 
 
-def _url_rows(root_elements, ptr_index, url_substr: str, include_events: bool, any_place: bool,
-              ptr_filter: set | None = None) -> tuple[list, list]:
+def _url_rows(
+    root_elements,
+    ptr_index,
+    url_substr: str,
+    include_events: bool,
+    any_place: bool,
+    ptr_filter: set | None = None,
+) -> tuple[list, list]:
     url_lower = url_substr.lower()
     indi_rows = []
     fam_rows = []
@@ -555,7 +690,9 @@ def _url_rows(root_elements, ptr_index, url_substr: str, include_events: bool, a
                 birth, birth_place = _get_event(el, gedcom.tags.GEDCOM_TAG_BIRTH)
                 death, _ = _get_event(el, gedcom.tags.GEDCOM_TAG_DEATH)
                 if any_place and not birth_place:
-                    birth_place = _get_place(el, "CHR", "RESI", gedcom.tags.GEDCOM_TAG_DEATH)
+                    birth_place = _get_place(
+                        el, "CHR", "RESI", gedcom.tags.GEDCOM_TAG_DEATH
+                    )
                 indi_rows.append((given, surn, birth, death, birth_place, urls))
         elif tag == gedcom.tags.GEDCOM_TAG_FAMILY:
             urls = _matching_urls(el, url_lower, include_events, ptr_index)
@@ -573,7 +710,14 @@ def _url_rows(root_elements, ptr_index, url_substr: str, include_events: bool, a
                 marr, marr_place = _get_marriage(el)
                 fam_rows.append((hg, hs, wg, ws, marr, marr_place, urls))
     indi_rows.sort(key=lambda r: (_collation_key(r[1]), _collation_key(r[0])))
-    fam_rows.sort(key=lambda r: (_collation_key(r[1]), _collation_key(r[0]), _collation_key(r[3]), _collation_key(r[2])))
+    fam_rows.sort(
+        key=lambda r: (
+            _collation_key(r[1]),
+            _collation_key(r[0]),
+            _collation_key(r[3]),
+            _collation_key(r[2]),
+        )
+    )
     return indi_rows, fam_rows
 
 
@@ -599,8 +743,13 @@ def _matching_addrs(el, addr_lower: str) -> list[str]:
     return result
 
 
-def _addr_rows(root_elements, ptr_index, addr_substr: str, any_place: bool,
-               ptr_filter: set | None = None) -> tuple[list, list]:
+def _addr_rows(
+    root_elements,
+    ptr_index,
+    addr_substr: str,
+    any_place: bool,
+    ptr_filter: set | None = None,
+) -> tuple[list, list]:
     addr_lower = addr_substr.lower()
     indi_rows = []
     fam_rows = []
@@ -615,7 +764,9 @@ def _addr_rows(root_elements, ptr_index, addr_substr: str, any_place: bool,
                 birth, birth_place = _get_event(el, gedcom.tags.GEDCOM_TAG_BIRTH)
                 death, _ = _get_event(el, gedcom.tags.GEDCOM_TAG_DEATH)
                 if any_place and not birth_place:
-                    birth_place = _get_place(el, "CHR", "RESI", gedcom.tags.GEDCOM_TAG_DEATH)
+                    birth_place = _get_place(
+                        el, "CHR", "RESI", gedcom.tags.GEDCOM_TAG_DEATH
+                    )
                 indi_rows.append((given, surn, birth, death, birth_place, addrs))
         elif tag == gedcom.tags.GEDCOM_TAG_FAMILY:
             addrs = _matching_addrs(el, addr_lower)
@@ -633,7 +784,14 @@ def _addr_rows(root_elements, ptr_index, addr_substr: str, any_place: bool,
                 marr, marr_place = _get_marriage(el)
                 fam_rows.append((hg, hs, wg, ws, marr, marr_place, addrs))
     indi_rows.sort(key=lambda r: (_collation_key(r[1]), _collation_key(r[0])))
-    fam_rows.sort(key=lambda r: (_collation_key(r[1]), _collation_key(r[0]), _collation_key(r[3]), _collation_key(r[2])))
+    fam_rows.sort(
+        key=lambda r: (
+            _collation_key(r[1]),
+            _collation_key(r[0]),
+            _collation_key(r[3]),
+            _collation_key(r[2]),
+        )
+    )
     return indi_rows, fam_rows
 
 
@@ -649,7 +807,9 @@ def _get_obje_refs(el) -> list[str]:
     return result
 
 
-def _duplicate_url_rows(root_elements, ptr_index) -> list[tuple[str, list[tuple[str, list]]]]:
+def _duplicate_url_rows(
+    root_elements, ptr_index
+) -> list[tuple[str, list[tuple[str, list]]]]:
     """Return [(url, [(obje_ptr, [row, ...]), ...]), ...] for URLs in multiple OBJE records."""
     url_to_objes: dict[str, list[str]] = {}
     url_display: dict[str, str] = {}
@@ -669,7 +829,10 @@ def _duplicate_url_rows(root_elements, ptr_index) -> list[tuple[str, list[tuple[
 
     obje_to_records: dict[str, list] = {}
     for el in root_elements:
-        if el.get_tag() not in (gedcom.tags.GEDCOM_TAG_INDIVIDUAL, gedcom.tags.GEDCOM_TAG_FAMILY):
+        if el.get_tag() not in (
+            gedcom.tags.GEDCOM_TAG_INDIVIDUAL,
+            gedcom.tags.GEDCOM_TAG_FAMILY,
+        ):
             continue
         for obje_ptr in _get_obje_refs(el):
             obje_to_records.setdefault(obje_ptr, []).append(el)
@@ -737,9 +900,7 @@ def _stat_rows(root_elements) -> list[tuple[str, int]]:
     rows.append(("Places (unique)", len(places)))
 
     known = {t for t, _ in _STAT_TAG_LABELS} | {"HEAD", "TRLR"}
-    extras = sorted(
-        (tag, n) for tag, n in tag_counts.items() if tag not in known
-    )
+    extras = sorted((tag, n) for tag, n in tag_counts.items() if tag not in known)
     rows.extend(extras)
     return rows
 
@@ -761,7 +922,14 @@ def _family_rows(root_elements, ptr_index) -> list[tuple]:
                     wg, ws = _get_name(indi)
         marr, marr_place = _get_marriage(el)
         rows.append((hg, hs, wg, ws, marr, marr_place))
-    rows.sort(key=lambda r: (_collation_key(r[1]), _collation_key(r[0]), _collation_key(r[3]), _collation_key(r[2])))
+    rows.sort(
+        key=lambda r: (
+            _collation_key(r[1]),
+            _collation_key(r[0]),
+            _collation_key(r[3]),
+            _collation_key(r[2]),
+        )
+    )
     return rows
 
 
@@ -795,9 +963,7 @@ def query_file(
 
     root_elements = parser.get_root_child_elements()
     ptr_index = {
-        el.get_pointer().strip(): el
-        for el in root_elements
-        if el.get_pointer()
+        el.get_pointer().strip(): el for el in root_elements if el.get_pointer()
     }
 
     out = csv.writer(sys.stdout) if use_csv else None
@@ -814,7 +980,9 @@ def query_file(
 
     if do_surnames:
         first_section = False
-        rows = _surname_rows(root_elements, any_place, ptr_filter, do_location, ptr_index)
+        rows = _surname_rows(
+            root_elements, any_place, ptr_filter, do_location, ptr_index
+        )
         if use_csv:
             out.writerow(["Surname", "Location"] if do_location else ["Surname"])
             for row in rows:
@@ -823,7 +991,12 @@ def query_file(
             for row in rows:
                 print(f"{row[0]} {row[1]}".rstrip() if do_location else row)
 
-    if person_queries is not None and not do_surnames and url_pattern is None and addr_pattern is None:
+    if (
+        person_queries is not None
+        and not do_surnames
+        and url_pattern is None
+        and addr_pattern is None
+    ):
         first_section = False
         rows = _person_rows(root_elements, any_place, ptr_filter)
         if use_csv:
@@ -847,7 +1020,16 @@ def query_file(
             print()
         rows = _family_rows(root_elements, ptr_index)
         if use_csv:
-            out.writerow(["Husband_Given", "Husband_Surname", "Wife_Given", "Wife_Surname", "Marriage", "Marriage_Place"])
+            out.writerow(
+                [
+                    "Husband_Given",
+                    "Husband_Surname",
+                    "Wife_Given",
+                    "Wife_Surname",
+                    "Marriage",
+                    "Marriage_Place",
+                ]
+            )
             for row in rows:
                 out.writerow(row)
         else:
@@ -862,8 +1044,14 @@ def query_file(
                 print(line)
 
     if url_pattern is not None:
-        indi_rows, fam_rows = _url_rows(root_elements, ptr_index, url_pattern, search_events, any_place,
-                                         ptr_filter if person_queries is not None else None)
+        indi_rows, fam_rows = _url_rows(
+            root_elements,
+            ptr_index,
+            url_pattern,
+            search_events,
+            any_place,
+            ptr_filter if person_queries is not None else None,
+        )
         if indi_rows:
             if not first_section and not use_csv:
                 print()
@@ -890,7 +1078,17 @@ def query_file(
                 print()
             first_section = False
             if use_csv:
-                out.writerow(["Husband_Given", "Husband_Surname", "Wife_Given", "Wife_Surname", "Marriage", "Marriage_Place", "URLs"])
+                out.writerow(
+                    [
+                        "Husband_Given",
+                        "Husband_Surname",
+                        "Wife_Given",
+                        "Wife_Surname",
+                        "Marriage",
+                        "Marriage_Place",
+                        "URLs",
+                    ]
+                )
                 for hg, hs, wg, ws, marr, marr_place, urls in fam_rows:
                     out.writerow([hg, hs, wg, ws, marr, marr_place, " ".join(urls)])
             else:
@@ -907,14 +1105,21 @@ def query_file(
                         print(f"  {url}")
 
     if addr_pattern is not None:
-        indi_rows, fam_rows = _addr_rows(root_elements, ptr_index, addr_pattern, any_place,
-                                          ptr_filter if person_queries is not None else None)
+        indi_rows, fam_rows = _addr_rows(
+            root_elements,
+            ptr_index,
+            addr_pattern,
+            any_place,
+            ptr_filter if person_queries is not None else None,
+        )
         if indi_rows:
             if not first_section and not use_csv:
                 print()
             first_section = False
             if use_csv:
-                out.writerow(["Name", "Surname", "Birth", "Death", "Place", "Addresses"])
+                out.writerow(
+                    ["Name", "Surname", "Birth", "Death", "Place", "Addresses"]
+                )
                 for given, surn, birth, death, place, addrs in indi_rows:
                     out.writerow([given, surn, birth, death, place, " | ".join(addrs)])
             else:
@@ -933,7 +1138,17 @@ def query_file(
                 print()
             first_section = False
             if use_csv:
-                out.writerow(["Husband_Given", "Husband_Surname", "Wife_Given", "Wife_Surname", "Marriage", "Marriage_Place", "Addresses"])
+                out.writerow(
+                    [
+                        "Husband_Given",
+                        "Husband_Surname",
+                        "Wife_Given",
+                        "Wife_Surname",
+                        "Marriage",
+                        "Marriage_Place",
+                        "Addresses",
+                    ]
+                )
                 for hg, hs, wg, ws, marr, marr_place, addrs in fam_rows:
                     out.writerow([hg, hs, wg, ws, marr, marr_place, " | ".join(addrs)])
             else:
@@ -977,7 +1192,15 @@ def query_file(
                                 out.writerow([url, obje_ptr, given, surn, birth])
                             else:
                                 _, hg, hs, wg, ws = row
-                                out.writerow([url, obje_ptr, f"{hg} {hs}".strip(), f"{wg} {ws}".strip(), ""])
+                                out.writerow(
+                                    [
+                                        url,
+                                        obje_ptr,
+                                        f"{hg} {hs}".strip(),
+                                        f"{wg} {ws}".strip(),
+                                        "",
+                                    ]
+                                )
             else:
                 for url, groups in dup_rows:
                     print(url)
@@ -998,6 +1221,7 @@ def query_file(
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -1078,19 +1302,45 @@ def main() -> None:
 
     args = arg_parser.parse_args()
 
-    if args.person is None and not args.surnames and not args.family and args.url is None and args.addr is None and not args.duplicate_url and not args.stat:
-        arg_parser.error("at least one of --person, --surnames, --family, --url, --addr, --duplicate-url, or --stat must be specified")
-    if (args.ancestors or args.descendants) and not (args.person and len(args.person) > 0):
-        arg_parser.error("--ancestors/--descendants require --person with at least one name")
+    if (
+        args.person is None
+        and not args.surnames
+        and not args.family
+        and args.url is None
+        and args.addr is None
+        and not args.duplicate_url
+        and not args.stat
+    ):
+        arg_parser.error(
+            "at least one of --person, --surnames, --family, --url, --addr, --duplicate-url, or --stat must be specified"
+        )
+    if (args.ancestors or args.descendants) and not (
+        args.person and len(args.person) > 0
+    ):
+        arg_parser.error(
+            "--ancestors/--descendants require --person with at least one name"
+        )
     if args.location and not args.surnames:
         arg_parser.error("--location requires --surnames")
     if args.search_events and args.url is None:
         arg_parser.error("--search-events requires --url")
 
-    query_file(args.input, args.person, args.ancestors, args.descendants,
-               args.surnames, args.location, args.family, args.url,
-               args.search_events, args.addr, args.duplicate_url, args.stat,
-               args.csv, args.any_place)
+    query_file(
+        args.input,
+        args.person,
+        args.ancestors,
+        args.descendants,
+        args.surnames,
+        args.location,
+        args.family,
+        args.url,
+        args.search_events,
+        args.addr,
+        args.duplicate_url,
+        args.stat,
+        args.csv,
+        args.any_place,
+    )
 
 
 if __name__ == "__main__":
