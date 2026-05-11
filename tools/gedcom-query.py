@@ -25,11 +25,14 @@ Options:
     --duplicate-url
                   List all URLs that appear in more than one media (OBJE) record,
                   with the persons/families referencing each duplicate.
+    --stat        Show counts of top-level GEDCOM records (individuals,
+                  families, objects, sources, notes, etc.) plus the number of
+                  unique places referenced across all events.
     --csv         Output as CSV
     --any-place   For --person/--surnames: fall back to baptism, residence, or
                   death place when birth place is absent (checked in that order)
 
-At least one of --person, --surnames, --family, --url, --addr, or --duplicate-url must be specified.
+At least one of --person, --surnames, --family, --url, --addr, --duplicate-url, or --stat must be specified.
 
 Examples:
     python tools/gedcom-query.py family.ged --person
@@ -49,6 +52,7 @@ Examples:
     python tools/gedcom-query.py family.ged --addr "Sušica 47"
     python tools/gedcom-query.py family.ged --person "Jakob Renka 1764" --descendants --addr
     python tools/gedcom-query.py family.ged --duplicate-url
+    python tools/gedcom-query.py family.ged --stat
 """
 
 import argparse
@@ -701,6 +705,45 @@ def _duplicate_url_rows(root_elements, ptr_index) -> list[tuple[str, list[tuple[
     return result
 
 
+_STAT_TAG_LABELS = [
+    (gedcom.tags.GEDCOM_TAG_INDIVIDUAL, "Individuals"),
+    (gedcom.tags.GEDCOM_TAG_FAMILY, "Families"),
+    (gedcom.tags.GEDCOM_TAG_OBJECT, "Objects"),
+    (gedcom.tags.GEDCOM_TAG_SOURCE, "Sources"),
+    ("REPO", "Repositories"),
+    ("NOTE", "Notes"),
+    ("SUBM", "Submitters"),
+]
+
+
+def _collect_places(el, out: set) -> None:
+    for ch in el.get_child_elements():
+        if ch.get_tag() == gedcom.tags.GEDCOM_TAG_PLACE:
+            val = (ch.get_value() or "").strip()
+            if val:
+                out.add(val)
+        _collect_places(ch, out)
+
+
+def _stat_rows(root_elements) -> list[tuple[str, int]]:
+    tag_counts: dict[str, int] = {}
+    places: set[str] = set()
+    for el in root_elements:
+        tag = el.get_tag()
+        tag_counts[tag] = tag_counts.get(tag, 0) + 1
+        _collect_places(el, places)
+
+    rows = [(label, tag_counts.get(tag, 0)) for tag, label in _STAT_TAG_LABELS]
+    rows.append(("Places (unique)", len(places)))
+
+    known = {t for t, _ in _STAT_TAG_LABELS} | {"HEAD", "TRLR"}
+    extras = sorted(
+        (tag, n) for tag, n in tag_counts.items() if tag not in known
+    )
+    rows.extend(extras)
+    return rows
+
+
 def _family_rows(root_elements, ptr_index) -> list[tuple]:
     rows = []
     for el in root_elements:
@@ -734,6 +777,7 @@ def query_file(
     search_events: bool,
     addr_pattern: str | None,
     do_duplicate_url: bool,
+    do_stat: bool,
     use_csv: bool,
     any_place: bool,
 ) -> None:
@@ -903,6 +947,20 @@ def query_file(
                         line += f" {marr_place}"
                     print(line)
 
+    if do_stat:
+        if not first_section and not use_csv:
+            print()
+        first_section = False
+        rows = _stat_rows(root_elements)
+        if use_csv:
+            out.writerow(["Type", "Count"])
+            for label, n in rows:
+                out.writerow([label, n])
+        else:
+            width = max(len(label) for label, _ in rows)
+            for label, n in rows:
+                print(f"{label:<{width}}  {n}")
+
     if do_duplicate_url:
         dup_rows = _duplicate_url_rows(root_elements, ptr_index)
         if dup_rows:
@@ -1005,6 +1063,11 @@ def main() -> None:
         dest="duplicate_url",
         help="List URLs that appear in more than one media (OBJE) record",
     )
+    arg_parser.add_argument(
+        "--stat",
+        action="store_true",
+        help="Show counts of top-level GEDCOM records and unique places",
+    )
     arg_parser.add_argument("--csv", action="store_true", help="Output as CSV")
     arg_parser.add_argument(
         "--any-place",
@@ -1015,8 +1078,8 @@ def main() -> None:
 
     args = arg_parser.parse_args()
 
-    if args.person is None and not args.surnames and not args.family and args.url is None and args.addr is None and not args.duplicate_url:
-        arg_parser.error("at least one of --person, --surnames, --family, --url, --addr, or --duplicate-url must be specified")
+    if args.person is None and not args.surnames and not args.family and args.url is None and args.addr is None and not args.duplicate_url and not args.stat:
+        arg_parser.error("at least one of --person, --surnames, --family, --url, --addr, --duplicate-url, or --stat must be specified")
     if (args.ancestors or args.descendants) and not (args.person and len(args.person) > 0):
         arg_parser.error("--ancestors/--descendants require --person with at least one name")
     if args.location and not args.surnames:
@@ -1026,7 +1089,8 @@ def main() -> None:
 
     query_file(args.input, args.person, args.ancestors, args.descendants,
                args.surnames, args.location, args.family, args.url,
-               args.search_events, args.addr, args.duplicate_url, args.csv, args.any_place)
+               args.search_events, args.addr, args.duplicate_url, args.stat,
+               args.csv, args.any_place)
 
 
 if __name__ == "__main__":
