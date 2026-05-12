@@ -53,7 +53,7 @@ Available Cleaners:
                          stub (Nomen Nescio — name unknown). Catches pure-
                          punctuation forms like "___" / "???" / "..." / "//",
                          stub words "XY"/"XX"/"XXY"/"XXX"/"NN"/"UNNAMED"/
-                         "NEZNAN" (case-insensitive, with optional surrounding
+                         "UNKNOWN"/"NEZNAN" (case-insensitive, with optional surrounding
                          punctuation), and any run of 3+ of the same letter
                          ("AAA", "BBBB", "qqqq"). Each placeholder given-name
                          segment becomes "NN". A placeholder surname becomes
@@ -1800,11 +1800,11 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
 _NAME_PLACEHOLDER_RE = re.compile(r"^[_.?,\s/\-()\[\]<>]+$")
 
 # Matches "stub" placeholder words sometimes used when the real name is
-# unknown: XY, XX, XXY, XXX, UNNAMED, NEZNAN, and N–N variants (NN, N.N.,
+# unknown: XY, XX, XXY, XXX, UNKNOWN, UNNAMED, NEZNAN, and N–N variants (NN, N.N.,
 # N N, N. N., …) — with optional surrounding underscores / dashes / spaces
 # / parens / brackets. Case-insensitive.
 _NAME_STUB_PLACEHOLDER_RE = re.compile(
-    r"^[_.?,\s\-()\[\]<>]*(?:UNNAMED|NEZNAN|XXY|XXX|XX|XY|N[\s.]*N)[_.?,\s\-()\[\]<>]*$",
+    r"^[_.?,\s\-()\[\]<>]*(?:UNKNOWN|UNNAMED|NEZNAN|XXY|XXX|XX|XY|N[\s.]*N)[_.?,\s\-()\[\]<>]*$",
     re.IGNORECASE,
 )
 
