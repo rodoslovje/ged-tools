@@ -4,8 +4,8 @@ Reads parish index books exported as Excel from data/matricula/<contributor>/
 and emits one pair of JSON files per contributor that match the schema used by
 gedcom-to-json.py:
 
-    data/output/<contributor>-matricula-births.json
-    data/output/<contributor>-matricula-marriage.json
+    data/output/<contributor>-matricula-persons.json
+    data/output/<contributor>-matricula-families.json
 
 Birth books are recognised by " K " in the filename, marriage books by " P ".
 """
@@ -336,8 +336,8 @@ def _skipped_meta(contributor, births_path, marriages_path, source_mtime, contri
 
 
 def process_contributor(contributor, files, contributor_urls, full_mode):
-    births_path = os.path.join(OUTPUT_DIR, f"{contributor}-matricula-births.json")
-    marriages_path = os.path.join(OUTPUT_DIR, f"{contributor}-matricula-marriage.json")
+    births_path = os.path.join(OUTPUT_DIR, f"{contributor}-matricula-persons.json")
+    marriages_path = os.path.join(OUTPUT_DIR, f"{contributor}-matricula-families.json")
 
     source_files = [f for f in files if detect_book_kind(f) is not None]
     skipped_files = [f for f in files if detect_book_kind(f) is None]
