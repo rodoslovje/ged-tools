@@ -1386,15 +1386,29 @@ def main():
 
     print("Completed!", file=sys.stderr)
 
-    # Write global metadata.json for the frontend
-    metadata.sort(key=lambda x: locale.strxfrm(x.get("contributor", "")))
+    # Write global metadata.json for the frontend. This script owns contributors
+    # whose name does NOT end in "-matricula"; the "-matricula" entries belong to
+    # matricula-to-json.py and are preserved as-is.
     metadata_output_path = os.path.join(OUTPUT_DIR, "metadata.json")
     metadata_out = [
         {k: v for k, v in m.items() if k not in ("filtered_count", "skipped")}
         for m in metadata
     ]
+    preserved = []
+    if os.path.exists(metadata_output_path):
+        try:
+            with open(metadata_output_path, encoding="utf-8") as f:
+                existing = json.load(f)
+            preserved = [
+                e for e in existing
+                if e.get("contributor", "").endswith("-matricula")
+            ]
+        except (json.JSONDecodeError, OSError):
+            preserved = []
+    combined = metadata_out + preserved
+    combined.sort(key=lambda x: locale.strxfrm(x.get("contributor", "")))
     with open(metadata_output_path, "w", encoding="utf-8") as f:
-        json.dump(metadata_out, f, ensure_ascii=False, indent=4)
+        json.dump(combined, f, ensure_ascii=False, indent=4)
 
     save_url_cache()
 

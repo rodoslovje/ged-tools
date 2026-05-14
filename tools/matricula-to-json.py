@@ -24,6 +24,7 @@ import openpyxl
 
 INPUT_ROOT = "data/matricula"
 OUTPUT_DIR = "data/output"
+CONTRIBUTORS_FILE = "data/contributors.json"
 
 MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
           "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
@@ -63,6 +64,32 @@ HEADER_MAP = {
     "opombe": "notes",
     "interpret": "interpreter",
 }
+
+
+# Matches Slovenian "died" markers followed by a date:
+#   "umrl 03.12.1914", "umrla 18.05.1866", "umrl 29.2.1895", "umrla 1863".
+# Day/month may be 1 or 2 digits; year-only form is also accepted.
+DEATH_RE = re.compile(
+    r"\bumrl[ao]?\b\s+"
+    r"(?:(?P<d>\d{1,2})\.\s*(?P<m>\d{1,2})\.\s*(?P<y1>\d{4})"
+    r"|(?P<y2>\d{4}))",
+    re.IGNORECASE,
+)
+
+
+def extract_death_from_notes(notes):
+    """Return a GEDCOM death date parsed from the notes, or '' if none."""
+    if not notes:
+        return ""
+    m = DEATH_RE.search(notes)
+    if not m:
+        return ""
+    if m.group("y1"):
+        d, mo, y = int(m.group("d")), int(m.group("m")), int(m.group("y1"))
+        if not (1 <= mo <= 12):
+            return ""
+        return f"{d} {MONTHS[mo - 1]} {y}"
+    return m.group("y2")
 
 
 def gedcom_date(value):
@@ -201,6 +228,9 @@ def birth_record(row):
         mother_surname if father_name.lower() == "ni znan" else father_surname
     )
 
+    notes = cell_str(row.get("notes"))
+    death_date = extract_death_from_notes(notes)
+
     record = {
         "name": child_name,
         "surname": child_surname,
@@ -209,7 +239,7 @@ def birth_record(row):
             "date": gedcom_date(row.get("birth_date")),
             "place": build_place(row),
         },
-        "death": {"date": "", "place": ""},
+        "death": {"date": death_date, "place": ""},
     }
 
     baptism = gedcom_date(row.get("baptism_date"))
@@ -228,7 +258,6 @@ def birth_record(row):
     if url:
         record["links"] = [url]
 
-    notes = cell_str(row.get("notes"))
     if notes:
         record["notes"] = notes
 
@@ -263,16 +292,80 @@ def marriage_record(row):
     return record
 
 
-def process_contributor(contributor, files):
+def _load_contributor_urls():
+    try:
+        with open(CONTRIBUTORS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return {name: info.get("url") for name, info in data.items() if info.get("url")}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _is_up_to_date(input_paths, output_paths):
+    """True iff all output_paths exist and are at least as new as every input."""
+    if not output_paths or not input_paths:
+        return False
+    try:
+        oldest_output = min(os.path.getmtime(p) for p in output_paths)
+        newest_input = max(os.path.getmtime(p) for p in input_paths)
+    except OSError:
+        return False
+    return oldest_output >= newest_input
+
+
+def _skipped_meta(contributor, births_path, marriages_path, source_mtime, contributor_urls):
+    """Build a metadata entry by re-reading existing JSONs (no reprocessing)."""
+    try:
+        with open(births_path, encoding="utf-8") as f:
+            births = json.load(f)
+        with open(marriages_path, encoding="utf-8") as f:
+            marriages = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+    links_count = (sum(1 for r in births if r.get("links"))
+                   + sum(1 for r in marriages if r.get("links")))
+    return {
+        "contributor": f"{contributor}-matricula",
+        "persons_count": len(births),
+        "families_count": len(marriages),
+        "links_count": links_count,
+        "last_modified": datetime.fromtimestamp(source_mtime).isoformat(),
+        "url": contributor_urls.get(contributor),
+        "skipped": True,
+    }
+
+
+def process_contributor(contributor, files, contributor_urls, full_mode):
+    births_path = os.path.join(OUTPUT_DIR, f"{contributor}-matricula-births.json")
+    marriages_path = os.path.join(OUTPUT_DIR, f"{contributor}-matricula-marriage.json")
+
+    source_files = [f for f in files if detect_book_kind(f) is not None]
+    skipped_files = [f for f in files if detect_book_kind(f) is None]
+
+    if not full_mode and source_files and _is_up_to_date(
+        source_files, [births_path, marriages_path]
+    ):
+        latest_mtime = max(os.path.getmtime(p) for p in source_files)
+        meta_entry = _skipped_meta(
+            contributor, births_path, marriages_path, latest_mtime, contributor_urls
+        )
+        if meta_entry is not None:
+            return {
+                "contributor": contributor,
+                "births_count": meta_entry["persons_count"],
+                "marriages_count": meta_entry["families_count"],
+                "skipped_files": skipped_files,
+                "meta_entry": meta_entry,
+            }
+        # fall through and reprocess if existing JSON couldn't be read
+
+    print(f"Processing: {contributor}", file=sys.stderr)
+
     births, marriages = [], []
-    skipped = []
     latest_mtime = 0.0
 
-    for path in files:
+    for path in source_files:
         kind = detect_book_kind(path)
-        if kind is None:
-            skipped.append(path)
-            continue
         latest_mtime = max(latest_mtime, os.path.getmtime(path))
         for row in read_rows(path):
             if kind == "K":
@@ -295,8 +388,6 @@ def process_contributor(contributor, files):
     ))
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    births_path = os.path.join(OUTPUT_DIR, f"{contributor}-matricula-births.json")
-    marriages_path = os.path.join(OUTPUT_DIR, f"{contributor}-matricula-marriage.json")
 
     with open(births_path, "w", encoding="utf-8") as f:
         json.dump(births, f, ensure_ascii=False, indent=4)
@@ -307,24 +398,77 @@ def process_contributor(contributor, files):
         os.utime(births_path, (latest_mtime, latest_mtime))
         os.utime(marriages_path, (latest_mtime, latest_mtime))
 
+    links_count = (
+        sum(1 for r in births if r.get("links"))
+        + sum(1 for r in marriages if r.get("links"))
+    )
+    last_modified = (
+        datetime.fromtimestamp(latest_mtime).isoformat() if latest_mtime else None
+    )
+    meta_entry = {
+        "contributor": f"{contributor}-matricula",
+        "persons_count": len(births),
+        "families_count": len(marriages),
+        "links_count": links_count,
+        "last_modified": last_modified,
+        "url": contributor_urls.get(contributor),
+        "skipped": False,
+    }
     return {
         "contributor": contributor,
         "births_count": len(births),
         "marriages_count": len(marriages),
-        "skipped_files": skipped,
+        "skipped_files": skipped_files,
+        "meta_entry": meta_entry,
     }
+
+
+def update_metadata_file(new_entries, output_dir):
+    """Write metadata.json with this script's "*-matricula" entries, preserving
+    all non-"-matricula" entries owned by gedcom-to-json.py.
+    """
+    path = os.path.join(output_dir, "metadata.json")
+    existing = []
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                existing = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            existing = []
+
+    new_clean = [{k: v for k, v in e.items() if k != "skipped"} for e in new_entries]
+    preserved = [
+        e for e in existing
+        if not e.get("contributor", "").endswith("-matricula")
+    ]
+    combined = preserved + new_clean
+    combined.sort(key=lambda x: locale.strxfrm(x.get("contributor", "")))
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(combined, f, ensure_ascii=False, indent=4)
 
 
 def main():
     global OUTPUT_DIR
     parser = argparse.ArgumentParser(description="Convert Matricula xlsx index files to JSON.")
+    parser.add_argument(
+        "--mode",
+        choices=["update", "full"],
+        default="update",
+        help="update (default): skip contributors whose JSON is already up to date; "
+             "full: process all contributors and overwrite existing JSON.",
+    )
     parser.add_argument("--input-root", default=INPUT_ROOT,
                         help=f"Root directory to scan recursively (default: {INPUT_ROOT}).")
     parser.add_argument("--output-dir", default=OUTPUT_DIR,
                         help=f"Output directory for JSON files (default: {OUTPUT_DIR}).")
     args = parser.parse_args()
+    full_mode = args.mode == "full"
 
     OUTPUT_DIR = args.output_dir
+
+    print(f"Starting Matricula data extraction process (mode: {args.mode})...",
+          file=sys.stderr)
 
     if not os.path.isdir(args.input_root):
         print(f"Error: input directory '{args.input_root}' not found.", file=sys.stderr)
@@ -350,16 +494,26 @@ def main():
         print(f"No xlsx files found under '{args.input_root}'.", file=sys.stderr)
         return 0
 
+    contributor_urls = _load_contributor_urls()
+
     summaries = []
     for contributor in sorted(by_contributor, key=locale.strxfrm):
-        summaries.append(process_contributor(contributor, by_contributor[contributor]))
+        summaries.append(process_contributor(
+            contributor, by_contributor[contributor], contributor_urls, full_mode))
 
-    col_w = max((len(s["contributor"]) for s in summaries), default=12)
-    header = f"{'Contributor':<{col_w}}  {'Births':>7}  {'Marriages':>9}"
-    print(header)
+    update_metadata_file([s["meta_entry"] for s in summaries], OUTPUT_DIR)
+
+    print("Completed!", file=sys.stderr)
+
+    processed = [s for s in summaries if not s["meta_entry"].get("skipped")]
+    col_w = max((len(s["contributor"]) for s in processed), default=12)
+    header = f"{'Contributor':<{col_w}}  {'Births':>7}  {'Marriages':>9}  {'Links':>6}"
+    print(f"\n{header}")
     print("-" * len(header))
-    for s in summaries:
-        print(f"{s['contributor']:<{col_w}}  {s['births_count']:>7}  {s['marriages_count']:>9}")
+    for s in processed:
+        print(f"{s['contributor']:<{col_w}}  "
+              f"{s['births_count']:>7}  {s['marriages_count']:>9}  "
+              f"{s['meta_entry']['links_count']:>6}")
         for skipped in s["skipped_files"]:
             print(f"  skipped (unknown K/P): {skipped}", file=sys.stderr)
 
