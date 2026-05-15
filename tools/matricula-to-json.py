@@ -11,6 +11,7 @@ Birth books are recognised by " K " in the filename, marriage books by " P ".
 """
 
 import argparse
+import hashlib
 import json
 import locale
 import os
@@ -123,6 +124,21 @@ def cell_str(value):
     return str(value).strip()
 
 
+def normalize_name_surname(name, surname):
+    """Replace Slovenian 'ni znan' (unknown) with 'NN'. If both name and
+    surname are unknown, only the name carries 'NN' and surname is cleared.
+    """
+    name_ni = name.strip().lower() == "ni znan"
+    surname_ni = surname.strip().lower() == "ni znan"
+    if name_ni and surname_ni:
+        return "NN", ""
+    if name_ni:
+        return "NN", surname
+    if surname_ni:
+        return name, "NN"
+    return name, surname
+
+
 def build_place(row):
     parish = cell_str(row.get("parish"))
     address = cell_str(row.get("address"))
@@ -203,13 +219,29 @@ def _resolve_columns(header_row):
     return fields
 
 
-def make_person_entry(name, surname, sex, alt_surname=""):
-    entry = {
-        "name": name or "",
-        "surname": surname or "",
-        "sex": sex,
-        "date_of_birth": "",
-    }
+def make_id(seq, url, role, name, surname, date, place):
+    """Stable 8-char hex id for a person-occurrence within a JSON file.
+
+    Source xlsx has no person identifiers, so we derive one from the row
+    sequence number ('zp. št.'), the matricula page URL, the role, and the
+    person's name/surname/date/place. Including the per-row seq guarantees
+    uniqueness even for twin records that share name+date+address.
+    """
+    key = "\x1f".join([
+        str(seq) if seq not in (None, "") else "",
+        url or "", role, name or "", surname or "", date or "", place or "",
+    ])
+    return hashlib.md5(key.encode("utf-8")).hexdigest()[:8]
+
+
+def make_person_entry(name, surname, sex, alt_surname="", person_id=None):
+    entry = {}
+    if person_id is not None:
+        entry["id"] = person_id
+    entry["name"] = name or ""
+    entry["surname"] = surname or ""
+    entry["sex"] = sex
+    entry["date_of_birth"] = ""
     if alt_surname:
         entry["alt_surname"] = alt_surname
     return entry
@@ -224,20 +256,30 @@ def birth_record(row):
     mother_surname = cell_str(row.get("mother_surname"))
     mother_alt = cell_str(row.get("mother_alt_surname"))
 
+    # Inherit mother's surname when father is unknown (must run before normalization).
     child_surname = (
         mother_surname if father_name.lower() == "ni znan" else father_surname
     )
 
+    child_name, child_surname = normalize_name_surname(child_name, child_surname)
+    father_name, father_surname = normalize_name_surname(father_name, father_surname)
+    mother_name, mother_surname = normalize_name_surname(mother_name, mother_surname)
+
     notes = cell_str(row.get("notes"))
     death_date = extract_death_from_notes(notes)
+    seq = row.get("seq")
+    url = cell_str(row.get("url"))
+    birth_date_g = gedcom_date(row.get("birth_date"))
+    place = build_place(row)
 
     record = {
+        "id": make_id(seq, url, "child", child_name, child_surname, birth_date_g, place),
         "name": child_name,
         "surname": child_surname,
         "sex": "",
         "birth": {
-            "date": gedcom_date(row.get("birth_date")),
-            "place": build_place(row),
+            "date": birth_date_g,
+            "place": place,
         },
         "death": {"date": death_date, "place": ""},
     }
@@ -248,13 +290,14 @@ def birth_record(row):
 
     parents_list = []
     if father_name or father_surname:
-        parents_list.append(make_person_entry(father_name, father_surname, "m", father_alt))
+        parents_list.append(make_person_entry(
+            father_name, father_surname, "m", father_alt))
     if mother_name or mother_surname:
-        parents_list.append(make_person_entry(mother_name, mother_surname, "f", mother_alt))
+        parents_list.append(make_person_entry(
+            mother_name, mother_surname, "f", mother_alt))
     if parents_list:
         record["parents_list"] = parents_list
 
-    url = cell_str(row.get("url"))
     if url:
         record["links"] = [url]
 
@@ -271,6 +314,9 @@ def marriage_record(row):
     bride_name = cell_str(row.get("bride_name"))
     bride_surname = cell_str(row.get("bride_surname"))
     bride_alt = cell_str(row.get("bride_alt_surname"))
+
+    groom_name, groom_surname = normalize_name_surname(groom_name, groom_surname)
+    bride_name, bride_surname = normalize_name_surname(bride_name, bride_surname)
 
     record = {
         "husband": make_person_entry(groom_name, groom_surname, "m", groom_alt),
