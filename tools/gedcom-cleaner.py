@@ -413,29 +413,21 @@ def _decode_broskeep_aprefix(raw: bytes) -> str:
     return "".join(out)
 
 
-# Slovenian mojibake repair: when cp1250 č/Č bytes (0xE8/0xC8) were mis-decoded
-# as cp1252, they surface as è/È. Other cp1252-vs-cp1250 differences in that
-# byte range (æ→ć, ñ→ń, ã→ă, etc.) are intentionally NOT translated: those
-# source characters have legitimate uses in this corpus — Latin feminine-
-# genitive ligatures in old Catholic parish records ("Ursulæ", "Margæ"),
-# French/Spanish/Portuguese names, etc. — that a blanket translation corrupts.
-_SLO_MOJIBAKE_FIX = str.maketrans(
-    {
-        "è": "č",
-        "È": "Č",
-    }
-)
+# Some GEDCOM exporters fold long lines onto CONC continuations without
+# accounting for multibyte UTF-8 sequences — e.g. they split `\xc4\x8d` (č)
+# across a `\r\n2 CONC ` boundary, producing `…\xc4\r\n2 CONC \x8d…`. The
+# `\xc4` byte alone is an invalid UTF-8 sequence, so a naive decode fails
+# and the Slovenian char is replaced with U+FFFD. Stitch such splits back
+# before attempting the UTF-8 decode.
+_CONC_SPLIT_UTF8 = re.compile(rb"([\x80-\xFF])\r?\n\d+ CONC ([\x80-\xBF])")
 
 
-def fix_cp1252_as_cp1250(content: str) -> str:
-    """Repair the common Slovenian mojibake è/È → č/Č.
-
-    Triggered by the mere presence of è/È; other cp1252 chars (æ/Æ, ñ, ã, ò,
-    œ, ÿ, …) are left alone because they appear legitimately in the corpus.
-    """
-    if "è" in content or "È" in content:
-        return content.translate(_SLO_MOJIBAKE_FIX)
-    return content
+def _stitch_conc_split_utf8(raw: bytes) -> bytes:
+    prev = None
+    while raw != prev:
+        prev = raw
+        raw = _CONC_SPLIT_UTF8.sub(rb"\1\2", raw)
+    return raw
 
 
 def _detect_encoding(raw: bytes) -> str:
@@ -503,6 +495,12 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
     if _cr_normalised:
         raw = raw.replace(b"\r", b"\n")
 
+    # Stitch multibyte UTF-8 sequences that an exporter split across a CONC
+    # line fold (high-byte before the fold + continuation byte after it).
+    stitched = _stitch_conc_split_utf8(raw)
+    _conc_stitched = stitched != raw
+    raw = stitched
+
     # Brother's Keeper "A-prefix" custom encoding (the CHAR header lies and
     # claims UTF-8). Detected and decoded before standard codec dispatch.
     if _is_broskeep_aprefix(raw):
@@ -518,15 +516,14 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
     if norm in ("utf8", "utf8sig"):
         try:
             text = raw.decode(encoding)
-            fixed_text = fix_cp1252_as_cp1250(text)
-            if not _cr_normalised and fixed_text == text:
+            if not _cr_normalised and not _conc_stitched:
                 return input_path, False
-            # Write the fixed/CR-normalised text to a temp file directly; the
-            # outer decode block below would otherwise overwrite `text` from
-            # `raw` and silently discard the fix.
+            # CR-normalisation or CONC-stitching changed the bytes; write the
+            # decoded text to a temp UTF-8 file so the parser sees the fixed
+            # version.
             fd, tmp_path = tempfile.mkstemp(suffix=".ged")
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(fixed_text)
+                f.write(text)
             return tmp_path, True
         except UnicodeDecodeError:
             if _is_disguised_cp1250(raw):
@@ -534,10 +531,9 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
             else:
                 test_decode = raw.decode(encoding, errors="replace")
                 if test_decode.count("\ufffd") < max(10, len(raw) // 1000):
-                    text = fix_cp1252_as_cp1250(test_decode)
                     fd, tmp_path = tempfile.mkstemp(suffix=".ged")
                     with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        f.write(text)
+                        f.write(test_decode)
                     return tmp_path, True
 
                 detected = chardet.detect(raw)
