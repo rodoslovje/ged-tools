@@ -419,10 +419,12 @@ def _decode_broskeep_aprefix(raw: bytes) -> str:
 # source characters have legitimate uses in this corpus — Latin feminine-
 # genitive ligatures in old Catholic parish records ("Ursulæ", "Margæ"),
 # French/Spanish/Portuguese names, etc. — that a blanket translation corrupts.
-_SLO_MOJIBAKE_FIX = str.maketrans({
-    "è": "č",
-    "È": "Č",
-})
+_SLO_MOJIBAKE_FIX = str.maketrans(
+    {
+        "è": "č",
+        "È": "Č",
+    }
+)
 
 
 def fix_cp1252_as_cp1250(content: str) -> str:
@@ -3809,9 +3811,17 @@ def main():
         print(f"Transformers: {', '.join(requested_transform)}", file=sys.stderr)
 
     # --- Batch mode ---
+    if not args.input_dir and not args.output_dir:
+        if not args.input or not args.input.lower().endswith(".ged"):
+            args.input_dir = "data/input"
+            args.output_dir = "data/filtered"
+
     if args.input_dir:
-        # argparse assigns positional args left-to-right: the first stem typed after
-        # the flags ends up in args.input instead of args.stems.  Fold it back.
+        # argparse assigns positional args left-to-right: the first stems typed after
+        # the flags end up in args.input and args.output instead of args.stems. Fold them back.
+        if args.output:
+            args.stems = [args.output] + list(args.stems)
+            args.output = None
         if args.input:
             args.stems = [args.input] + list(args.stems)
             args.input = None
