@@ -33,21 +33,68 @@ def _load_contributor_urls():
         return {}
 
 
+def _split_name_value(name_val):
+    if "/" in name_val:
+        parts = name_val.split("/")
+        return parts[0].strip(), parts[1].strip()
+    return name_val.strip(), ""
+
+
+def _surn_child(name_element):
+    for sub in name_element.get_child_elements():
+        if sub.get_tag() == "SURN":
+            return (sub.get_value() or "").strip()
+    return ""
+
+
+def _name_type(name_element):
+    for sub in name_element.get_child_elements():
+        if sub.get_tag() == "TYPE":
+            return (sub.get_value() or "").strip().lower()
+    return ""
+
+
 def get_name_surname(individual):
+    """Extract (given, surname, married_surnames) from an individual.
+
+    The primary NAME (no TYPE, or TYPE 'birth') supplies given+surname.
+    Every secondary NAME with TYPE 'married' contributes a married surname,
+    taken from its `2 SURN` child or, failing that, from the /…/ form in
+    the NAME value. Multiple distinct married surnames are joined with ", ".
+
+    If a person has ONLY a married NAME (no birth/untyped NAME), the first
+    one is used as the primary instead; remaining married surnames (if any)
+    still go into the comma-joined list.
     """
-    Safely extracts the first name and surname from an individual element.
-    GEDCOM names can be complex, so this handles basic cases gracefully.
-    """
+    primary_name, primary_surname = "", ""
+    primary_found = False
+    married_names = []  # (given, surname) pairs, in source order
+
     for child in individual.get_child_elements():
-        if child.get_tag() == "NAME":
-            name_val = child.get_value()
-            if "/" in name_val:
-                parts = name_val.split("/")
-                first = parts[0].strip()
-                last = parts[1].strip()
-                return first or "", last or ""
-            return name_val.strip() or "", ""
-    return "", ""
+        if child.get_tag() != "NAME":
+            continue
+        first, last = _split_name_value(child.get_value() or "")
+        if _name_type(child) == "married":
+            surn = _surn_child(child) or last
+            if surn:
+                married_names.append((first, surn))
+        elif not primary_found:
+            primary_name, primary_surname = first, last
+            primary_found = True
+
+    if not primary_found and married_names:
+        primary_name, primary_surname = married_names.pop(0)
+
+    seen = set()
+    if primary_surname:
+        seen.add(primary_surname)
+    deduped = []
+    for _, surn in married_names:
+        if surn not in seen:
+            deduped.append(surn)
+            seen.add(surn)
+
+    return primary_name, primary_surname, ", ".join(deduped)
 
 
 def get_sex(individual):
@@ -794,7 +841,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
 
         if tag == "INDI":
             pointer = element.get_pointer()
-            name, surname = get_name_surname(element)
+            name, surname, married_surname = get_name_surname(element)
             sex = get_sex(element)
             birth_date, birth_place, raw_birth_links = get_event_data(
                 element, "BIRT", sources_dict, obje_dict
@@ -802,6 +849,13 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
             death_date, death_place, raw_death_links = get_event_data(
                 element, "DEAT", sources_dict, obje_dict
             )
+            baptism_date, baptism_place, _ = get_event_data(
+                element, "BAPM", sources_dict, obje_dict
+            )
+            if not baptism_date and not baptism_place:
+                baptism_date, baptism_place, _ = get_event_data(
+                    element, "CHR", sources_dict, obje_dict
+                )
             for url in _get_all_event_links(
                 element, {"BURI", "CREM"}, sources_dict, obje_dict
             ):
@@ -870,6 +924,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                 "_ptr": pointer,
                 "name": name,
                 "surname": surname,
+                "married_surname": married_surname,
                 "sex": sex,
                 "birth_date": birth_date,
                 "is_deceased": is_deceased_flag,
@@ -901,6 +956,13 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                         "place": death_place or "",
                     },
                 }
+                if married_surname:
+                    record["alt_surname"] = married_surname
+                if baptism_date or baptism_place:
+                    record["baptism"] = {
+                        "date": baptism_date or "",
+                        "place": baptism_place or "",
+                    }
                 if person_links:
                     record["links"] = _dedup_links(person_links)
                 persons_data.append(record)
@@ -1089,13 +1151,17 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
         children_list.sort(key=_by_birth_year)
 
         def _spouse_entry(pd):
-            return {
+            entry = {
                 "id": pd.get("_ptr", ""),
                 "name": pd.get("name", ""),
                 "surname": pd.get("surname", ""),
                 "sex": pd.get("sex", ""),
                 "date_of_birth": pd.get("birth_date", "") or "",
             }
+            married_surname = pd.get("married_surname", "")
+            if married_surname:
+                entry["alt_surname"] = married_surname
+            return entry
 
         record = {
             "husband": _spouse_entry(husb),
