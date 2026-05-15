@@ -982,6 +982,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
             ]
 
             individuals_dict[pointer] = {
+                "_ptr": pointer,
                 "name": name,
                 "surname": surname,
                 "sex": sex,
@@ -1002,6 +1003,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
             if has_events or not is_placeholder_only:
                 record = {
                     "_ptr": pointer,
+                    "id": pointer,
                     "name": name,
                     "surname": surname,
                     "sex": sex,
@@ -1036,6 +1038,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
 
     def _person_entry(pd):
         return {
+            "id": pd.get("_ptr", ""),
             "name": pd.get("name", "") or "unknown",
             "surname": pd.get("surname", ""),
             "sex": pd.get("sex", ""),
@@ -1202,6 +1205,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
 
         def _spouse_entry(pd):
             return {
+                "id": pd.get("_ptr", ""),
                 "name": pd.get("name", ""),
                 "surname": pd.get("surname", ""),
                 "sex": pd.get("sex", ""),
