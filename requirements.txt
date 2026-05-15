@@ -1,4 +1,5 @@
 python-gedcom
 chardet
 openpyxl
+ansel
 pytest

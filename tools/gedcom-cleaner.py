@@ -192,10 +192,16 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
+import ansel
 import chardet
 from gedcom.element.element import Element
 from gedcom.parser import Parser
 import gedcom.tags
+
+# Register Python codecs named 'ansel' and 'gedcom' (ANSEL with GEDCOM extensions).
+# Needed so files declaring `1 CHAR ANSEL` can be decoded directly rather than
+# being mis-decoded as cp1250/cp1252 (which turns "Hrádok" → "Hrâadok" etc.).
+ansel.register()
 
 # ---------------------------------------------------------------------------
 # Thread-local stdout/stderr proxy
@@ -254,6 +260,9 @@ _GEDCOM_CHAR_MAP = {
     "LATIN1": "iso-8859-1",
     "LATIN-1": "iso-8859-1",
     "ISO8859-1": "iso-8859-1",
+    # ANSEL (default GEDCOM 5.x charset). Routed to the GEDCOM-extended ANSEL
+    # codec registered by the `ansel` package at module import.
+    "ANSEL": "gedcom",
 }
 
 
@@ -404,26 +413,26 @@ def _decode_broskeep_aprefix(raw: bytes) -> str:
     return "".join(out)
 
 
-def _build_cp1252_to_cp1250_map():
-    mapping = {}
-    for byte_val in range(0x80, 0x100):
-        b = bytes([byte_val])
-        try:
-            cp1250_char = b.decode("cp1250")
-            cp1252_char = b.decode("cp1252")
-            if cp1250_char != cp1252_char:
-                mapping[cp1252_char] = cp1250_char
-        except (UnicodeDecodeError, ValueError):
-            pass
-    return str.maketrans(mapping)
-
-
-_CP1252_TO_CP1250 = _build_cp1252_to_cp1250_map()
+# Slovenian mojibake repair: when cp1250 č/Č bytes (0xE8/0xC8) were mis-decoded
+# as cp1252, they surface as è/È. Other cp1252-vs-cp1250 differences in that
+# byte range (æ→ć, ñ→ń, ã→ă, etc.) are intentionally NOT translated: those
+# source characters have legitimate uses in this corpus — Latin feminine-
+# genitive ligatures in old Catholic parish records ("Ursulæ", "Margæ"),
+# French/Spanish/Portuguese names, etc. — that a blanket translation corrupts.
+_SLO_MOJIBAKE_FIX = str.maketrans({
+    "è": "č",
+    "È": "Č",
+})
 
 
 def fix_cp1252_as_cp1250(content: str) -> str:
-    if "è" in content or "È" in content or "æ" in content or "Æ" in content:
-        return content.translate(_CP1252_TO_CP1250)
+    """Repair the common Slovenian mojibake è/È → č/Č.
+
+    Triggered by the mere presence of è/È; other cp1252 chars (æ/Æ, ñ, ã, ò,
+    œ, ÿ, …) are left alone because they appear legitimately in the corpus.
+    """
+    if "è" in content or "È" in content:
+        return content.translate(_SLO_MOJIBAKE_FIX)
     return content
 
 
@@ -441,7 +450,16 @@ def _detect_encoding(raw: bytes) -> str:
     if m:
         char_value = m.group(1).strip().upper()
         if char_value in _GEDCOM_CHAR_MAP:
-            return _GEDCOM_CHAR_MAP[char_value]
+            enc = _GEDCOM_CHAR_MAP[char_value]
+            # Some legacy GEDCOM exporters set "1 CHAR ANSEL" by default but
+            # actually emit cp1250/cp1252 bytes. ANSEL reserves 0x80-0x9F as
+            # control codes (no printable chars in that range), so any byte
+            # there means the header is lying — fall through to chardet, which
+            # can distinguish cp1250 from cp1252.
+            if enc == "gedcom" and any(0x80 <= b <= 0x9F for b in raw):
+                pass  # fall through to chardet
+            else:
+                return enc
 
     # 3. chardet fallback — require reasonable confidence; mac_roman and ascii are unreliable
     #    for GEDCOM files with Slovenian/Central European content. Below threshold, prefer
@@ -501,7 +519,13 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
             fixed_text = fix_cp1252_as_cp1250(text)
             if not _cr_normalised and fixed_text == text:
                 return input_path, False
-            text = fixed_text
+            # Write the fixed/CR-normalised text to a temp file directly; the
+            # outer decode block below would otherwise overwrite `text` from
+            # `raw` and silently discard the fix.
+            fd, tmp_path = tempfile.mkstemp(suffix=".ged")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(fixed_text)
+            return tmp_path, True
         except UnicodeDecodeError:
             if _is_disguised_cp1250(raw):
                 encoding = "windows-1250"
