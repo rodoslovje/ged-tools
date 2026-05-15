@@ -33,102 +33,6 @@ def _load_contributor_urls():
         return {}
 
 
-def _build_cp1252_to_cp1250_map():
-    """
-    Returns a translation table for characters that differ between cp1252 and cp1250.
-    Used to fix UTF-8 files that were incorrectly converted from cp1250 using cp1252/Latin-1
-    as the source encoding (a common mistake that turns č→è, Č→È, etc.).
-    """
-    mapping = {}
-    for byte_val in range(0x80, 0x100):
-        b = bytes([byte_val])
-        try:
-            cp1250_char = b.decode("cp1250")
-            cp1252_char = b.decode("cp1252")
-            if cp1250_char != cp1252_char:
-                mapping[cp1252_char] = cp1250_char
-        except (UnicodeDecodeError, ValueError):
-            pass
-    return str.maketrans(mapping)
-
-
-_CP1252_TO_CP1250 = _build_cp1252_to_cp1250_map()
-
-
-def fix_cp1252_as_cp1250(content):
-    """
-    Detects and fixes UTF-8 content that was incorrectly converted from cp1250
-    using cp1252 as the source encoding. Only applied when the content contains
-    cp1252-specific characters (like è/È) but lacks the expected cp1250 equivalents
-    (like č/Č), which is the telltale sign of the mis-conversion.
-    """
-    if "è" in content or "È" in content or "æ" in content or "Æ" in content:
-        return content.translate(_CP1252_TO_CP1250)
-    return content
-
-
-def safe_read_gedcom(filepath):
-    """
-    Attempts to read a file using a sequence of common GEDCOM encodings.
-    It first tries to detect the encoding from the '1 CHAR' tag in the header.
-    Returns the file content as a string.
-    """
-    detected_enc = None
-    encoding_map = {
-        b"UTF-8": "utf-8-sig",
-        b"ANSI": "cp1250",
-        b"MACINTOSH": "mac_roman",
-        b"IBM WINDOWS": "cp1250",
-        b"WINDOWS": "cp1250",
-        b"ISO8859-1": "iso-8859-1",
-        b"ASCII": "ascii",
-        b"UNICODE": "utf-16",
-        b"UTF-16": "utf-16",
-    }
-
-    # Fast check of the first 4KB to find the '1 CHAR' definition
-    try:
-        with open(filepath, "rb") as f:
-            head = f.read(4096)
-            idx = head.find(b"1 CHAR ")
-            if idx != -1:
-                idx += 7
-                end_idx_n = head.find(b"\n", idx)
-                end_idx_r = head.find(b"\r", idx)
-
-                if end_idx_n != -1 and end_idx_r != -1:
-                    end_idx = min(end_idx_n, end_idx_r)
-                else:
-                    end_idx = max(end_idx_n, end_idx_r)
-
-                if end_idx != -1:
-                    char_val = head[idx:end_idx].strip()
-                    detected_enc = encoding_map.get(char_val.upper())
-    except Exception:
-        pass
-
-    encodings_to_try = []
-    if detected_enc:
-        encodings_to_try.append(detected_enc)
-
-    # Fallbacks: UTF-8 with BOM, Standard UTF-8, Windows-1250 (Central European), Windows-1252, ISO-8859-1, Mac Roman
-    for enc in ["utf-8-sig", "utf-8", "cp1250", "cp1252", "iso-8859-1", "mac_roman"]:
-        if enc not in encodings_to_try:
-            encodings_to_try.append(enc)
-
-    for enc in encodings_to_try:
-        try:
-            with open(filepath, "r", encoding=enc) as f:
-                content = f.read()
-
-                return content
-        except UnicodeDecodeError:
-            continue  # Try the next encoding in the list
-
-    # If all fail, raise an exception or handle it gracefully
-    raise ValueError(f"Could not decode {filepath}. Unknown encoding.")
-
-
 def get_name_surname(individual):
     """
     Safely extracts the first name and surname from an individual element.
@@ -865,36 +769,17 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
     families_data = []
 
     # --- Parsing ---
-    temp_path = f"{input_path}.utf8.tmp"
+    # Input is expected to be valid UTF-8 (produced by gedcom-cleaner.py).
+    # python-gedcom's parse_file opens the file as binary and decodes lines
+    # as utf-8-sig, so no charset preprocessing is needed here.
+    gedcom_parser = Parser()
     try:
-        gedcom_content = safe_read_gedcom(input_path)
-
-        fixed = fix_cp1252_as_cp1250(gedcom_content)
-        if fixed is not gedcom_content:
-            print(
-                f"  WARNING: cp1252→cp1250 encoding fix applied (è→č etc.) for {filename}",
-                file=sys.stderr,
-            )
-            gedcom_content = fixed
-
-        gedcom_content = re.sub(
-            r"^1 CHAR .*$", "1 CHAR UTF-8", gedcom_content, flags=re.MULTILINE
-        )
-
-        with open(temp_path, "w", encoding="utf-8") as tmp_file:
-            tmp_file.write(gedcom_content)
-
-        gedcom_parser = Parser()
-        gedcom_parser.parse_file(temp_path, strict=False)
-
-        os.remove(temp_path)
+        gedcom_parser.parse_file(input_path, strict=False)
     except Exception as e:
         print(
             f"  ERROR: Could not parse {filename}. Skipping file. Reason: {e}",
             file=sys.stderr,
         )
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
         return None, log
 
     individuals_dict = {}
