@@ -54,21 +54,39 @@ def _name_type(name_element):
     return ""
 
 
-def get_name_surname(individual):
-    """Extract (given, surname, married_surnames) from an individual.
+# Sub-tags that supply an alternate surname inline under a NAME block.
+# `_MARNM` is the MyHeritage / Family Tree Maker convention for "married name".
+# `_FORMERNAME` is used for a previous (often pre-marriage) surname.
+_ALT_SURNAME_SUBTAGS = ("_MARNM", "_FORMERNAME")
 
-    The primary NAME (no TYPE, or TYPE 'birth') supplies given+surname.
-    Every secondary NAME with TYPE 'married' contributes a married surname,
-    taken from its `2 SURN` child or, failing that, from the /…/ form in
-    the NAME value. Multiple distinct married surnames are joined with ", ".
+
+def _inline_alt_surnames(name_element):
+    """Yield alternate surnames declared as direct sub-tags of a NAME block."""
+    for sub in name_element.get_child_elements():
+        if sub.get_tag() in _ALT_SURNAME_SUBTAGS:
+            val = (sub.get_value() or "").strip()
+            if val:
+                yield val
+
+
+def get_name_surname(individual):
+    """Extract (given, surname, alt_surnames) from an individual.
+
+    The primary NAME (no TYPE, or TYPE 'birth') supplies given+surname. Alt
+    surnames are collected from three conventions:
+      - secondary NAME blocks with `2 TYPE married` (their `2 SURN` or /…/)
+      - `2 _MARNM <surname>` sub-tags (MyHeritage / Family Tree Maker)
+      - `2 _FORMERNAME <surname>` sub-tags (former / previous surname)
+    Multiple distinct values are joined with ", ".
 
     If a person has ONLY a married NAME (no birth/untyped NAME), the first
-    one is used as the primary instead; remaining married surnames (if any)
-    still go into the comma-joined list.
+    one is used as the primary instead; remaining alts (if any) still go
+    into the comma-joined list.
     """
     primary_name, primary_surname = "", ""
     primary_found = False
-    married_names = []  # (given, surname) pairs, in source order
+    married_names = []  # (given, surname) pairs from TYPE=married NAMEs
+    inline_alts = []   # surnames from _MARNM / _FORMERNAME sub-tags
 
     for child in individual.get_child_elements():
         if child.get_tag() != "NAME":
@@ -81,6 +99,8 @@ def get_name_surname(individual):
         elif not primary_found:
             primary_name, primary_surname = first, last
             primary_found = True
+        for alt in _inline_alt_surnames(child):
+            inline_alts.append(alt)
 
     if not primary_found and married_names:
         primary_name, primary_surname = married_names.pop(0)
@@ -90,6 +110,10 @@ def get_name_surname(individual):
         seen.add(primary_surname)
     deduped = []
     for _, surn in married_names:
+        if surn not in seen:
+            deduped.append(surn)
+            seen.add(surn)
+    for surn in inline_alts:
         if surn not in seen:
             deduped.append(surn)
             seen.add(surn)
