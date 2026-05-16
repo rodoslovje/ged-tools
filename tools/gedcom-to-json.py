@@ -54,6 +54,9 @@ def _name_type(name_element):
     return ""
 
 
+# `2 TYPE` values on a secondary NAME block that produce an alternate surname.
+_ALT_SURNAME_NAME_TYPES = ("married", "maiden", "aka")
+
 # Sub-tags that supply an alternate surname inline under a NAME block.
 # `_MARNM` is the MyHeritage / Family Tree Maker convention for "married name".
 # `_FORMERNAME` is used for a previous (often pre-marriage) surname.
@@ -73,43 +76,44 @@ def get_name_surname(individual):
     """Extract (given, surname, alt_surnames) from an individual.
 
     The primary NAME (no TYPE, or TYPE 'birth') supplies given+surname. Alt
-    surnames are collected from three conventions:
-      - secondary NAME blocks with `2 TYPE married` (their `2 SURN` or /…/)
+    surnames are collected from:
+      - secondary NAME blocks whose `2 TYPE` is one of `married`, `maiden`,
+        `aka` (taken from `2 SURN` or the /…/ form)
       - `2 _MARNM <surname>` sub-tags (MyHeritage / Family Tree Maker)
       - `2 _FORMERNAME <surname>` sub-tags (former / previous surname)
     Multiple distinct values are joined with ", ".
 
-    If a person has ONLY a married NAME (no birth/untyped NAME), the first
-    one is used as the primary instead; remaining alts (if any) still go
-    into the comma-joined list.
+    If a person has ONLY alt NAMEs (no birth/untyped NAME), the first alt
+    is promoted to primary; remaining alts (if any) still go into the
+    comma-joined list.
     """
     primary_name, primary_surname = "", ""
     primary_found = False
-    married_names = []  # (given, surname) pairs from TYPE=married NAMEs
+    alt_named = []  # (given, surname) pairs from married/maiden/aka NAMEs
     inline_alts = []   # surnames from _MARNM / _FORMERNAME sub-tags
 
     for child in individual.get_child_elements():
         if child.get_tag() != "NAME":
             continue
         first, last = _split_name_value(child.get_value() or "")
-        if _name_type(child) == "married":
+        if _name_type(child) in _ALT_SURNAME_NAME_TYPES:
             surn = _surn_child(child) or last
             if surn:
-                married_names.append((first, surn))
+                alt_named.append((first, surn))
         elif not primary_found:
             primary_name, primary_surname = first, last
             primary_found = True
         for alt in _inline_alt_surnames(child):
             inline_alts.append(alt)
 
-    if not primary_found and married_names:
-        primary_name, primary_surname = married_names.pop(0)
+    if not primary_found and alt_named:
+        primary_name, primary_surname = alt_named.pop(0)
 
     seen = set()
     if primary_surname:
         seen.add(primary_surname)
     deduped = []
-    for _, surn in married_names:
+    for _, surn in alt_named:
         if surn not in seen:
             deduped.append(surn)
             seen.add(surn)
