@@ -1296,6 +1296,15 @@ def main():
         metavar="N",
         help="Number of parallel workers (default: 16).",
     )
+    parser.add_argument(
+        "--force",
+        nargs="+",
+        metavar="FILE",
+        default=[],
+        help="Force-rebuild these files even if their JSON is up to date. "
+        "Match by basename, case-insensitive, with or without .ged "
+        "extension (e.g. --force Artel Renko). Other files still follow --mode.",
+    )
     args = parser.parse_args()
     full_mode = args.mode == "full"
 
@@ -1336,6 +1345,29 @@ def main():
         print(f"No GEDCOM files found in '{INPUT_DIR}'.", file=sys.stderr)
         return
 
+    # Resolve --force entries to actual filenames (basename, case-insensitive,
+    # .ged extension optional). Warn about any that don't match. For each
+    # matched file, bump the GED mtime by +1s so the resulting last_modified
+    # in metadata.json changes, which triggers downstream re-import.
+    forced_files: set[str] = set()
+    if args.force:
+        by_lower = {f.lower(): f for f in gedcom_files}
+        for entry in args.force:
+            stem = entry.lower()
+            if not stem.endswith(".ged"):
+                stem += ".ged"
+            actual = by_lower.get(stem)
+            if actual:
+                forced_files.add(actual)
+                path = os.path.join(INPUT_DIR, actual)
+                new_mtime = os.path.getmtime(path) + 1
+                os.utime(path, (new_mtime, new_mtime))
+            else:
+                print(
+                    f"Warning: --force '{entry}' did not match any file in {INPUT_DIR}",
+                    file=sys.stderr,
+                )
+
     # Store metadata about processed files for the frontend
     metadata = []
     contributor_urls = _load_contributor_urls()
@@ -1346,7 +1378,7 @@ def main():
             executor.submit(
                 _process_one_file,
                 filename,
-                full_mode,
+                full_mode or filename in forced_files,
                 contributor_urls,
                 INPUT_DIR,
                 OUTPUT_DIR,

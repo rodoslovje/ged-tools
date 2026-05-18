@@ -430,6 +430,19 @@ def _stitch_conc_split_utf8(raw: bytes) -> bytes:
     return raw
 
 
+# Brother's Keeper sometimes mixes DOS-codepage bytes for Western umlauts
+# (e.g. München = 'M' 0x81 'nchen') into otherwise cp1250 exports. These
+# byte values are undefined in cp1250, so a plain decode raises and the
+# errors='replace' fallback turns them into U+FFFD ('?'). Pre-map them to
+# the equivalent cp1250 bytes so the decode succeeds losslessly. Only
+# cp1250-undefined positions are listed — defined ones (e.g. 0x9A = š)
+# would corrupt real Slovenian content if remapped.
+_DOS_LEFTOVER_TO_CP1250 = bytes.maketrans(
+    bytes([0x81, 0x83, 0x88, 0x90, 0x98]),
+    bytes([0xFC, 0xE2, 0xEA, 0xC9, 0xFF]),  # ü, â, ê, É, ÿ
+)
+
+
 def _detect_encoding(raw: bytes) -> str:
     """Detect encoding of GEDCOM raw bytes. Returns a Python codec name."""
     # 1. BOM detection
@@ -558,13 +571,15 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
                     if _is_disguised_cp1250(raw):
                         encoding = "windows-1250"
 
+    if encoding == "windows-1250":
+        raw = raw.translate(_DOS_LEFTOVER_TO_CP1250)
+
     try:
         text = raw.decode(encoding)
     except UnicodeDecodeError:
-        # File has bytes undefined in the chosen encoding (e.g. 0x81 in a cp1250 file
-        # that also contains DOS-encoded German umlauts). Retry with the same encoding
-        # using replacement chars — this preserves all correctly-encoded characters
-        # (Slovenian Š/Č/Ž) and substitutes only the truly undefined bytes.
+        # File has bytes undefined in the chosen encoding. Retry with replacement
+        # chars — preserves correctly-encoded characters (Slovenian Š/Č/Ž) and
+        # substitutes only the truly undefined bytes.
         text = raw.decode(encoding, errors="replace")
     except LookupError:
         text = raw.decode("latin-1", errors="replace")
