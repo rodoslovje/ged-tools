@@ -28,11 +28,17 @@ Options:
     --stat        Show counts of top-level GEDCOM records (individuals,
                   families, objects, sources, notes, etc.) plus the number of
                   unique places referenced across all events.
+    --sw          Show the software that generated each GEDCOM (from the HEAD
+                  record's SOUR/NAME/VERS/CORP). One row per input file.
     --csv         Output as CSV
     --any-place   For --person/--surnames: fall back to baptism, residence, or
                   death place when birth place is absent (checked in that order)
 
-At least one of --person, --surnames, --family, --url, --addr, --duplicate-url, or --stat must be specified.
+Multiple input files may be passed (e.g. via a shell glob). For --sw they are
+combined into a single table; for other queries each file's output is preceded
+by a "=== filename ===" header.
+
+At least one of --person, --surnames, --family, --url, --addr, --duplicate-url, --stat, or --sw must be specified.
 
 Examples:
     python tools/gedcom-query.py family.ged --person
@@ -53,6 +59,8 @@ Examples:
     python tools/gedcom-query.py family.ged --person "Jakob Renka 1764" --descendants --addr
     python tools/gedcom-query.py family.ged --duplicate-url
     python tools/gedcom-query.py family.ged --stat
+    python tools/gedcom-query.py ../srd-data/index/filtered/*.ged --sw
+    python tools/gedcom-query.py ../srd-data/index/filtered/*.ged --sw --csv > sw.csv
 """
 
 import argparse
@@ -318,6 +326,44 @@ def _get_marriage(fam_el) -> tuple[str, str]:
                 place = subch.get_value().strip()
         return year, place
     return "", ""
+
+
+def _extract_software(input_path: str) -> dict:
+    """Read just the HEAD record and return {sour, name, vers, corp}.
+
+    `2 NAME/VERS/CORP` are only collected when nested directly under `1 SOUR`,
+    so the GEDCOM standard version under `1 GEDC / 2 VERS` is not mistaken for
+    the software version.
+    """
+    parse_path, is_tmp = _transcode_to_utf8(input_path)
+    try:
+        sour = name = vers = corp = ""
+        in_sour = False
+        with open(parse_path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.rstrip("\r\n")
+                if line.startswith("0 "):
+                    if not line.startswith("0 HEAD"):
+                        break
+                    continue
+                if line.startswith("1 "):
+                    if line.startswith("1 SOUR"):
+                        sour = line[6:].strip()
+                        in_sour = True
+                    else:
+                        in_sour = False
+                    continue
+                if in_sour and line.startswith("2 "):
+                    if line.startswith("2 NAME"):
+                        name = line[6:].strip()
+                    elif line.startswith("2 VERS"):
+                        vers = line[6:].strip()
+                    elif line.startswith("2 CORP"):
+                        corp = line[6:].strip()
+    finally:
+        if is_tmp:
+            os.unlink(parse_path)
+    return {"sour": sour, "name": name, "vers": vers, "corp": corp}
 
 
 # ---------------------------------------------------------------------------
@@ -933,6 +979,39 @@ def _family_rows(root_elements, ptr_index) -> list[tuple]:
     return rows
 
 
+def software_query(input_paths: list[str], use_csv: bool) -> None:
+    rows = []
+    for path in input_paths:
+        try:
+            info = _extract_software(path)
+        except Exception as e:
+            print(f"WARNING: could not read '{path}': {e}", file=sys.stderr)
+            info = {"sour": "", "name": "", "vers": "", "corp": ""}
+        rows.append(
+            (os.path.basename(path), info["sour"], info["name"], info["vers"], info["corp"])
+        )
+
+    rows.sort(key=lambda r: _collation_key(r[0]))
+
+    headers = ("File", "SOUR", "Name", "Version", "Corporation")
+    if use_csv:
+        out = csv.writer(sys.stdout)
+        out.writerow(headers)
+        for row in rows:
+            out.writerow(row)
+        return
+
+    widths = [
+        max(len(headers[i]), max((len(r[i]) for r in rows), default=0))
+        for i in range(len(headers))
+    ]
+    fmt = "  ".join(f"{{:<{w}}}" for w in widths)
+    print(fmt.format(*headers))
+    print(fmt.format(*("-" * w for w in widths)))
+    for row in rows:
+        print(fmt.format(*row).rstrip())
+
+
 def query_file(
     input_path: str,
     person_queries: list[str] | None,
@@ -1232,7 +1311,9 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    arg_parser.add_argument("input", help="Input GEDCOM file (.ged)")
+    arg_parser.add_argument(
+        "input", nargs="+", help="Input GEDCOM file(s) (.ged); multiple allowed"
+    )
     arg_parser.add_argument(
         "--person",
         nargs="*",
@@ -1292,6 +1373,11 @@ def main() -> None:
         action="store_true",
         help="Show counts of top-level GEDCOM records and unique places",
     )
+    arg_parser.add_argument(
+        "--sw",
+        action="store_true",
+        help="Show the software that generated each GEDCOM (from HEAD/SOUR)",
+    )
     arg_parser.add_argument("--csv", action="store_true", help="Output as CSV")
     arg_parser.add_argument(
         "--any-place",
@@ -1310,9 +1396,10 @@ def main() -> None:
         and args.addr is None
         and not args.duplicate_url
         and not args.stat
+        and not args.sw
     ):
         arg_parser.error(
-            "at least one of --person, --surnames, --family, --url, --addr, --duplicate-url, or --stat must be specified"
+            "at least one of --person, --surnames, --family, --url, --addr, --duplicate-url, --stat, or --sw must be specified"
         )
     if (args.ancestors or args.descendants) and not (
         args.person and len(args.person) > 0
@@ -1325,22 +1412,32 @@ def main() -> None:
     if args.search_events and args.url is None:
         arg_parser.error("--search-events requires --url")
 
-    query_file(
-        args.input,
-        args.person,
-        args.ancestors,
-        args.descendants,
-        args.surnames,
-        args.location,
-        args.family,
-        args.url,
-        args.search_events,
-        args.addr,
-        args.duplicate_url,
-        args.stat,
-        args.csv,
-        args.any_place,
-    )
+    if args.sw:
+        software_query(args.input, args.csv)
+        return
+
+    multi = len(args.input) > 1
+    for i, input_path in enumerate(args.input):
+        if multi and not args.csv:
+            if i > 0:
+                print()
+            print(f"=== {input_path} ===")
+        query_file(
+            input_path,
+            args.person,
+            args.ancestors,
+            args.descendants,
+            args.surnames,
+            args.location,
+            args.family,
+            args.url,
+            args.search_events,
+            args.addr,
+            args.duplicate_url,
+            args.stat,
+            args.csv,
+            args.any_place,
+        )
 
 
 if __name__ == "__main__":
