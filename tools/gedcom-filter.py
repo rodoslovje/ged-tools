@@ -18,6 +18,14 @@ Options:
     --descendants          Keep all descendants of the root person
                            (children, grandchildren, …) plus the family records
                            that connect them. Can be combined with --ancestors.
+    --bloodline            Keep all blood relatives — equivalent to
+                           --ancestors --descendants, which collects every
+                           descendant of every ancestor (siblings, cousins,
+                           aunts/uncles, etc.).
+    --partners             Also keep the partner (spouse) of every kept person,
+                           plus the marriage family. Adds spouses that would
+                           otherwise be missing — most useful with --ancestors
+                           alone, where FAMS branches are not walked.
     --related              Also keep all descendants of every ancestor already
                            included (use with --ancestors). This pulls in
                            cousins, aunts/uncles, and all their descendants.
@@ -59,6 +67,12 @@ Examples:
 
     # All blood relatives reachable through the ancestor tree
     python tools/gedcom-filter.py family.ged related.ged --ancestors --related --person @I123@
+
+    # All blood relatives (descendants of every ancestor)
+    python tools/gedcom-filter.py family.ged bloodline.ged --bloodline --person @I123@
+
+    # Ancestors plus their spouses
+    python tools/gedcom-filter.py family.ged ancestors.ged --ancestors --partners --person @I123@
 
     # Multiple root persons — union of all their ancestors
     python tools/gedcom-filter.py family.ged out.ged --ancestors --person @I123@ @I456@
@@ -692,6 +706,64 @@ def _collect_siblings(
 
 
 # ---------------------------------------------------------------------------
+# Partner (spouse) collection
+# ---------------------------------------------------------------------------
+
+
+def _collect_partners(
+    indi_ptrs: set[str],
+    ptr_index: dict,
+    verbose: bool,
+    forbidden: frozenset[str] | set[str] = frozenset(),
+) -> tuple[set[str], set[str]]:
+    """For each individual in `indi_ptrs`, follow FAMS links and collect every
+    other HUSB/WIFE (their spouse) plus the FAMS family itself.
+
+    Returns (new_indi, new_fam) — additions only; people already in indi_ptrs
+    and anyone in `forbidden` are skipped.
+    """
+    new_indi: set[str] = set()
+    new_fam: set[str] = set()
+
+    for ptr in indi_ptrs:
+        if ptr in forbidden:
+            continue
+        indi = ptr_index.get(ptr)
+        if indi is None:
+            continue
+        for ch in indi.get_child_elements():
+            if ch.get_tag() != "FAMS":
+                continue
+            fam_ptr = ch.get_value().strip()
+            fam = ptr_index.get(fam_ptr)
+            if fam is None or fam.get_tag() != gedcom.tags.GEDCOM_TAG_FAMILY:
+                continue
+            new_fam.add(fam_ptr)
+            for fch in fam.get_child_elements():
+                if fch.get_tag() not in (
+                    gedcom.tags.GEDCOM_TAG_HUSBAND,
+                    gedcom.tags.GEDCOM_TAG_WIFE,
+                ):
+                    continue
+                sp_ptr = fch.get_value().strip()
+                if (
+                    sp_ptr == ptr
+                    or sp_ptr in indi_ptrs
+                    or sp_ptr in new_indi
+                    or sp_ptr in forbidden
+                ):
+                    continue
+                sp = ptr_index.get(sp_ptr)
+                if sp is None:
+                    continue
+                new_indi.add(sp_ptr)
+                if verbose:
+                    print(f"  [keep:partner] {sp_ptr}  {_indi_label(sp)}")
+
+    return new_indi, new_fam
+
+
+# ---------------------------------------------------------------------------
 # Related collection
 # ---------------------------------------------------------------------------
 
@@ -816,6 +888,116 @@ def _collect_related(
 
 
 # ---------------------------------------------------------------------------
+# Per-target expansion (used by the main filter loop)
+# ---------------------------------------------------------------------------
+
+
+def _expand_for_target(
+    target_ptr: str,
+    ptr_index: dict,
+    forbidden: set[str],
+    mode_ancestors: bool,
+    mode_descendants: bool,
+    related: bool,
+    related_depth: int,
+    siblings: bool,
+    partners: bool,
+    verbose: bool,
+) -> tuple[set[str], set[str]]:
+    """Run the full expansion pipeline (bloodline → related closure → partners
+    → consistency) for one target individual. Returns the resulting
+    (indi_ptrs, fam_ptrs) sets.
+    """
+    indi_ptrs: set[str] = {target_ptr}
+    fam_ptrs: set[str] = set()
+    ancestor_walked: set[str] = set()
+    descendant_walked: set[str] = set()
+
+    def _expand_blood_line() -> None:
+        if mode_ancestors:
+            for ptr in list(indi_ptrs - ancestor_walked):
+                a_indi, a_fam = _collect_ancestors(ptr, ptr_index, verbose, forbidden)
+                indi_ptrs.update(a_indi)
+                fam_ptrs.update(a_fam)
+                ancestor_walked.update(a_indi)
+        if mode_descendants:
+            for ptr in list(indi_ptrs - descendant_walked):
+                d_indi, d_fam = _collect_descendants(ptr, ptr_index, verbose, forbidden)
+                indi_ptrs.update(d_indi)
+                fam_ptrs.update(d_fam)
+                descendant_walked.update(d_indi)
+        if siblings:
+            s_indi, s_fam = _collect_siblings(
+                set(indi_ptrs), indi_ptrs, ptr_index, verbose, forbidden
+            )
+            indi_ptrs.update(s_indi)
+            fam_ptrs.update(s_fam)
+
+    _expand_blood_line()
+
+    if related:
+        SAFETY_CAP = 50
+        iteration = 0
+        while True:
+            iteration += 1
+            before_size = (len(indi_ptrs), len(fam_ptrs))
+            before_set = set(indi_ptrs)
+            stop_ptrs = set() if mode_descendants else {target_ptr}
+            indi_ptrs, fam_ptrs = _collect_related(
+                indi_ptrs, fam_ptrs, ptr_index, stop_ptrs, verbose, forbidden
+            )
+            if siblings:
+                new_in_laws = indi_ptrs - before_set
+                s2_indi, s2_fam = _collect_siblings(
+                    new_in_laws, indi_ptrs, ptr_index, verbose, forbidden
+                )
+                indi_ptrs.update(s2_indi)
+                fam_ptrs.update(s2_fam)
+            _expand_blood_line()
+            if related_depth > 0 and iteration >= related_depth:
+                break
+            if (len(indi_ptrs), len(fam_ptrs)) == before_size:
+                break
+            if iteration >= SAFETY_CAP:
+                print(
+                    f"WARN: closure stopped at safety cap ({SAFETY_CAP} iterations)",
+                    file=sys.stderr,
+                )
+                break
+
+    if partners:
+        p_indi, p_fam = _collect_partners(indi_ptrs, ptr_index, verbose, forbidden)
+        indi_ptrs.update(p_indi)
+        fam_ptrs.update(p_fam)
+
+    # Consistency: every kept family must have its HUSB/WIFE present.
+    for fam_ptr in list(fam_ptrs):
+        fam = ptr_index.get(fam_ptr)
+        if fam is None:
+            continue
+        for ch in fam.get_child_elements():
+            if ch.get_tag() not in (
+                gedcom.tags.GEDCOM_TAG_HUSBAND,
+                gedcom.tags.GEDCOM_TAG_WIFE,
+            ):
+                continue
+            parent_ptr = ch.get_value().strip()
+            if (
+                parent_ptr
+                and parent_ptr in ptr_index
+                and parent_ptr not in indi_ptrs
+                and parent_ptr not in forbidden
+            ):
+                indi_ptrs.add(parent_ptr)
+                if verbose:
+                    print(
+                        f"  [keep:parent ] {parent_ptr}  {_indi_label(ptr_index[parent_ptr])}"
+                    )
+
+    return indi_ptrs, fam_ptrs
+
+
+# ---------------------------------------------------------------------------
 # Main filter logic
 # ---------------------------------------------------------------------------
 
@@ -829,6 +1011,7 @@ def filter_file(
     related: bool,
     related_depth: int,
     siblings: bool,
+    partners: bool,
     living: str | None,
     verbose: bool,
 ) -> None:
@@ -858,9 +1041,6 @@ def filter_file(
     for ptr in target_ptrs:
         print(f"{label}  {ptr}  {_indi_label(ptr_index[ptr])}", file=sys.stderr)
 
-    indi_ptrs: set[str] = set(target_ptrs)
-    fam_ptrs: set[str] = set()
-
     # Forbidden zone: individuals on the side of the tree the user did NOT
     # request. Closure must not cross root persons into this zone.
     #   --ancestors only  → forbid root's descendants
@@ -877,168 +1057,55 @@ def filter_file(
             forbidden |= a_indi
     forbidden -= set(target_ptrs)  # roots themselves are always allowed
 
-    # Track which individuals we've already started ancestor/descendant walks
-    # from — avoids redundant walks across closure iterations.
-    ancestor_walked: set[str] = set()
-    descendant_walked: set[str] = set()
-
-    totals = {
-        "ancestors": [0, 0],
-        "descendants": [0, 0],
-        "siblings": [0, 0],
-        "related": [0, 0],
-        "siblings_inlaws": [0, 0],
-    }
-
-    def _expand_blood_line() -> None:
-        """Apply the user-requested blood-line rules (--ancestors, --descendants,
-        --siblings) to every individual currently in indi_ptrs. Idempotent —
-        already-walked individuals are skipped via ancestor_walked /
-        descendant_walked tracking.
-        """
-        if mode_ancestors:
-            before = (len(indi_ptrs), len(fam_ptrs))
-            for ptr in indi_ptrs - ancestor_walked:
-                a_indi, a_fam = _collect_ancestors(ptr, ptr_index, verbose, forbidden)
-                indi_ptrs.update(a_indi)
-                fam_ptrs.update(a_fam)
-                ancestor_walked.update(a_indi)
-            totals["ancestors"][0] += len(indi_ptrs) - before[0]
-            totals["ancestors"][1] += len(fam_ptrs) - before[1]
-        if mode_descendants:
-            before = (len(indi_ptrs), len(fam_ptrs))
-            for ptr in indi_ptrs - descendant_walked:
-                d_indi, d_fam = _collect_descendants(ptr, ptr_index, verbose, forbidden)
-                indi_ptrs.update(d_indi)
-                fam_ptrs.update(d_fam)
-                descendant_walked.update(d_indi)
-            totals["descendants"][0] += len(indi_ptrs) - before[0]
-            totals["descendants"][1] += len(fam_ptrs) - before[1]
-        if siblings:
-            before = (len(indi_ptrs), len(fam_ptrs))
-            s_indi, s_fam = _collect_siblings(
-                set(indi_ptrs), indi_ptrs, ptr_index, verbose, forbidden
-            )
-            indi_ptrs.update(s_indi)
-            fam_ptrs.update(s_fam)
-            totals["siblings"][0] += len(indi_ptrs) - before[0]
-            totals["siblings"][1] += len(fam_ptrs) - before[1]
-
-    # Phase 1: blood-line expansion of root targets (ancestors, descendants,
-    # siblings — whichever the user requested).
-    _expand_blood_line()
-
-    # Phase 2: --related closure. Each iteration runs `_collect_related` once
-    # (a marriage hop), then re-applies blood-line rules to anyone newly added
-    # so each in-law gets the same ancestor/sibling treatment as a target.
-    # `related_depth` caps how many marriage hops happen; 0 = unlimited.
-    SAFETY_CAP = 50
-    iteration = 0
-    if related:
-        while True:
-            iteration += 1
-            before_size = (len(indi_ptrs), len(fam_ptrs))
-            before_set = set(indi_ptrs)
-
-            stop_ptrs = set() if mode_descendants else set(target_ptrs)
-            indi_ptrs, fam_ptrs = _collect_related(
-                indi_ptrs, fam_ptrs, ptr_index, stop_ptrs, verbose, forbidden
-            )
-            totals["related"][0] += len(indi_ptrs) - before_size[0]
-            totals["related"][1] += len(fam_ptrs) - before_size[1]
-
-            if siblings:
-                before = (len(indi_ptrs), len(fam_ptrs))
-                new_in_laws = indi_ptrs - before_set
-                s2_indi, s2_fam = _collect_siblings(
-                    new_in_laws, indi_ptrs, ptr_index, verbose, forbidden
-                )
-                indi_ptrs.update(s2_indi)
-                fam_ptrs.update(s2_fam)
-                totals["siblings_inlaws"][0] += len(indi_ptrs) - before[0]
-                totals["siblings_inlaws"][1] += len(fam_ptrs) - before[1]
-
-            # Apply blood-line rules to in-laws so they get full ancestor /
-            # sibling expansion just like the original targets.
-            _expand_blood_line()
-
-            if related_depth > 0 and iteration >= related_depth:
-                break
-            if (len(indi_ptrs), len(fam_ptrs)) == before_size:
-                break  # fixed point
-            if iteration >= SAFETY_CAP:
-                print(
-                    f"WARN: closure stopped at safety cap ({SAFETY_CAP} iterations)",
-                    file=sys.stderr,
-                )
-                break
-
-    if mode_ancestors:
-        print(
-            f"Ancestors:    {totals['ancestors'][0]} individuals, "
-            f"{totals['ancestors'][1]} families kept",
-            file=sys.stderr,
+    # Run the full expansion pipeline independently for each target person, so
+    # we can report per-person contribution counts. The union of these sets is
+    # what gets written to the output (deduplicated — a person who appears in
+    # multiple bloodlines is counted once in the total).
+    indi_ptrs: set[str] = set()
+    fam_ptrs: set[str] = set()
+    rows: list[tuple[str, int, int]] = []
+    for target_ptr in target_ptrs:
+        p_indi, p_fam = _expand_for_target(
+            target_ptr,
+            ptr_index,
+            forbidden,
+            mode_ancestors,
+            mode_descendants,
+            related,
+            related_depth,
+            siblings,
+            partners,
+            verbose,
         )
-    if mode_descendants:
-        print(
-            f"Descendants:  {totals['descendants'][0]} individuals, "
-            f"{totals['descendants'][1]} families kept",
-            file=sys.stderr,
-        )
-    if siblings:
-        print(
-            f"Siblings:     {totals['siblings'][0]} additional individuals, "
-            f"{totals['siblings'][1]} families kept",
-            file=sys.stderr,
-        )
-    if related:
-        print(
-            f"Related:      {totals['related'][0]} additional individuals, "
-            f"{totals['related'][1]} families kept",
-            file=sys.stderr,
-        )
-        if siblings and (totals["siblings_inlaws"][0] or totals["siblings_inlaws"][1]):
-            print(
-                f"Siblings:     {totals['siblings_inlaws'][0]} additional individuals, "
-                f"{totals['siblings_inlaws'][1]} families kept (of in-laws)",
-                file=sys.stderr,
-            )
-        if iteration > 1:
-            print(f"Closure:      ran {iteration} pass(es)", file=sys.stderr)
+        rows.append((_indi_label(ptr_index[target_ptr]), len(p_indi), len(p_fam)))
+        indi_ptrs |= p_indi
+        fam_ptrs |= p_fam
 
-    # Consistency: every kept family must have its HUSB/WIFE in indi_ptrs,
-    # otherwise the FAM record dangles pointing to dropped individuals
-    # (e.g. siblings added via --siblings drag in the parent family but not
-    # the parents themselves).
-    parent_added = 0
-    for fam_ptr in fam_ptrs:
-        fam = ptr_index.get(fam_ptr)
-        if fam is None:
-            continue
-        for ch in fam.get_child_elements():
-            if ch.get_tag() not in (
-                gedcom.tags.GEDCOM_TAG_HUSBAND,
-                gedcom.tags.GEDCOM_TAG_WIFE,
-            ):
-                continue
-            parent_ptr = ch.get_value().strip()
-            if (
-                parent_ptr
-                and parent_ptr in ptr_index
-                and parent_ptr not in indi_ptrs
-                and parent_ptr not in forbidden
-            ):
-                indi_ptrs.add(parent_ptr)
-                parent_added += 1
-                if verbose:
-                    print(
-                        f"  [keep:parent ] {parent_ptr}  {_indi_label(ptr_index[parent_ptr])}"
-                    )
-    print(
-        f"Consistency:  {parent_added} additional individuals kept "
-        f"(parents of kept families)",
-        file=sys.stderr,
+    # Print per-person table with deduplicated total
+    total_label = "TOTAL (deduplicated)"
+    name_w = max(
+        len("Person"),
+        len(total_label),
+        max((len(r[0]) for r in rows), default=0),
     )
+    indi_w = max(
+        len("Individuals"),
+        len(str(len(indi_ptrs))),
+        max((len(str(r[1])) for r in rows), default=0),
+    )
+    fam_w = max(
+        len("Families"),
+        len(str(len(fam_ptrs))),
+        max((len(str(r[2])) for r in rows), default=0),
+    )
+    fmt = f"  {{:<{name_w}}}  {{:>{indi_w}}}  {{:>{fam_w}}}"
+    print("", file=sys.stderr)
+    print(fmt.format("Person", "Individuals", "Families"), file=sys.stderr)
+    print(fmt.format("-" * name_w, "-" * indi_w, "-" * fam_w), file=sys.stderr)
+    for r in rows:
+        print(fmt.format(*r), file=sys.stderr)
+    print(fmt.format("-" * name_w, "-" * indi_w, "-" * fam_w), file=sys.stderr)
+    print(fmt.format(total_label, len(indi_ptrs), len(fam_ptrs)), file=sys.stderr)
 
     # Remove INDIs and FAMs not in the keep sets
     to_remove = []
@@ -1166,6 +1233,17 @@ def main():
         action="store_true",
         help="Also keep all siblings of every included person",
     )
+    arg_parser.add_argument(
+        "--bloodline",
+        action="store_true",
+        help="Keep all blood relatives (= --ancestors --descendants: every "
+        "descendant of every ancestor)",
+    )
+    arg_parser.add_argument(
+        "--partners",
+        action="store_true",
+        help="Also keep the partner (spouse) of every kept person",
+    )
     living_group = arg_parser.add_mutually_exclusive_group()
     living_group.add_argument(
         "--living-private",
@@ -1193,9 +1271,13 @@ def main():
 
     args = arg_parser.parse_args()
 
+    if args.bloodline:
+        args.ancestors = True
+        args.descendants = True
+
     if not args.ancestors and not args.descendants:
         print(
-            "ERROR: at least one filter mode must be specified (--ancestors, --descendants).",
+            "ERROR: at least one filter mode must be specified (--ancestors, --descendants, --bloodline).",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -1217,6 +1299,7 @@ def main():
         related=args.related,
         related_depth=args.related_depth,
         siblings=args.siblings,
+        partners=args.partners,
         living=living,
         verbose=args.verbose,
     )
