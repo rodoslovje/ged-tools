@@ -12,6 +12,8 @@ Options:
                   "Given Surname", or "Given Surname YYYY").
     --ancestors   With --person names: also include all ancestors.
     --descendants With --person names: also include all descendants.
+    --bloodline   With --person names: include all blood relatives
+                  (= all descendants of all ancestors of the person).
     --surnames    Output unique surnames instead of full person rows.
     --location    With --surnames: also output the place of the oldest
                   (earliest birth year) occurrence of each surname.
@@ -45,6 +47,7 @@ Examples:
     python tools/gedcom-query.py family.ged --person "Luka Renko"
     python tools/gedcom-query.py family.ged --person "Franc Renko 1901" --ancestors
     python tools/gedcom-query.py family.ged --person "@I1@" --descendants
+    python tools/gedcom-query.py family.ged --person "Luka Renko" --bloodline
     python tools/gedcom-query.py family.ged --surnames
     python tools/gedcom-query.py family.ged --surnames --location
     python tools/gedcom-query.py family.ged --person "Luka Renko" --ancestors --surnames --location --any-place
@@ -1017,6 +1020,7 @@ def query_file(
     person_queries: list[str] | None,
     do_ancestors: bool,
     do_descendants: bool,
+    do_bloodline: bool,
     do_surnames: bool,
     do_location: bool,
     do_family: bool,
@@ -1052,6 +1056,10 @@ def query_file(
     ptr_filter: set | None = None
     if person_queries is not None and len(person_queries) > 0:
         ptr_filter = _find_persons(person_queries, root_elements, ptr_index)
+        if do_bloodline:
+            ptr_filter = _collect_descendants(
+                _collect_ancestors(ptr_filter, ptr_index), ptr_index
+            )
         if do_ancestors:
             ptr_filter = _collect_ancestors(ptr_filter, ptr_index)
         if do_descendants:
@@ -1331,6 +1339,11 @@ def main() -> None:
         help="With --person names: also include all descendants",
     )
     arg_parser.add_argument(
+        "--bloodline",
+        action="store_true",
+        help="With --person names: include all blood relatives (descendants of all ancestors)",
+    )
+    arg_parser.add_argument(
         "--surnames",
         action="store_true",
         help="Output unique surnames instead of full person rows",
@@ -1401,11 +1414,11 @@ def main() -> None:
         arg_parser.error(
             "at least one of --person, --surnames, --family, --url, --addr, --duplicate-url, --stat, or --sw must be specified"
         )
-    if (args.ancestors or args.descendants) and not (
+    if (args.ancestors or args.descendants or args.bloodline) and not (
         args.person and len(args.person) > 0
     ):
         arg_parser.error(
-            "--ancestors/--descendants require --person with at least one name"
+            "--ancestors/--descendants/--bloodline require --person with at least one name"
         )
     if args.location and not args.surnames:
         arg_parser.error("--location requires --surnames")
@@ -1427,6 +1440,7 @@ def main() -> None:
             args.person,
             args.ancestors,
             args.descendants,
+            args.bloodline,
             args.surnames,
             args.location,
             args.family,
