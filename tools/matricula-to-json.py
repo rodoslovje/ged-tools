@@ -139,6 +139,71 @@ def normalize_name_surname(name, surname):
     return name, surname
 
 
+def clean_paren_name(value):
+    """Normalize parenthesized name cells to 'primary (alt1 alt2)' form.
+
+    Source cells use parens to mark alternative or uncertain spellings:
+      '(Janez'                    → 'Janez'              (stray opening paren)
+      '(Janez Nepomuk)'           → 'Janez Nepomuk'      (single name in parens)
+      '(Fere, Flere)'             → 'Fere (Flere)'       (first is primary, rest are alts)
+      'Janez (Ivan)'              → 'Janez (Ivan)'       (already canonical)
+      'Alojzija Marija (Slavica)' → 'Alojzija Marija (Slavica)'
+    """
+    s = (value or "").strip()
+    if not s:
+        return s
+    m = re.match(r"^([^()]+?)\s*\((.+)\)\s*$", s)
+    if m:
+        primary = re.sub(r"\s+", " ", m.group(1).strip())
+        alts = re.sub(r"\s*,\s*", " ", m.group(2).strip())
+        alts = re.sub(r"\s+", " ", alts).strip()
+        return f"{primary} ({alts})" if alts else primary
+    m = re.match(r"^\((.+)\)\s*$", s)
+    if m:
+        parts = [p.strip() for p in m.group(1).split(",") if p.strip()]
+        if not parts:
+            return ""
+        primary = re.sub(r"\s+", " ", parts[0])
+        alts = " ".join(parts[1:])
+        return f"{primary} ({alts})" if alts else primary
+    if s.startswith("("):
+        s = s[1:].lstrip()
+    if s.endswith(")"):
+        s = s[:-1].rstrip()
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def clean_paren_surnames(primary, alt):
+    """Drop enclosing parens from a (surname, alt_surname) pair.
+
+    Source data uses parens to mark alternative spellings, sometimes split
+    across the two cells, sometimes packed into one:
+      'Štibelj (Stibilj)', ''               → 'Štibelj', 'Stibilj'
+      '(Belehar', 'Belihar, Bilhar, Bobnar)' → 'Belehar', 'Belihar, Bilhar, Bobnar'
+      '(Fere, Flere)', ''                   → 'Fere', 'Flere'
+      '(Lah', ''                            → 'Lah', ''
+    """
+    p = (primary or "").strip()
+    a = (alt or "").strip()
+    if not a:
+        m = re.match(r"^([^()]+?)\s*\((.+)\)\s*$", p)
+        if m:
+            return m.group(1).strip(), m.group(2).strip()
+        m = re.match(r"^\((.+)\)\s*$", p)
+        if m:
+            parts = [x.strip() for x in m.group(1).split(",")]
+            return parts[0], ", ".join(parts[1:])
+    if p.startswith("("):
+        p = p[1:].lstrip()
+    if p.endswith(")"):
+        p = p[:-1].rstrip()
+    if a.startswith("("):
+        a = a[1:].lstrip()
+    if a.endswith(")"):
+        a = a[:-1].rstrip()
+    return p, a
+
+
 def build_place(row):
     parish = cell_str(row.get("parish"))
     address = cell_str(row.get("address"))
@@ -248,13 +313,19 @@ def make_person_entry(name, surname, sex, alt_surname="", person_id=None):
 
 
 def birth_record(row):
-    child_name = cell_str(row.get("child_name")) or cell_str(row.get("child_alt_name"))
-    father_name = cell_str(row.get("father_name"))
-    father_surname = cell_str(row.get("father_surname"))
-    father_alt = cell_str(row.get("father_alt_surname"))
-    mother_name = cell_str(row.get("mother_name"))
-    mother_surname = cell_str(row.get("mother_surname"))
-    mother_alt = cell_str(row.get("mother_alt_surname"))
+    child_name = clean_paren_name(
+        cell_str(row.get("child_name")) or cell_str(row.get("child_alt_name"))
+    )
+    father_name = clean_paren_name(cell_str(row.get("father_name")))
+    father_surname, father_alt = clean_paren_surnames(
+        cell_str(row.get("father_surname")),
+        cell_str(row.get("father_alt_surname")),
+    )
+    mother_name = clean_paren_name(cell_str(row.get("mother_name")))
+    mother_surname, mother_alt = clean_paren_surnames(
+        cell_str(row.get("mother_surname")),
+        cell_str(row.get("mother_alt_surname")),
+    )
 
     # Inherit mother's surname when father is unknown (must run before normalization).
     child_surname = (
@@ -308,12 +379,16 @@ def birth_record(row):
 
 
 def marriage_record(row):
-    groom_name = cell_str(row.get("groom_name"))
-    groom_surname = cell_str(row.get("groom_surname"))
-    groom_alt = cell_str(row.get("groom_alt_surname"))
-    bride_name = cell_str(row.get("bride_name"))
-    bride_surname = cell_str(row.get("bride_surname"))
-    bride_alt = cell_str(row.get("bride_alt_surname"))
+    groom_name = clean_paren_name(cell_str(row.get("groom_name")))
+    groom_surname, groom_alt = clean_paren_surnames(
+        cell_str(row.get("groom_surname")),
+        cell_str(row.get("groom_alt_surname")),
+    )
+    bride_name = clean_paren_name(cell_str(row.get("bride_name")))
+    bride_surname, bride_alt = clean_paren_surnames(
+        cell_str(row.get("bride_surname")),
+        cell_str(row.get("bride_alt_surname")),
+    )
 
     groom_name, groom_surname = normalize_name_surname(groom_name, groom_surname)
     bride_name, bride_surname = normalize_name_surname(bride_name, bride_surname)
@@ -338,6 +413,27 @@ def marriage_record(row):
     return record
 
 
+def _first_page_url(url):
+    """Rewrite a row's matricula URL to point at page 1 of the same book."""
+    if not url:
+        return ""
+    new_url, n = re.subn(r"pg=\d+", "pg=1", url)
+    if n:
+        return new_url
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}pg=1"
+
+
+def _book_entry(path, count, sample_url):
+    kind = detect_book_kind(path)
+    return {
+        "name": os.path.splitext(os.path.basename(path))[0],
+        "type": "birth" if kind == "K" else "marriage",
+        "count": count,
+        "url": _first_page_url(sample_url),
+    }
+
+
 def _load_contributor_urls():
     try:
         with open(CONTRIBUTORS_FILE, encoding="utf-8") as f:
@@ -348,24 +444,35 @@ def _load_contributor_urls():
 
 
 def _is_up_to_date(input_paths, output_paths):
-    """True iff all output_paths exist and are at least as new as every input."""
-    if not output_paths or not input_paths:
+    """True iff at least one output exists and every existing output is at
+    least as new as the newest input. A missing output is treated as
+    intentionally absent (no records of that type)."""
+    if not input_paths:
+        return False
+    present_outputs = [p for p in output_paths if os.path.exists(p)]
+    if not present_outputs:
         return False
     try:
-        oldest_output = min(os.path.getmtime(p) for p in output_paths)
+        oldest_output = min(os.path.getmtime(p) for p in present_outputs)
         newest_input = max(os.path.getmtime(p) for p in input_paths)
     except OSError:
         return False
     return oldest_output >= newest_input
 
 
+def _load_json_list(path):
+    """Read a JSON list from disk; return [] if the file is absent."""
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
 def _skipped_meta(contributor, births_path, marriages_path, source_mtime, contributor_urls):
     """Build a metadata entry by re-reading existing JSONs (no reprocessing)."""
     try:
-        with open(births_path, encoding="utf-8") as f:
-            births = json.load(f)
-        with open(marriages_path, encoding="utf-8") as f:
-            marriages = json.load(f)
+        births = _load_json_list(births_path)
+        marriages = _load_json_list(marriages_path)
     except (FileNotFoundError, json.JSONDecodeError):
         return None
     links_count = (sum(1 for r in births if r.get("links"))
@@ -381,7 +488,7 @@ def _skipped_meta(contributor, births_path, marriages_path, source_mtime, contri
     }
 
 
-def process_contributor(contributor, files, contributor_urls, full_mode):
+def process_contributor(contributor, files, contributor_urls, full_mode, existing_index):
     births_path = os.path.join(OUTPUT_DIR, f"{contributor}-matricula-persons.json")
     marriages_path = os.path.join(OUTPUT_DIR, f"{contributor}-matricula-families.json")
 
@@ -396,28 +503,39 @@ def process_contributor(contributor, files, contributor_urls, full_mode):
             contributor, births_path, marriages_path, latest_mtime, contributor_urls
         )
         if meta_entry is not None:
+            books_index = existing_index.get(contributor)
+            if books_index is None:
+                books_index = _read_books_index(source_files)
             return {
                 "contributor": contributor,
                 "births_count": meta_entry["persons_count"],
                 "marriages_count": meta_entry["families_count"],
                 "skipped_files": skipped_files,
                 "meta_entry": meta_entry,
+                "books_index": books_index,
             }
         # fall through and reprocess if existing JSON couldn't be read
 
     print(f"Processing: {contributor}", file=sys.stderr)
 
     births, marriages = [], []
+    books_index = []
     latest_mtime = 0.0
 
     for path in source_files:
         kind = detect_book_kind(path)
         latest_mtime = max(latest_mtime, os.path.getmtime(path))
+        count = 0
+        sample_url = ""
         for row in read_rows(path):
+            count += 1
+            if not sample_url:
+                sample_url = cell_str(row.get("url"))
             if kind == "K":
                 births.append(birth_record(row))
             else:
                 marriages.append(marriage_record(row))
+        books_index.append(_book_entry(path, count, sample_url))
 
     births.sort(key=lambda r: (
         r.get("surname", "") or "",
@@ -435,14 +553,8 @@ def process_contributor(contributor, files, contributor_urls, full_mode):
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    with open(births_path, "w", encoding="utf-8") as f:
-        json.dump(births, f, ensure_ascii=False, indent=4)
-    with open(marriages_path, "w", encoding="utf-8") as f:
-        json.dump(marriages, f, ensure_ascii=False, indent=4)
-
-    if latest_mtime:
-        os.utime(births_path, (latest_mtime, latest_mtime))
-        os.utime(marriages_path, (latest_mtime, latest_mtime))
+    _write_or_remove(births_path, births, latest_mtime)
+    _write_or_remove(marriages_path, marriages, latest_mtime)
 
     links_count = (
         sum(1 for r in births if r.get("links"))
@@ -466,7 +578,60 @@ def process_contributor(contributor, files, contributor_urls, full_mode):
         "marriages_count": len(marriages),
         "skipped_files": skipped_files,
         "meta_entry": meta_entry,
+        "books_index": books_index,
     }
+
+
+def _to_nfc(obj):
+    """Recursively normalize all strings in a JSON-like structure to NFC.
+
+    Filesystem-derived strings come back as NFD on macOS; the JSON outputs we
+    surface to other tools should use NFC for stable byte-for-byte comparisons.
+    """
+    if isinstance(obj, str):
+        return unicodedata.normalize("NFC", obj)
+    if isinstance(obj, list):
+        return [_to_nfc(x) for x in obj]
+    if isinstance(obj, dict):
+        return {_to_nfc(k): _to_nfc(v) for k, v in obj.items()}
+    return obj
+
+
+def _write_or_remove(path, records, mtime):
+    """Write the JSON if non-empty; otherwise remove any stale file at that path."""
+    if records:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(records, f, ensure_ascii=False, indent=4)
+        if mtime:
+            os.utime(path, (mtime, mtime))
+    elif os.path.exists(path):
+        os.remove(path)
+
+
+def _read_books_index(source_files):
+    """Lightweight pass: row count + first URL per book (for skip-mode fallback)."""
+    entries = []
+    for path in source_files:
+        count = 0
+        sample_url = ""
+        for row in read_rows(path):
+            count += 1
+            if not sample_url:
+                sample_url = cell_str(row.get("url"))
+        entries.append(_book_entry(path, count, sample_url))
+    return entries
+
+
+def write_matricula_index(summaries, output_dir):
+    """Write matricula-index.json grouping book entries by contributor."""
+    index = {}
+    for s in summaries:
+        books = s.get("books_index") or []
+        if books:
+            index[s["contributor"]] = books
+    path = os.path.join(output_dir, "matricula-index.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(_to_nfc(index), f, ensure_ascii=False, indent=4)
 
 
 def update_metadata_file(new_entries, output_dir):
@@ -491,7 +656,7 @@ def update_metadata_file(new_entries, output_dir):
     combined.sort(key=lambda x: locale.strxfrm(x.get("contributor", "")))
 
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(combined, f, ensure_ascii=False, indent=4)
+        json.dump(_to_nfc(combined), f, ensure_ascii=False, indent=4)
 
 
 def main():
@@ -542,12 +707,23 @@ def main():
 
     contributor_urls = _load_contributor_urls()
 
+    existing_index = {}
+    index_path = os.path.join(OUTPUT_DIR, "matricula-index.json")
+    if os.path.exists(index_path):
+        try:
+            with open(index_path, encoding="utf-8") as f:
+                existing_index = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            existing_index = {}
+
     summaries = []
     for contributor in sorted(by_contributor, key=locale.strxfrm):
         summaries.append(process_contributor(
-            contributor, by_contributor[contributor], contributor_urls, full_mode))
+            contributor, by_contributor[contributor], contributor_urls,
+            full_mode, existing_index))
 
     update_metadata_file([s["meta_entry"] for s in summaries], OUTPUT_DIR)
+    write_matricula_index(summaries, OUTPUT_DIR)
 
     print("Completed!", file=sys.stderr)
 
