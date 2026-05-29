@@ -58,9 +58,11 @@ def main():
             print(f"WARNING: Directory not found: {ged_dir}")
             continue
 
-        ged_files = glob.glob(os.path.join(ged_dir, "*.GED")) + glob.glob(
-            os.path.join(ged_dir, "*.ged")
-        )
+        ged_files = [
+            unicodedata.normalize("NFC", p)
+            for p in glob.glob(os.path.join(ged_dir, "*.GED"))
+            + glob.glob(os.path.join(ged_dir, "*.ged"))
+        ]
 
         if not ged_files:
             print(f"No .GED/.ged files found in '{ged_dir}'.")

@@ -1401,6 +1401,9 @@ def main() -> None:
 
     args = arg_parser.parse_args()
 
+    if isinstance(args.input, list):
+        args.input = [unicodedata.normalize("NFC", p) for p in args.input]
+
     if (
         args.person is None
         and not args.surnames

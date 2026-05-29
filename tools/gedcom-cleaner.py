@@ -118,8 +118,12 @@ Available Transformers (listed in execution order):
                          Uses birth, baptism, or christening date (BIRT preferred).
                          Partial years are filled conservatively (e.g. "195_" → 1959).
     died20y_private      Anonymize individuals whose death, burial, or cremation
-                         was recorded within the last 20 years (date must be
-                         present). Complies with ZVOP-2 post-mortem protection.
+                         was recorded within the last 20 years. Normally requires
+                         a parseable death year. Also fires when a death event is
+                         present but the death date is unparseable, AND the birth
+                         year is within the last 20 years — in that case the
+                         death (if real) must also be within the window. Complies
+                         with ZVOP-2 post-mortem protection.
     living100y_private   Anonymize individuals with a birth year under 100 years
                          ago and no death record: set name to "<private>" and remove
                          all events. Uses birth, baptism, or christening date.
@@ -761,6 +765,20 @@ def _estimate_birth_year_from_relatives(
         elif _ch.get_tag() == "FAMS":
             _fam = ptr_index.get(_ch.get_value().strip())
             if _fam:
+                _self_ptr = indi_el.get_pointer()
+                _spouses = [
+                    ptr_index.get(_fch.get_value().strip())
+                    for _fch in _fam.get_child_elements()
+                    if _fch.get_tag()
+                    in (gedcom.tags.GEDCOM_TAG_HUSBAND, gedcom.tags.GEDCOM_TAG_WIFE)
+                ]
+                _spouses = [
+                    s
+                    for s in _spouses
+                    if s is not None and s.get_pointer() != _self_ptr
+                ]
+                if _spouses and any(_indi_is_private_name(s) for s in _spouses):
+                    return curr_year - 1, "spouse private"
                 _children = [
                     ptr_index.get(_fch.get_value().strip())
                     for _fch in _fam.get_child_elements()
@@ -3090,19 +3108,33 @@ def process_file(
                             _birth_date_str = gch.get_value().strip()
                             if _tag == "BIRT":
                                 break
+            _by2 = (
+                _EXACT_YEAR_RE.search(_birth_date_str).group(1)
+                if _birth_date_str and _EXACT_YEAR_RE.search(_birth_date_str)
+                else None
+            )
+            _birth_year_int = int(_by2) if _by2 else None
+            _trigger = None
             if (
                 has_death_event
                 and death_year is not None
                 and (_curr_year - death_year) < 20
             ):
+                _trigger = "death"
+            elif (
+                has_death_event
+                and death_year is None
+                and _birth_year_int is not None
+                and (_curr_year - _birth_year_int) < 20
+            ):
+                # Death event present but no parseable date — if the person was
+                # also born within the last 20 years, the death (if real) must
+                # also be within that window. Same ZVOP-2 protection applies.
+                _trigger = "birth"
+            if _trigger is not None:
                 _anonymise_indi(element)
                 ts.transformed += 1
                 if verbose_transform or verbose_private:
-                    _by2 = (
-                        _EXACT_YEAR_RE.search(_birth_date_str).group(1)
-                        if _birth_date_str and _EXACT_YEAR_RE.search(_birth_date_str)
-                        else None
-                    )
                     _dy2 = (
                         _EXACT_YEAR_RE.search(_death_date_str).group(1)
                         if _death_date_str and _EXACT_YEAR_RE.search(_death_date_str)
@@ -3111,6 +3143,8 @@ def process_file(
                     parts = [_name_display or "?"]
                     parts.append(f"b.{_by2}" if _by2 else "b.?")
                     parts.append(f"d.{_dy2}" if _dy2 else "d.?")
+                    if _trigger == "birth":
+                        parts.append("(inferred from birth)")
                     print(
                         f"  [transform:died20y_private] INDI {element.get_pointer()} {' '.join(parts)}"
                     )
@@ -3134,61 +3168,72 @@ def process_file(
             for el in _parser.get_root_child_elements()
             if el.get_pointer()
         }
-        for _element in _parser.get_root_child_elements():
-            if _element.get_tag() != gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
-                continue
-            _ts.processed += 1
-            _is_private = False
-            _rel_reason = ""
-            _raw_name = ""
-            _lp_label = _indi_label(_element)
-            for _ch in _element.get_child_elements():
-                if _ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME:
-                    _raw_name = _ch.get_value()
-                    break
-            _name_val = _raw_name.replace("/", "").strip().lower()
-            if (
-                _name_val == "<private>"
-                and "/" not in _raw_name
-                and not any(
-                    _c.get_tag() == "SURN" and _c.get_value().strip()
-                    for _c in _element.get_child_elements()
-                )
-            ):
-                continue
-            _living_marker = _indi_marked_living(_element)
-            if _living_marker:
-                _is_private = True
-                _rel_reason = _living_marker
-            elif not _indi_has_death(_element):
-                _birth_year, _birth_date_str = _indi_get_birth(_element)
-                if _birth_year is None:
-                    _ry, _rdescs = _estimate_birth_year_from_relatives(
-                        _element, _ptr_idx, _curr_year
+        # Iterate until no new individuals are marked private. Marking one
+        # spouse propagates privacy to the other spouse (via spouse check),
+        # then to children (via all-parents-private check), etc.
+        _first_pass = True
+        for _pass_n in range(20):
+            _new_in_pass = 0
+            for _element in _parser.get_root_child_elements():
+                if _element.get_tag() != gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
+                    continue
+                if _first_pass:
+                    _ts.processed += 1
+                _is_private = False
+                _rel_reason = ""
+                _raw_name = ""
+                _lp_label = _indi_label(_element)
+                for _ch in _element.get_child_elements():
+                    if _ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME:
+                        _raw_name = _ch.get_value()
+                        break
+                _name_val = _raw_name.replace("/", "").strip().lower()
+                if (
+                    _name_val == "<private>"
+                    and "/" not in _raw_name
+                    and not any(
+                        _c.get_tag() == "SURN" and _c.get_value().strip()
+                        for _c in _element.get_child_elements()
                     )
-                    if _ry is not None:
-                        if (_curr_year - _ry) < cutoff_years:
-                            _is_private = True
-                            _rel_reason = f"estimate b.{_ry} ({_rdescs})"
-                        elif _verbose_transform:
-                            print(
-                                f"  [transform:{_name}] INDI {_element.get_pointer()}  {_lp_label} estimate b.{_ry} ({_rdescs}) → NOT private"
-                            )
-                elif (_curr_year - _birth_year) < cutoff_years:
+                ):
+                    continue
+                _living_marker = _indi_marked_living(_element)
+                if _living_marker:
                     _is_private = True
-                    if _birth_date_str and _PARTIAL_YEAR_RE.search(_birth_date_str):
-                        _rel_reason = (
-                            f"partial b.{_birth_date_str} → conservative {_birth_year}"
+                    _rel_reason = _living_marker
+                elif not _indi_has_death(_element):
+                    _birth_year, _birth_date_str = _indi_get_birth(_element)
+                    if _birth_year is None:
+                        _ry, _rdescs = _estimate_birth_year_from_relatives(
+                            _element, _ptr_idx, _curr_year
                         )
-            if _is_private:
-                _anon(_element)
-                _ts.transformed += 1
-                if _verbose_transform or _verbose_private:
-                    _msg = f"  [transform:{_name}] INDI {_element.get_pointer()}  {_lp_label}"
-                    if _rel_reason:
-                        _msg += f" {_rel_reason}"
-                    _msg += f" → {action_label}"
-                    print(_msg)
+                        if _ry is not None:
+                            if (_curr_year - _ry) < cutoff_years:
+                                _is_private = True
+                                _rel_reason = f"estimate b.{_ry} ({_rdescs})"
+                            elif _verbose_transform and _first_pass:
+                                print(
+                                    f"  [transform:{_name}] INDI {_element.get_pointer()}  {_lp_label} estimate b.{_ry} ({_rdescs}) → NOT private"
+                                )
+                    elif (_curr_year - _birth_year) < cutoff_years:
+                        _is_private = True
+                        if _birth_date_str and _PARTIAL_YEAR_RE.search(_birth_date_str):
+                            _rel_reason = (
+                                f"partial b.{_birth_date_str} → conservative {_birth_year}"
+                            )
+                if _is_private:
+                    _anon(_element)
+                    _ts.transformed += 1
+                    _new_in_pass += 1
+                    if _verbose_transform or _verbose_private:
+                        _msg = f"  [transform:{_name}] INDI {_element.get_pointer()}  {_lp_label}"
+                        if _rel_reason:
+                            _msg += f" {_rel_reason}"
+                        _msg += f" → {action_label}"
+                        print(_msg)
+            _first_pass = False
+            if _new_in_pass == 0:
+                break
 
     if "living100y_private" in transformers:
         _apply_living_private_transformer(
@@ -3790,6 +3835,14 @@ def main():
 
     args = parser.parse_args()
 
+    import unicodedata as _ud_args
+    for _attr in ("input", "output", "input_dir", "output_dir"):
+        _val = getattr(args, _attr, None)
+        if isinstance(_val, str):
+            setattr(args, _attr, _ud_args.normalize("NFC", _val))
+    if getattr(args, "stems", None):
+        args.stems = [_ud_args.normalize("NFC", s) for s in args.stems]
+
     requested_clean = [c.strip() for c in args.clean.split(",") if c.strip()]
     requested_strip = [s.strip() for s in args.strip.split(",") if s.strip()]
     requested_transform = [t.strip() for t in args.transform.split(",") if t.strip()]
@@ -3881,26 +3934,25 @@ def main():
         except locale.Error:
             locale.setlocale(locale.LC_COLLATE, "")
 
+        import unicodedata as _ud
+
         all_in_dir = [
-            f for f in os.listdir(args.input_dir) if f.lower().endswith(".ged")
+            _ud.normalize("NFC", f)
+            for f in os.listdir(args.input_dir)
+            if f.lower().endswith(".ged")
         ]
         if args.stems:
-            import unicodedata as _ud
-
             stems_lower = {_ud.normalize("NFC", s).lower() for s in args.stems}
             ged_files = [
                 f
                 for f in all_in_dir
-                if _ud.normalize("NFC", os.path.splitext(f)[0]).lower() in stems_lower
+                if os.path.splitext(f)[0].lower() in stems_lower
             ]
             missing = [
                 s
                 for s in args.stems
                 if _ud.normalize("NFC", s).lower()
-                not in {
-                    _ud.normalize("NFC", os.path.splitext(f)[0]).lower()
-                    for f in ged_files
-                }
+                not in {os.path.splitext(f)[0].lower() for f in ged_files}
             ]
             if missing:
                 print(

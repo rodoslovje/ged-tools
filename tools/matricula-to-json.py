@@ -424,13 +424,28 @@ def _first_page_url(url):
     return f"{url}{sep}pg=1"
 
 
+def _parish_from_name(name):
+    """Extract the parish from a book filename stem like
+    'Indeks K Cerklje na Gorenjskem 1635-1643' or 'Indeks P Adlešiči - 1791-1879'.
+    Returns '' if the prefix doesn't match the expected pattern.
+    """
+    m = re.match(r"^Indeks\s+[KP]\s+(.+)$", name)
+    if not m:
+        return ""
+    rest = re.sub(r"\s*-?\s*\d+(?:-\d+)?\s*$", "", m.group(1))
+    return rest.strip()
+
+
 def _book_entry(path, count, sample_url):
     kind = detect_book_kind(path)
+    name = os.path.splitext(os.path.basename(path))[0]
     return {
-        "name": os.path.splitext(os.path.basename(path))[0],
+        "name": name,
+        "parish": _parish_from_name(name),
         "type": "birth" if kind == "K" else "marriage",
         "count": count,
         "url": _first_page_url(sample_url),
+        "last_modified": datetime.fromtimestamp(os.path.getmtime(path)).isoformat(),
     }
 
 
@@ -690,8 +705,11 @@ def main():
     except locale.Error:
         locale.setlocale(locale.LC_COLLATE, "")
 
-    files = sorted(glob(os.path.join(args.input_root, "**", "*.xlsx"), recursive=True),
-                   key=locale.strxfrm)
+    files = sorted(
+        (unicodedata.normalize("NFC", p)
+         for p in glob(os.path.join(args.input_root, "**", "*.xlsx"), recursive=True)),
+        key=locale.strxfrm,
+    )
     files = [f for f in files if not os.path.basename(f).startswith("~$")]
 
     by_contributor = {}

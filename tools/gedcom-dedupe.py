@@ -24,6 +24,7 @@ import os
 import re
 import sys
 import tempfile
+import unicodedata
 from collections import defaultdict
 
 import chardet
@@ -271,6 +272,8 @@ def main():
     parser.add_argument("input", help="Input GEDCOM file to process")
     parser.add_argument("-o", "--output", required=True, help="Output GEDCOM file")
     args = parser.parse_args()
+    args.input = unicodedata.normalize("NFC", args.input)
+    args.output = unicodedata.normalize("NFC", args.output)
 
     print(f"Reading: {args.input}")
     parse_path, is_tmp = _transcode_to_utf8(args.input)

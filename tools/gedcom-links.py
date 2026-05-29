@@ -10,6 +10,7 @@ Usage:
 import argparse
 import re
 import sys
+import unicodedata
 from collections import Counter
 from urllib.parse import urlparse
 
@@ -61,6 +62,7 @@ def main():
     parser.add_argument("--levels", type=int, default=1, metavar="N", help="Number of path segments to include in domain+path stats (default: 1)")
     parser.add_argument("--verbose", action="store_true", help="Print per-file link counts")
     args = parser.parse_args()
+    args.files = [unicodedata.normalize("NFC", p) for p in args.files]
 
     all_links: list[str] = []
     for path in args.files:

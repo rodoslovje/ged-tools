@@ -1337,7 +1337,11 @@ def main():
     except locale.Error:
         locale.setlocale(locale.LC_COLLATE, "")
     gedcom_files = sorted(
-        [f for f in os.listdir(INPUT_DIR) if f.lower().endswith(".ged")],
+        [
+            unicodedata.normalize("NFC", f)
+            for f in os.listdir(INPUT_DIR)
+            if f.lower().endswith(".ged")
+        ],
         key=locale.strxfrm,
     )
 

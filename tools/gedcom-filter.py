@@ -87,6 +87,7 @@ import os
 import re
 import sys
 import tempfile
+import unicodedata
 
 import chardet
 from gedcom.element.element import Element
@@ -1270,6 +1271,8 @@ def main():
     )
 
     args = arg_parser.parse_args()
+    args.input = unicodedata.normalize("NFC", args.input)
+    args.output = unicodedata.normalize("NFC", args.output)
 
     if args.bloodline:
         args.ancestors = True

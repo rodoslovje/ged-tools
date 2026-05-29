@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import tempfile
+import unicodedata
 
 import chardet
 from gedcom.parser import Parser
@@ -166,6 +167,8 @@ def main():
     parser.add_argument("inputs", nargs="+", help="Input GEDCOM files to merge")
     parser.add_argument("-o", "--output", required=True, help="Output GEDCOM file")
     args = parser.parse_args()
+    args.inputs = [unicodedata.normalize("NFC", p) for p in args.inputs]
+    args.output = unicodedata.normalize("NFC", args.output)
 
     all_root_elements = []
     head_element = None

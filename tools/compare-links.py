@@ -19,6 +19,7 @@ import argparse
 import json
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 _MATRICULA_RE = re.compile(r'https?://(?:data\.)?matricula-online\.eu(?:/[^/\s\'"<>\]]+){5,}[^\s\'"<>\]]*', re.IGNORECASE)
@@ -304,10 +305,10 @@ def main():
     output_dir = Path(args.output_dir)
 
     if args.stems:
-        stems = args.stems
+        stems = [unicodedata.normalize("NFC", s) for s in args.stems]
     else:
-        stems = sorted(p.stem for p in filtered_dir.glob("*.ged"))
-        stems += sorted(p.stem for p in filtered_dir.glob("*.GED"))
+        stems = sorted(unicodedata.normalize("NFC", p.stem) for p in filtered_dir.glob("*.ged"))
+        stems += sorted(unicodedata.normalize("NFC", p.stem) for p in filtered_dir.glob("*.GED"))
         stems = sorted(set(stems))
 
     total_missing = 0
