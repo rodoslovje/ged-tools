@@ -231,6 +231,53 @@ python tools/gedcom-filter.py family.ged out.ged --descendants --person @I123@ @
 
 ---
 
+## gedcom-merge
+
+Merges multiple GEDCOM files into a single output file.
+
+This tool structurally merges multiple trees by concatenating their records. To ensure unique GEDCOM IDs for individuals, families, sources, and objects, it automatically prefixes all pointers with a file-specific identifier (e.g., `@I1@` from the first file becomes `@f1_I1@`, and `@I1@` from the second becomes `@f2_I1@`).
+
+`python tools/gedcom-merge.py <input1.ged> <input2.ged> ... -o <output.ged>`
+
+### Options
+
+| Option         | Description                       |
+| -------------- | --------------------------------- |
+| `-o, --output` | **Required.** Output GEDCOM file. |
+
+### Example
+
+```bash
+# Merge two family trees into one
+python tools/gedcom-merge.py DruzinskoDrevo_Udovic.ged DruzinskoDrevo_Brunskole.ged -o Merged_Tree.ged
+```
+
+---
+
+## gedcom-dedupe
+
+Finds and merges duplicate individuals in a GEDCOM file, typically after it has been combined using `gedcom-merge`.
+
+This tool identifies potential duplicate individuals based on their exact name and birth date. For each set of duplicates, it designates one as the "master" record and merges the others into it.
+
+**Merge strategy:**
+
+1.  All references to duplicate individuals (as spouses or children) are updated to point to the master individual.
+2.  Family links (`FAMC`/`FAMS`) from duplicates are added to the master record.
+3.  All other information from the duplicate records (events, notes, sources) is preserved by converting the entire duplicate record into a `NOTE` on the master record. This allows for manual review and integration.
+4.  The original duplicate records are removed from the file.
+
+`python tools/gedcom-dedupe.py <input.ged> -o <output.ged>`
+
+### Example
+
+```bash
+# Find and merge duplicates in a previously merged file
+python tools/gedcom-dedupe.py Merged_Tree.ged -o Merged_Deduplicated_Tree.ged
+```
+
+---
+
 ## gedcom-to-json
 
 Converts GEDCOM files from `data/filtered/` into JSON output files in `data/output/`. For each input file it produces three JSON files: `<stem>-births.json`, `<stem>-families.json`, and `<stem>-deaths.json`. Contributor metadata is read from `data/contributors.json`.
