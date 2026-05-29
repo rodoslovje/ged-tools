@@ -128,7 +128,11 @@ Available Transformers (listed in execution order):
                          anyone who could be under 100 is treated as living.
                          Falls back to relative-based birth year estimation
                          (parents +35y, children -35y) when birth date is entirely
-                         absent. Complies with ZVOP-2 for living persons.
+                         absent. Also fires on manual privacy markers (case-
+                         insensitive): the word "Living" anywhere in NAME / GIVN /
+                         SURN, or a NOTE that starts with "living" (e.g.
+                         "living - details excluded"). Complies with ZVOP-2 for
+                         living persons.
     living75y_private    Same as living100y_private but with a 75-year cutoff.
     living100y_initials  Same detection as living100y_private but reduces the full
                          name to initials (e.g. Luka /Renko/ -> L. /R./).
@@ -681,6 +685,35 @@ def _indi_is_private_name(indi_el) -> bool:
         if _c.get_tag() == gedcom.tags.GEDCOM_TAG_NAME:
             return _c.get_value().strip().lower() == "<private>"
     return False
+
+
+_LIVING_WORD_RE = re.compile(r"\bliving\b", re.IGNORECASE)
+
+
+def _indi_marked_living(indi_el) -> str:
+    """Return reason string if INDI is manually marked as living, else ''.
+
+    Triggers on (case-insensitive):
+      - any whitespace-separated word in NAME (or GIVN/SURN) equal to 'living'
+      - any NOTE child whose value begins with 'living' as a standalone word
+        (e.g. 'living - details excluded').
+    """
+    for _c in indi_el.get_child_elements():
+        tag = _c.get_tag()
+        if tag == gedcom.tags.GEDCOM_TAG_NAME:
+            name_val = _c.get_value().replace("/", " ")
+            if _LIVING_WORD_RE.search(name_val):
+                return "name marked 'Living'"
+            for gch in _c.get_child_elements():
+                if gch.get_tag() in ("GIVN", "SURN") and _LIVING_WORD_RE.search(
+                    gch.get_value()
+                ):
+                    return f"{gch.get_tag()} marked 'Living'"
+        elif tag == "NOTE":
+            note_val = _c.get_value().strip()
+            if re.match(r"^living\b", note_val, re.IGNORECASE):
+                return "NOTE marked 'living'"
+    return ""
 
 
 def _estimate_birth_year_from_relatives(
@@ -3123,8 +3156,10 @@ def process_file(
                 )
             ):
                 continue
-            if _name_val == "living":
+            _living_marker = _indi_marked_living(_element)
+            if _living_marker:
                 _is_private = True
+                _rel_reason = _living_marker
             elif not _indi_has_death(_element):
                 _birth_year, _birth_date_str = _indi_get_birth(_element)
                 if _birth_year is None:
