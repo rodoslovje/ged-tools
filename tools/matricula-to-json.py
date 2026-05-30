@@ -436,6 +436,14 @@ def _parish_from_name(name):
     return rest.strip()
 
 
+def _date_from_name(name):
+    """Extract the year range (e.g. '1791-1879' or '1635') from a book name.
+    Only accepts 4-digit years; returns '' if the name has no year suffix.
+    """
+    m = re.search(r"(?<!\d)(\d{4}(?:-\d{4})?)\s*$", name)
+    return m.group(1) if m else ""
+
+
 def _book_entry(path, count, sample_url):
     kind = detect_book_kind(path)
     name = os.path.splitext(os.path.basename(path))[0]
@@ -443,6 +451,7 @@ def _book_entry(path, count, sample_url):
         "name": name,
         "parish": _parish_from_name(name),
         "type": "birth" if kind == "K" else "marriage",
+        "date": _date_from_name(name),
         "count": count,
         "url": _first_page_url(sample_url),
         "last_modified": datetime.fromtimestamp(os.path.getmtime(path)).isoformat(),
