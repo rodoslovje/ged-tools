@@ -426,21 +426,29 @@ def _first_page_url(url):
 
 def _parish_from_name(name):
     """Extract the parish from a book filename stem like
-    'Indeks K Cerklje na Gorenjskem 1635-1643' or 'Indeks P Adlešiči - 1791-1879'.
-    Returns '' if the prefix doesn't match the expected pattern.
+    'Indeks K Cerklje na Gorenjskem 1635-1643', 'Indeks P Adlešiči - 1791-1879',
+    or 'Indeks P Golac - 1861-1884 - objavljen del'. The parish is everything
+    between the 'Indeks K/P' prefix and the first 4-digit year, so trailing
+    annotations after the year range are dropped too. Returns '' if the prefix
+    doesn't match the expected pattern.
     """
     m = re.match(r"^Indeks\s+[KP]\s+(.+)$", name)
     if not m:
         return ""
-    rest = re.sub(r"\s*-?\s*\d+(?:-\d+)?\s*$", "", m.group(1))
-    return rest.strip()
+    rest = m.group(1)
+    ym = re.search(r"(?<!\d)\d{4}(?:-\d{4})?(?!\d)", rest)
+    if ym:
+        rest = rest[:ym.start()]
+    return re.sub(r"[\s-]+$", "", rest.strip())
 
 
 def _date_from_name(name):
     """Extract the year range (e.g. '1791-1879' or '1635') from a book name.
-    Only accepts 4-digit years; returns '' if the name has no year suffix.
+    Only accepts 4-digit years and matches the first one anywhere in the name,
+    so ranges followed by annotations ('... 1861-1884 - objavljen del') still
+    parse. Returns '' if the name has no 4-digit year.
     """
-    m = re.search(r"(?<!\d)(\d{4}(?:-\d{4})?)\s*$", name)
+    m = re.search(r"(?<!\d)(\d{4}(?:-\d{4})?)(?!\d)", name)
     return m.group(1) if m else ""
 
 
@@ -512,6 +520,27 @@ def _skipped_meta(contributor, births_path, marriages_path, source_mtime, contri
     }
 
 
+def _check_interpreter(contributor, interpreter, path):
+    """Verify the row's interpret field contains the contributor folder name.
+
+    Catches xlsx files placed under the wrong contributor directory before
+    they pollute the per-contributor JSON outputs. Empty interpret cells are
+    skipped; the first non-empty mismatch aborts the whole run.
+    """
+    if not interpreter:
+        return
+    needle = unicodedata.normalize("NFC", contributor).casefold()
+    hay = unicodedata.normalize("NFC", interpreter).casefold()
+    if needle in hay:
+        return
+    print(
+        f"Error: interpret '{interpreter}' in {path} does not contain "
+        f"contributor folder name '{contributor}'",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
 def process_contributor(contributor, files, contributor_urls, full_mode, existing_index):
     births_path = os.path.join(OUTPUT_DIR, f"{contributor}-matricula-persons.json")
     marriages_path = os.path.join(OUTPUT_DIR, f"{contributor}-matricula-families.json")
@@ -552,6 +581,7 @@ def process_contributor(contributor, files, contributor_urls, full_mode, existin
         count = 0
         sample_url = ""
         for row in read_rows(path):
+            _check_interpreter(contributor, cell_str(row.get("interpreter")), path)
             count += 1
             if not sample_url:
                 sample_url = cell_str(row.get("url"))
