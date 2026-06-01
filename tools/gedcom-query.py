@@ -32,6 +32,12 @@ Options:
                   unique places referenced across all events.
     --sw          Show the software that generated each GEDCOM (from the HEAD
                   record's SOUR/NAME/VERS/CORP). One row per input file.
+    --sort-date   Sort --person by birth date and --family by marriage date
+                  (chronologically, undated entries last) instead of by name.
+                  Also switches the displayed dates from year-only to the full
+                  GEDCOM date (e.g. *12 MAR 1901).
+    --id          Prepend the GEDCOM pointer (@I..@/@F..@) to each --person or
+                  --family row.
     --csv         Output as CSV
     --any-place   For --person/--surnames: fall back to baptism, residence, or
                   death place when birth place is absent (checked in that order)
@@ -52,6 +58,10 @@ Examples:
     python tools/gedcom-query.py family.ged --surnames --location
     python tools/gedcom-query.py family.ged --person "Luka Renko" --ancestors --surnames --location --any-place
     python tools/gedcom-query.py family.ged --family
+    python tools/gedcom-query.py family.ged --person --sort-date
+    python tools/gedcom-query.py family.ged --family --sort-date
+    python tools/gedcom-query.py family.ged --person --id
+    python tools/gedcom-query.py family.ged --family --id --csv > families.csv
     python tools/gedcom-query.py family.ged --person --any-place
     python tools/gedcom-query.py family.ged --person --csv > persons.csv
     python tools/gedcom-query.py family.ged --family --csv > families.csv
@@ -265,6 +275,45 @@ def _extract_year(date_str: str) -> str:
     return m.group(1) if m else ""
 
 
+_MONTH_NUM = {
+    "JAN": 1,
+    "FEB": 2,
+    "MAR": 3,
+    "APR": 4,
+    "MAY": 5,
+    "JUN": 6,
+    "JUL": 7,
+    "AUG": 8,
+    "SEP": 9,
+    "OCT": 10,
+    "NOV": 11,
+    "DEC": 12,
+}
+_MONTH_RE = "|".join(_MONTH_NUM)
+
+
+def _date_sort_key(date_str: str) -> tuple[int, int, int]:
+    """Return (year, month, day) for chronological sorting; undated sorts last.
+
+    Missing components sort before present ones within the same year (e.g. a
+    bare year precedes 'JAN', which precedes '15 JAN'). Approximation/range
+    qualifiers (ABT, BEF, BET ... AND ...) are ignored beyond their year/month.
+    """
+    if not date_str:
+        return (99999, 99, 99)
+    year = _extract_year(date_str)
+    y = int(year) if year else 99999
+    m = 0
+    mo = re.search(rf"\b({_MONTH_RE})\b", date_str, re.IGNORECASE)
+    if mo:
+        m = _MONTH_NUM[mo.group(1).upper()]
+    d = 0
+    dd = re.search(rf"\b(\d{{1,2}})\s+(?:{_MONTH_RE})\b", date_str, re.IGNORECASE)
+    if dd:
+        d = int(dd.group(1))
+    return (y, m, d)
+
+
 def _parse_name(name_value: str) -> tuple[str, str]:
     """Parse 'Given /Surname/' into (given, surname)."""
     m = re.match(r"^(.*?)\s*/([^/]*)/\s*(.*)$", (name_value or "").strip())
@@ -299,36 +348,37 @@ def _get_name(indi_el) -> tuple[str, str]:
     return _parse_name(fallback) if fallback else ("", "")
 
 
-def _get_event(indi_el, event_tag: str) -> tuple[str, str]:
-    """Return (year, place) of the first occurrence of event_tag."""
+def _get_event_date(indi_el, event_tag: str) -> tuple[str, str]:
+    """Return (raw date string, place) of the first occurrence of event_tag."""
     for ch in indi_el.get_child_elements():
         if ch.get_tag() != event_tag:
             continue
-        year = place = ""
+        date = place = ""
         for subch in ch.get_child_elements():
             t = subch.get_tag()
             if t == gedcom.tags.GEDCOM_TAG_DATE:
-                year = _extract_year(subch.get_value())
+                date = (subch.get_value() or "").strip()
             elif t == gedcom.tags.GEDCOM_TAG_PLACE:
                 place = subch.get_value().strip()
-        return year, place
+        return date, place
     return "", ""
+
+
+def _get_event(indi_el, event_tag: str) -> tuple[str, str]:
+    """Return (year, place) of the first occurrence of event_tag."""
+    date, place = _get_event_date(indi_el, event_tag)
+    return _extract_year(date), place
+
+
+def _get_marriage_date(fam_el) -> tuple[str, str]:
+    """Return (raw date string, place) of the marriage event of a FAM element."""
+    return _get_event_date(fam_el, gedcom.tags.GEDCOM_TAG_MARRIAGE)
 
 
 def _get_marriage(fam_el) -> tuple[str, str]:
     """Return (year, place) of the marriage event of a FAM element."""
-    for ch in fam_el.get_child_elements():
-        if ch.get_tag() != gedcom.tags.GEDCOM_TAG_MARRIAGE:
-            continue
-        year = place = ""
-        for subch in ch.get_child_elements():
-            t = subch.get_tag()
-            if t == gedcom.tags.GEDCOM_TAG_DATE:
-                year = _extract_year(subch.get_value())
-            elif t == gedcom.tags.GEDCOM_TAG_PLACE:
-                place = subch.get_value().strip()
-        return year, place
-    return "", ""
+    date, place = _get_marriage_date(fam_el)
+    return _extract_year(date), place
 
 
 def _extract_software(input_path: str) -> dict:
@@ -570,7 +620,10 @@ def _surname_rows(
 
 
 def _person_rows(
-    root_elements, any_place: bool, ptr_filter: set | None = None
+    root_elements,
+    any_place: bool,
+    ptr_filter: set | None = None,
+    sort_by_date: bool = False,
 ) -> list[tuple]:
     rows = []
     for el in root_elements:
@@ -579,12 +632,26 @@ def _person_rows(
         if ptr_filter is not None and el.get_pointer().strip() not in ptr_filter:
             continue
         given, surn = _get_name(el)
-        birth, birth_place = _get_event(el, gedcom.tags.GEDCOM_TAG_BIRTH)
-        death, _ = _get_event(el, gedcom.tags.GEDCOM_TAG_DEATH)
+        if sort_by_date:
+            birth, birth_place = _get_event_date(el, gedcom.tags.GEDCOM_TAG_BIRTH)
+            death, _ = _get_event_date(el, gedcom.tags.GEDCOM_TAG_DEATH)
+        else:
+            birth, birth_place = _get_event(el, gedcom.tags.GEDCOM_TAG_BIRTH)
+            death, _ = _get_event(el, gedcom.tags.GEDCOM_TAG_DEATH)
         if any_place and not birth_place:
             birth_place = _get_place(el, "CHR", "RESI", gedcom.tags.GEDCOM_TAG_DEATH)
-        rows.append((given, surn, birth, death, birth_place))
-    rows.sort(key=lambda r: (_collation_key(r[1]), _collation_key(r[0])))
+        rows.append((given, surn, birth, death, birth_place, el.get_pointer().strip()))
+    if sort_by_date:
+        # Sort by full birth date (undated last), then by name.
+        rows.sort(
+            key=lambda r: (
+                _date_sort_key(r[2]),
+                _collation_key(r[1]),
+                _collation_key(r[0]),
+            )
+        )
+    else:
+        rows.sort(key=lambda r: (_collation_key(r[1]), _collation_key(r[0])))
     return rows
 
 
@@ -954,7 +1021,7 @@ def _stat_rows(root_elements) -> list[tuple[str, int]]:
     return rows
 
 
-def _family_rows(root_elements, ptr_index) -> list[tuple]:
+def _family_rows(root_elements, ptr_index, sort_by_date: bool = False) -> list[tuple]:
     rows = []
     for el in root_elements:
         if el.get_tag() != gedcom.tags.GEDCOM_TAG_FAMILY:
@@ -969,16 +1036,31 @@ def _family_rows(root_elements, ptr_index) -> list[tuple]:
                 indi = ptr_index.get(ch.get_value().strip())
                 if indi:
                     wg, ws = _get_name(indi)
-        marr, marr_place = _get_marriage(el)
-        rows.append((hg, hs, wg, ws, marr, marr_place))
-    rows.sort(
-        key=lambda r: (
-            _collation_key(r[1]),
-            _collation_key(r[0]),
-            _collation_key(r[3]),
-            _collation_key(r[2]),
+        if sort_by_date:
+            marr, marr_place = _get_marriage_date(el)
+        else:
+            marr, marr_place = _get_marriage(el)
+        rows.append((hg, hs, wg, ws, marr, marr_place, el.get_pointer().strip()))
+    if sort_by_date:
+        # Sort by full marriage date (undated last), then by husband/wife names.
+        rows.sort(
+            key=lambda r: (
+                _date_sort_key(r[4]),
+                _collation_key(r[1]),
+                _collation_key(r[0]),
+                _collation_key(r[3]),
+                _collation_key(r[2]),
+            )
         )
-    )
+    else:
+        rows.sort(
+            key=lambda r: (
+                _collation_key(r[1]),
+                _collation_key(r[0]),
+                _collation_key(r[3]),
+                _collation_key(r[2]),
+            )
+        )
     return rows
 
 
@@ -1031,6 +1113,8 @@ def query_file(
     do_stat: bool,
     use_csv: bool,
     any_place: bool,
+    sort_by_date: bool,
+    show_id: bool,
 ) -> None:
     parse_path, is_tmp = _transcode_to_utf8(input_path)
     try:
@@ -1085,15 +1169,18 @@ def query_file(
         and addr_pattern is None
     ):
         first_section = False
-        rows = _person_rows(root_elements, any_place, ptr_filter)
+        rows = _person_rows(root_elements, any_place, ptr_filter, sort_by_date)
         if use_csv:
-            out.writerow(["Name", "Surname", "Birth", "Death", "Place"])
-            for row in rows:
-                out.writerow(row)
+            header = ["Name", "Surname", "Birth", "Death", "Place"]
+            out.writerow((["ID"] + header) if show_id else header)
+            for given, surn, birth, death, place, ptr in rows:
+                fields = [given, surn, birth, death, place]
+                out.writerow(([ptr] + fields) if show_id else fields)
         else:
-            for given, surn, birth, death, place in rows:
+            for given, surn, birth, death, place, ptr in rows:
                 name = f"{given} {surn}".strip() or "?"
-                parts = [name]
+                parts = [ptr] if show_id else []
+                parts.append(name)
                 if birth:
                     parts.append(f"*{birth}")
                 if death:
@@ -1105,25 +1192,26 @@ def query_file(
     if do_family:
         if not first_section and not use_csv:
             print()
-        rows = _family_rows(root_elements, ptr_index)
+        rows = _family_rows(root_elements, ptr_index, sort_by_date)
         if use_csv:
-            out.writerow(
-                [
-                    "Husband_Given",
-                    "Husband_Surname",
-                    "Wife_Given",
-                    "Wife_Surname",
-                    "Marriage",
-                    "Marriage_Place",
-                ]
-            )
-            for row in rows:
-                out.writerow(row)
+            header = [
+                "Husband_Given",
+                "Husband_Surname",
+                "Wife_Given",
+                "Wife_Surname",
+                "Marriage",
+                "Marriage_Place",
+            ]
+            out.writerow((["ID"] + header) if show_id else header)
+            for hg, hs, wg, ws, marr, marr_place, ptr in rows:
+                fields = [hg, hs, wg, ws, marr, marr_place]
+                out.writerow(([ptr] + fields) if show_id else fields)
         else:
-            for hg, hs, wg, ws, marr, marr_place in rows:
+            for hg, hs, wg, ws, marr, marr_place, ptr in rows:
                 husb = f"{hg} {hs}".strip() or "?"
                 wife = f"{wg} {ws}".strip() or "?"
-                line = f"{husb} {wife}"
+                line = f"{ptr} " if show_id else ""
+                line += f"{husb} {wife}"
                 if marr:
                     line += f" ⚭{marr}"
                 if marr_place:
@@ -1391,6 +1479,18 @@ def main() -> None:
         action="store_true",
         help="Show the software that generated each GEDCOM (from HEAD/SOUR)",
     )
+    arg_parser.add_argument(
+        "--sort-date",
+        action="store_true",
+        dest="sort_date",
+        help="Sort --person by birth year and --family by marriage year (undated last)",
+    )
+    arg_parser.add_argument(
+        "--id",
+        action="store_true",
+        dest="show_id",
+        help="Prepend the GEDCOM pointer (@I..@/@F..@) to --person/--family rows",
+    )
     arg_parser.add_argument("--csv", action="store_true", help="Output as CSV")
     arg_parser.add_argument(
         "--any-place",
@@ -1427,6 +1527,10 @@ def main() -> None:
         arg_parser.error("--location requires --surnames")
     if args.search_events and args.url is None:
         arg_parser.error("--search-events requires --url")
+    if args.sort_date and not (args.person is not None or args.family):
+        arg_parser.error("--sort-date requires --person or --family")
+    if args.show_id and not (args.person is not None or args.family):
+        arg_parser.error("--id requires --person or --family")
 
     if args.sw:
         software_query(args.input, args.csv)
@@ -1454,6 +1558,8 @@ def main() -> None:
             args.stat,
             args.csv,
             args.any_place,
+            args.sort_date,
+            args.show_id,
         )
 
 
