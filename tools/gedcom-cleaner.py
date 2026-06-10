@@ -509,6 +509,14 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
     with open(input_path, "rb") as f:
         raw = f.read()
 
+    # Strip NUL bytes. Some exporters emit runs of \x00 as garbage field values
+    # (e.g. a 120-byte NUL run inside a PLAC), which are never meaningful in
+    # GEDCOM and cannot be stored in a PostgreSQL TEXT column downstream. Remove
+    # them here, at the earliest layer, so the junk never reaches the JSON.
+    _nul_stripped = b"\x00" in raw
+    if _nul_stripped:
+        raw = raw.replace(b"\x00", b"")
+
     # Normalise CR-only line endings (old Mac format) to LF so the GEDCOM parser
     # and all regex anchors work correctly. CRLF files are handled implicitly by
     # Python's text-mode open(); CR-only files are not.
@@ -537,7 +545,7 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
     if norm in ("utf8", "utf8sig"):
         try:
             text = raw.decode(encoding)
-            if not _cr_normalised and not _conc_stitched:
+            if not _cr_normalised and not _conc_stitched and not _nul_stripped:
                 return input_path, False
             # CR-normalisation or CONC-stitching changed the bytes; write the
             # decoded text to a temp UTF-8 file so the parser sees the fixed
