@@ -884,6 +884,9 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                 baptism_date, baptism_place, _ = get_event_data(
                     element, "CHR", sources_dict, obje_dict
                 )
+            burial_date, burial_place, _ = get_event_data(
+                element, "BURI", sources_dict, obje_dict
+            )
             for url in _get_all_event_links(
                 element, {"BURI", "CREM"}, sources_dict, obje_dict
             ):
@@ -962,7 +965,8 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
             }
 
             has_events = bool(
-                birth_date or birth_place or death_date or death_place or person_links
+                birth_date or birth_place or death_date or death_place
+                or burial_date or burial_place or person_links
             )
             name_norm = name.strip().lower()
             is_placeholder_only = name_norm in ("private", "<private>") or (
@@ -990,6 +994,11 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                     record["baptism"] = {
                         "date": baptism_date or "",
                         "place": baptism_place or "",
+                    }
+                if burial_date or burial_place:
+                    record["burial"] = {
+                        "date": burial_date or "",
+                        "place": burial_place or "",
                     }
                 if person_links:
                     record["links"] = _dedup_links(person_links)
