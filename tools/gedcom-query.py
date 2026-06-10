@@ -18,6 +18,7 @@ Options:
     --location    With --surnames: also output the place of the oldest
                   (earliest birth year) occurrence of each surname.
     --family      List all families: Husband Wife ⚭yyyy Place
+    --home-person Print the home person (indicated by _STP tag in MacFamilyTree)
     --url [URL]   List INDI and FAM records whose subtree contains URL as a
                   substring (case-insensitive). Omit value to match any URL.
                   By default only direct (non-event) children are searched.
@@ -46,11 +47,12 @@ Multiple input files may be passed (e.g. via a shell glob). For --sw they are
 combined into a single table; for other queries each file's output is preceded
 by a "=== filename ===" header.
 
-At least one of --person, --surnames, --family, --url, --addr, --duplicate-url, --stat, or --sw must be specified.
+At least one of --person, --surnames, --family, --home-person, --url, --addr, --duplicate-url, --stat, or --sw must be specified.
 
 Examples:
     python tools/gedcom-query.py family.ged --person
     python tools/gedcom-query.py family.ged --person "Luka Renko"
+    python tools/gedcom-query.py family.ged --home-person
     python tools/gedcom-query.py family.ged --person "Franc Renko 1901" --ancestors
     python tools/gedcom-query.py family.ged --person "@I1@" --descendants
     python tools/gedcom-query.py family.ged --person "Luka Renko" --bloodline
@@ -476,6 +478,18 @@ def _find_persons(queries: list[str], root_elements, ptr_index) -> set[str]:
         if not found:
             print(f"WARNING: no person found for '{q}'", file=sys.stderr)
         result |= found
+    return result
+
+
+def _find_home_persons(root_elements) -> set[str]:
+    """Return INDI pointer set for home person(s) marked with _STP."""
+    result = set()
+    for el in root_elements:
+        if el.get_tag() == gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
+            for ch in el.get_child_elements():
+                if ch.get_tag() == "_STP":
+                    result.add(el.get_pointer().strip())
+                    break
     return result
 
 
@@ -1073,7 +1087,13 @@ def software_query(input_paths: list[str], use_csv: bool) -> None:
             print(f"WARNING: could not read '{path}': {e}", file=sys.stderr)
             info = {"sour": "", "name": "", "vers": "", "corp": ""}
         rows.append(
-            (os.path.basename(path), info["sour"], info["name"], info["vers"], info["corp"])
+            (
+                os.path.basename(path),
+                info["sour"],
+                info["name"],
+                info["vers"],
+                info["corp"],
+            )
         )
 
     rows.sort(key=lambda r: _collation_key(r[0]))
@@ -1099,7 +1119,9 @@ def software_query(input_paths: list[str], use_csv: bool) -> None:
 
 def query_file(
     input_path: str,
+    multi: bool,
     person_queries: list[str] | None,
+    do_home_person: bool,
     do_ancestors: bool,
     do_descendants: bool,
     do_bloodline: bool,
@@ -1136,45 +1158,16 @@ def query_file(
     out = csv.writer(sys.stdout) if use_csv else None
     first_section = True
 
-    # Build person pointer filter when specific persons are requested
-    ptr_filter: set | None = None
-    if person_queries is not None and len(person_queries) > 0:
-        ptr_filter = _find_persons(person_queries, root_elements, ptr_index)
-        if do_bloodline:
-            ptr_filter = _collect_descendants(
-                _collect_ancestors(ptr_filter, ptr_index), ptr_index
-            )
-        if do_ancestors:
-            ptr_filter = _collect_ancestors(ptr_filter, ptr_index)
-        if do_descendants:
-            ptr_filter = _collect_descendants(ptr_filter, ptr_index)
-
-    if do_surnames:
-        first_section = False
-        rows = _surname_rows(
-            root_elements, any_place, ptr_filter, do_location, ptr_index
-        )
-        if use_csv:
-            out.writerow(["Surname", "Location"] if do_location else ["Surname"])
-            for row in rows:
-                out.writerow(list(row) if do_location else [row])
-        else:
-            for row in rows:
-                print(f"{row[0]} {row[1]}".rstrip() if do_location else row)
-
-    if (
-        person_queries is not None
-        and not do_surnames
-        and url_pattern is None
-        and addr_pattern is None
-    ):
-        first_section = False
-        rows = _person_rows(root_elements, any_place, ptr_filter, sort_by_date)
+    def _print_persons(rows):
         if use_csv:
             header = ["Name", "Surname", "Birth", "Death", "Place"]
+            if multi:
+                header.insert(0, "File")
             out.writerow((["ID"] + header) if show_id else header)
             for given, surn, birth, death, place, ptr in rows:
                 fields = [given, surn, birth, death, place]
+                if multi:
+                    fields.insert(0, os.path.basename(input_path))
                 out.writerow(([ptr] + fields) if show_id else fields)
         else:
             for given, surn, birth, death, place, ptr in rows:
@@ -1189,6 +1182,61 @@ def query_file(
                     parts.append(place)
                 print(" ".join(parts))
 
+    # Build person pointer filter when specific persons are requested
+    ptr_filter: set | None = None
+    if person_queries is not None and len(person_queries) > 0:
+        ptr_filter = _find_persons(person_queries, root_elements, ptr_index)
+        if do_bloodline:
+            ptr_filter = _collect_descendants(
+                _collect_ancestors(ptr_filter, ptr_index), ptr_index
+            )
+        if do_ancestors:
+            ptr_filter = _collect_ancestors(ptr_filter, ptr_index)
+        if do_descendants:
+            ptr_filter = _collect_descendants(ptr_filter, ptr_index)
+
+    if do_home_person:
+        home_ptrs = _find_home_persons(root_elements)
+        if not home_ptrs:
+            print("WARNING: no home person (_STP tag) found", file=sys.stderr)
+        else:
+            if not first_section and not use_csv:
+                print()
+            first_section = False
+            rows = _person_rows(root_elements, any_place, home_ptrs, sort_by_date)
+            _print_persons(rows)
+
+    if do_surnames:
+        first_section = False
+        rows = _surname_rows(
+            root_elements, any_place, ptr_filter, do_location, ptr_index
+        )
+        if use_csv:
+            header = ["Surname", "Location"] if do_location else ["Surname"]
+            if multi:
+                header.insert(0, "File")
+            out.writerow(header)
+            for row in rows:
+                fields = list(row) if do_location else [row]
+                if multi:
+                    fields.insert(0, os.path.basename(input_path))
+                out.writerow(fields)
+        else:
+            for row in rows:
+                print(f"{row[0]} {row[1]}".rstrip() if do_location else row)
+
+    if (
+        person_queries is not None
+        and not do_surnames
+        and url_pattern is None
+        and addr_pattern is None
+    ):
+        if not first_section and not use_csv:
+            print()
+        first_section = False
+        rows = _person_rows(root_elements, any_place, ptr_filter, sort_by_date)
+        _print_persons(rows)
+
     if do_family:
         if not first_section and not use_csv:
             print()
@@ -1202,9 +1250,13 @@ def query_file(
                 "Marriage",
                 "Marriage_Place",
             ]
+            if multi:
+                header.insert(0, "File")
             out.writerow((["ID"] + header) if show_id else header)
             for hg, hs, wg, ws, marr, marr_place, ptr in rows:
                 fields = [hg, hs, wg, ws, marr, marr_place]
+                if multi:
+                    fields.insert(0, os.path.basename(input_path))
                 out.writerow(([ptr] + fields) if show_id else fields)
         else:
             for hg, hs, wg, ws, marr, marr_place, ptr in rows:
@@ -1232,9 +1284,15 @@ def query_file(
                 print()
             first_section = False
             if use_csv:
-                out.writerow(["Name", "Surname", "Birth", "Death", "Place", "URLs"])
+                header = ["Name", "Surname", "Birth", "Death", "Place", "URLs"]
+                if multi:
+                    header.insert(0, "File")
+                out.writerow(header)
                 for given, surn, birth, death, place, urls in indi_rows:
-                    out.writerow([given, surn, birth, death, place, " ".join(urls)])
+                    fields = [given, surn, birth, death, place, " ".join(urls)]
+                    if multi:
+                        fields.insert(0, os.path.basename(input_path))
+                    out.writerow(fields)
             else:
                 for given, surn, birth, death, place, urls in indi_rows:
                     name = f"{given} {surn}".strip() or "?"
@@ -1253,19 +1311,23 @@ def query_file(
                 print()
             first_section = False
             if use_csv:
-                out.writerow(
-                    [
-                        "Husband_Given",
-                        "Husband_Surname",
-                        "Wife_Given",
-                        "Wife_Surname",
-                        "Marriage",
-                        "Marriage_Place",
-                        "URLs",
-                    ]
-                )
+                header = [
+                    "Husband_Given",
+                    "Husband_Surname",
+                    "Wife_Given",
+                    "Wife_Surname",
+                    "Marriage",
+                    "Marriage_Place",
+                    "URLs",
+                ]
+                if multi:
+                    header.insert(0, "File")
+                out.writerow(header)
                 for hg, hs, wg, ws, marr, marr_place, urls in fam_rows:
-                    out.writerow([hg, hs, wg, ws, marr, marr_place, " ".join(urls)])
+                    fields = [hg, hs, wg, ws, marr, marr_place, " ".join(urls)]
+                    if multi:
+                        fields.insert(0, os.path.basename(input_path))
+                    out.writerow(fields)
             else:
                 for hg, hs, wg, ws, marr, marr_place, urls in fam_rows:
                     husb = f"{hg} {hs}".strip() or "?"
@@ -1292,11 +1354,15 @@ def query_file(
                 print()
             first_section = False
             if use_csv:
-                out.writerow(
-                    ["Name", "Surname", "Birth", "Death", "Place", "Addresses"]
-                )
+                header = ["Name", "Surname", "Birth", "Death", "Place", "Addresses"]
+                if multi:
+                    header.insert(0, "File")
+                out.writerow(header)
                 for given, surn, birth, death, place, addrs in indi_rows:
-                    out.writerow([given, surn, birth, death, place, " | ".join(addrs)])
+                    fields = [given, surn, birth, death, place, " | ".join(addrs)]
+                    if multi:
+                        fields.insert(0, os.path.basename(input_path))
+                    out.writerow(fields)
             else:
                 for given, surn, birth, death, place, addrs in indi_rows:
                     name = f"{given} {surn}".strip() or "?"
@@ -1313,19 +1379,23 @@ def query_file(
                 print()
             first_section = False
             if use_csv:
-                out.writerow(
-                    [
-                        "Husband_Given",
-                        "Husband_Surname",
-                        "Wife_Given",
-                        "Wife_Surname",
-                        "Marriage",
-                        "Marriage_Place",
-                        "Addresses",
-                    ]
-                )
+                header = [
+                    "Husband_Given",
+                    "Husband_Surname",
+                    "Wife_Given",
+                    "Wife_Surname",
+                    "Marriage",
+                    "Marriage_Place",
+                    "Addresses",
+                ]
+                if multi:
+                    header.insert(0, "File")
+                out.writerow(header)
                 for hg, hs, wg, ws, marr, marr_place, addrs in fam_rows:
-                    out.writerow([hg, hs, wg, ws, marr, marr_place, " | ".join(addrs)])
+                    fields = [hg, hs, wg, ws, marr, marr_place, " | ".join(addrs)]
+                    if multi:
+                        fields.insert(0, os.path.basename(input_path))
+                    out.writerow(fields)
             else:
                 for hg, hs, wg, ws, marr, marr_place, addrs in fam_rows:
                     husb = f"{hg} {hs}".strip() or "?"
@@ -1343,9 +1413,14 @@ def query_file(
         first_section = False
         rows = _stat_rows(root_elements)
         if use_csv:
-            out.writerow(["Type", "Count"])
+            header = ["Type", "Count"]
+            if multi:
+                header.insert(0, "File")
+            out.writerow(header)
             for label, n in rows:
-                out.writerow([label, n])
+                out.writerow(
+                    [os.path.basename(input_path), label, n] if multi else [label, n]
+                )
         else:
             width = max(len(label) for label, _ in rows)
             for label, n in rows:
@@ -1358,24 +1433,31 @@ def query_file(
                 print()
             first_section = False
             if use_csv:
-                out.writerow(["URL", "OBJE", "Name", "Surname", "Birth"])
+                header = ["URL", "OBJE", "Name", "Surname", "Birth"]
+                if multi:
+                    header.insert(0, "File")
+                out.writerow(header)
                 for url, groups in dup_rows:
                     for obje_ptr, rows in groups:
                         for row in rows:
                             if row[0] == "INDI":
                                 _, given, surn, birth = row
-                                out.writerow([url, obje_ptr, given, surn, birth])
+                                fields = [url, obje_ptr, given, surn, birth]
+                                if multi:
+                                    fields.insert(0, os.path.basename(input_path))
+                                out.writerow(fields)
                             else:
                                 _, hg, hs, wg, ws = row
-                                out.writerow(
-                                    [
-                                        url,
-                                        obje_ptr,
-                                        f"{hg} {hs}".strip(),
-                                        f"{wg} {ws}".strip(),
-                                        "",
-                                    ]
-                                )
+                                fields = [
+                                    url,
+                                    obje_ptr,
+                                    f"{hg} {hs}".strip(),
+                                    f"{wg} {ws}".strip(),
+                                    "",
+                                ]
+                                if multi:
+                                    fields.insert(0, os.path.basename(input_path))
+                                out.writerow(fields)
             else:
                 for url, groups in dup_rows:
                     print(url)
@@ -1442,6 +1524,12 @@ def main() -> None:
         help="With --surnames: output the place of the oldest occurrence of each surname",
     )
     arg_parser.add_argument("--family", action="store_true", help="List all families")
+    arg_parser.add_argument(
+        "--home-person",
+        action="store_true",
+        dest="home_person",
+        help="Print the home person (indicated by _STP tag in MacFamilyTree)",
+    )
     arg_parser.add_argument(
         "--url",
         nargs="?",
@@ -1513,9 +1601,10 @@ def main() -> None:
         and not args.duplicate_url
         and not args.stat
         and not args.sw
+        and not args.home_person
     ):
         arg_parser.error(
-            "at least one of --person, --surnames, --family, --url, --addr, --duplicate-url, --stat, or --sw must be specified"
+            "at least one of --person, --surnames, --family, --home-person, --url, --addr, --duplicate-url, --stat, or --sw must be specified"
         )
     if (args.ancestors or args.descendants or args.bloodline) and not (
         args.person and len(args.person) > 0
@@ -1527,10 +1616,14 @@ def main() -> None:
         arg_parser.error("--location requires --surnames")
     if args.search_events and args.url is None:
         arg_parser.error("--search-events requires --url")
-    if args.sort_date and not (args.person is not None or args.family):
-        arg_parser.error("--sort-date requires --person or --family")
-    if args.show_id and not (args.person is not None or args.family):
-        arg_parser.error("--id requires --person or --family")
+    if args.sort_date and not (
+        args.person is not None or args.family or args.home_person
+    ):
+        arg_parser.error("--sort-date requires --person, --home-person, or --family")
+    if args.show_id and not (
+        args.person is not None or args.family or args.home_person
+    ):
+        arg_parser.error("--id requires --person, --home-person, or --family")
 
     if args.sw:
         software_query(args.input, args.csv)
@@ -1544,7 +1637,9 @@ def main() -> None:
             print(f"=== {input_path} ===")
         query_file(
             input_path,
+            multi,
             args.person,
+            args.home_person,
             args.ancestors,
             args.descendants,
             args.bloodline,
