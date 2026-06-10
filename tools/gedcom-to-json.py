@@ -1415,8 +1415,8 @@ def main():
     print("Completed!", file=sys.stderr)
 
     # Write global metadata.json for the frontend. This script owns contributors
-    # whose name does NOT end in "-matricula"; the "-matricula" entries belong to
-    # matricula-to-json.py and are preserved as-is.
+    # whose name does NOT end in "-matricula" or "-geneanet"; those namespaces
+    # belong to matricula-to-json.py / geneanet-to-json.py and are preserved as-is.
     metadata_output_path = os.path.join(OUTPUT_DIR, "metadata.json")
     metadata_out = [
         {k: v for k, v in m.items() if k not in ("filtered_count", "skipped")}
@@ -1429,7 +1429,7 @@ def main():
                 existing = json.load(f)
             preserved = [
                 e for e in existing
-                if e.get("contributor", "").endswith("-matricula")
+                if e.get("contributor", "").endswith(("-matricula", "-geneanet"))
             ]
         except (json.JSONDecodeError, OSError):
             preserved = []
