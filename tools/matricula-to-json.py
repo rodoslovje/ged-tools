@@ -124,6 +124,20 @@ def cell_str(value):
     return str(value).strip()
 
 
+def _is_blank(value):
+    """True for cells that carry no data: None, '', or whitespace-only strings.
+
+    Excel files sometimes have a stray space (' ') filled down an entire column,
+    producing tens of thousands of phantom rows. Treating whitespace-only cells
+    as blank drops those rows instead of emitting them as records.
+    """
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip() == ""
+    return False
+
+
 def normalize_name_surname(name, surname):
     """Replace Slovenian 'ni znan' (unknown) with 'NN'. If both name and
     surname are unknown, only the name carries 'NN' and surname is cleared.
@@ -246,7 +260,7 @@ def read_rows(path):
             for raw in rows:
                 if raw is None:
                     continue
-                if all(c in (None, "") for c in raw):
+                if all(_is_blank(c) for c in raw):
                     continue
                 record = {}
                 for idx, value in enumerate(raw):
@@ -255,7 +269,7 @@ def read_rows(path):
                     field = field_for_col[idx]
                     if not field:
                         continue
-                    if value in (None, ""):
+                    if _is_blank(value):
                         continue
                     record[field] = value
                 if record:
@@ -520,8 +534,39 @@ def _skipped_meta(contributor, births_path, marriages_path, source_mtime, contri
     }
 
 
+def _interpreter_matches(contributor, interpreter):
+    """True if the interpret field identifies the contributor folder.
+
+    Two forms are accepted:
+
+    * Direct substring — the plain case, e.g. folder 'Kovačič' inside interpret
+      'Kovačič_Martin', or 'Janez Kovačič'.
+    * Abbreviated disambiguator — when two contributors share a surname the
+      folder appends an initial ('Kovačič-B'), while interpret spells the first
+      name out ('Kovačič_Brane'). Both are split on '-', '_' and whitespace and
+      we require each folder token to be a prefix of a later interpret token,
+      in order, so 'kovačič','b' matches 'kovačič','brane'.
+    """
+    needle = unicodedata.normalize("NFC", contributor).casefold()
+    hay = unicodedata.normalize("NFC", interpreter).casefold()
+    if needle in hay:
+        return True
+    folder_tokens = [t for t in re.split(r"[-_\s]+", needle) if t]
+    interp_tokens = [t for t in re.split(r"[-_\s]+", hay) if t]
+    if not folder_tokens:
+        return False
+    j = 0
+    for ft in folder_tokens:
+        while j < len(interp_tokens) and not interp_tokens[j].startswith(ft):
+            j += 1
+        if j >= len(interp_tokens):
+            return False
+        j += 1
+    return True
+
+
 def _check_interpreter(contributor, interpreter, path):
-    """Verify the row's interpret field contains the contributor folder name.
+    """Verify the row's interpret field identifies the contributor folder.
 
     Catches xlsx files placed under the wrong contributor directory before
     they pollute the per-contributor JSON outputs. Empty interpret cells are
@@ -529,9 +574,7 @@ def _check_interpreter(contributor, interpreter, path):
     """
     if not interpreter:
         return
-    needle = unicodedata.normalize("NFC", contributor).casefold()
-    hay = unicodedata.normalize("NFC", interpreter).casefold()
-    if needle in hay:
+    if _interpreter_matches(contributor, interpreter):
         return
     print(
         f"Error: interpret '{interpreter}' in {path} does not contain "
