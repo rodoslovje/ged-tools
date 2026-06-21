@@ -180,3 +180,40 @@ def test_bkm_removed():
     """), ["bkm"])
     assert "_BKM" not in content
     assert stats["bkm"].removed == 1
+
+
+# ---------------------------------------------------------------------------
+# priv
+# ---------------------------------------------------------------------------
+
+def test_priv_removes_whole_record():
+    content, stats = _run(textwrap.dedent("""\
+        0 HEAD
+        1 CHAR UTF-8
+        0 @I1@ INDI
+        1 NAME John /Smith/
+        1 NOTE @N1@
+        0 @N1@ NOTE
+        1 CONT https://www.facebook.com/lily.melb
+        1 PRIV
+        0 TRLR
+    """), ["priv"])
+    assert "@N1@ NOTE" not in content
+    assert "facebook" not in content
+    assert "John /Smith/" in content
+    assert stats["priv"].removed == 1
+
+
+def test_priv_leaves_non_private_records():
+    content, stats = _run(textwrap.dedent("""\
+        0 HEAD
+        1 CHAR UTF-8
+        0 @I1@ INDI
+        1 NAME John /Smith/
+        1 NOTE @N1@
+        0 @N1@ NOTE
+        1 CONT Public note
+        0 TRLR
+    """), ["priv"])
+    assert "Public note" in content
+    assert stats["priv"].removed == 0
