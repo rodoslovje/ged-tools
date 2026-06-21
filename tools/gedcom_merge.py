@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-gedcom-merge: Merge multiple GEDCOM files into a single output file.
+gedcom_merge: Merge multiple GEDCOM files into a single output file.
 
 This tool structurally merges multiple trees by concatenating their records.
 To ensure unique GEDCOM IDs for individuals, families, sources, and objects,
@@ -9,7 +9,7 @@ it automatically prefixes all pointers with a file-specific identifier
 becomes @f2_I1@).
 
 Usage:
-    python tools/gedcom-merge.py <input1.ged> <input2.ged> ... -o <output.ged>
+    python tools/gedcom_merge.py <input1.ged> <input2.ged> ... -o <output.ged>
 """
 
 import argparse
@@ -24,7 +24,7 @@ from gedcom.parser import Parser
 import gedcom.tags
 
 # ---------------------------------------------------------------------------
-# Encoding detection & transcoding (reused from gedcom-cleaner for robustness)
+# Encoding detection & transcoding (reused from gedcom_cleaner for robustness)
 # ---------------------------------------------------------------------------
 
 _GEDCOM_CHAR_MAP = {

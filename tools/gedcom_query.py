@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-gedcom-query: Query a GEDCOM file for individuals or families.
+gedcom_query: Query a GEDCOM file for individuals or families.
 
 Usage:
-    python tools/gedcom-query.py <input.ged> [OPTIONS]
+    python tools/gedcom_query.py <input.ged> [OPTIONS]
 
 Options:
     --person [PERSON ...]
@@ -50,32 +50,32 @@ by a "=== filename ===" header.
 At least one of --person, --surnames, --family, --home-person, --url, --addr, --duplicate-url, --stat, or --sw must be specified.
 
 Examples:
-    python tools/gedcom-query.py family.ged --person
-    python tools/gedcom-query.py family.ged --person "Luka Renko"
-    python tools/gedcom-query.py family.ged --home-person
-    python tools/gedcom-query.py family.ged --person "Franc Renko 1901" --ancestors
-    python tools/gedcom-query.py family.ged --person "@I1@" --descendants
-    python tools/gedcom-query.py family.ged --person "Luka Renko" --bloodline
-    python tools/gedcom-query.py family.ged --surnames
-    python tools/gedcom-query.py family.ged --surnames --location
-    python tools/gedcom-query.py family.ged --person "Luka Renko" --ancestors --surnames --location --any-place
-    python tools/gedcom-query.py family.ged --family
-    python tools/gedcom-query.py family.ged --person --sort-date
-    python tools/gedcom-query.py family.ged --family --sort-date
-    python tools/gedcom-query.py family.ged --person --id
-    python tools/gedcom-query.py family.ged --family --id --csv > families.csv
-    python tools/gedcom-query.py family.ged --person --any-place
-    python tools/gedcom-query.py family.ged --person --csv > persons.csv
-    python tools/gedcom-query.py family.ged --family --csv > families.csv
-    python tools/gedcom-query.py family.ged --url
-    python tools/gedcom-query.py family.ged --url familysearch.org
-    python tools/gedcom-query.py family.ged --url matricula-online.com --search-events
-    python tools/gedcom-query.py family.ged --addr "Sušica 47"
-    python tools/gedcom-query.py family.ged --person "Jakob Renka 1764" --descendants --addr
-    python tools/gedcom-query.py family.ged --duplicate-url
-    python tools/gedcom-query.py family.ged --stat
-    python tools/gedcom-query.py ../srd-data/index/filtered/*.ged --sw
-    python tools/gedcom-query.py ../srd-data/index/filtered/*.ged --sw --csv > sw.csv
+    python tools/gedcom_query.py family.ged --person
+    python tools/gedcom_query.py family.ged --person "Luka Renko"
+    python tools/gedcom_query.py family.ged --home-person
+    python tools/gedcom_query.py family.ged --person "Franc Renko 1901" --ancestors
+    python tools/gedcom_query.py family.ged --person "@I1@" --descendants
+    python tools/gedcom_query.py family.ged --person "Luka Renko" --bloodline
+    python tools/gedcom_query.py family.ged --surnames
+    python tools/gedcom_query.py family.ged --surnames --location
+    python tools/gedcom_query.py family.ged --person "Luka Renko" --ancestors --surnames --location --any-place
+    python tools/gedcom_query.py family.ged --family
+    python tools/gedcom_query.py family.ged --person --sort-date
+    python tools/gedcom_query.py family.ged --family --sort-date
+    python tools/gedcom_query.py family.ged --person --id
+    python tools/gedcom_query.py family.ged --family --id --csv > families.csv
+    python tools/gedcom_query.py family.ged --person --any-place
+    python tools/gedcom_query.py family.ged --person --csv > persons.csv
+    python tools/gedcom_query.py family.ged --family --csv > families.csv
+    python tools/gedcom_query.py family.ged --url
+    python tools/gedcom_query.py family.ged --url familysearch.org
+    python tools/gedcom_query.py family.ged --url matricula-online.com --search-events
+    python tools/gedcom_query.py family.ged --addr "Sušica 47"
+    python tools/gedcom_query.py family.ged --person "Jakob Renka 1764" --descendants --addr
+    python tools/gedcom_query.py family.ged --duplicate-url
+    python tools/gedcom_query.py family.ged --stat
+    python tools/gedcom_query.py ../srd-data/index/filtered/*.ged --sw
+    python tools/gedcom_query.py ../srd-data/index/filtered/*.ged --sw --csv > sw.csv
 """
 
 import argparse
@@ -115,7 +115,7 @@ def _collation_key(s: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Encoding detection & transcoding  (mirrors gedcom-filter.py)
+# Encoding detection & transcoding  (mirrors gedcom_filter.py)
 # ---------------------------------------------------------------------------
 
 _GEDCOM_CHAR_MAP = {

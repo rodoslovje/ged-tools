@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-gedcom-dedupe: Find and merge duplicate individuals in a GEDCOM file.
+gedcom_dedupe: Find and merge duplicate individuals in a GEDCOM file.
 
 This tool identifies potential duplicate individuals based on their name and
 birth date. For each set of duplicates, it designates one as the "master"
@@ -16,7 +16,7 @@ Merge strategy:
 4.  The original duplicate records are removed from the file.
 
 Usage:
-    python tools/gedcom-dedupe.py <input.ged> -o <output.ged>
+    python tools/gedcom_dedupe.py <input.ged> -o <output.ged>
 """
 
 import argparse
@@ -33,7 +33,7 @@ from gedcom.parser import Parser
 import gedcom.tags
 
 # ---------------------------------------------------------------------------
-# Encoding detection & transcoding (reused from gedcom-merge)
+# Encoding detection & transcoding (reused from gedcom_merge)
 # ---------------------------------------------------------------------------
 
 _GEDCOM_CHAR_MAP = {

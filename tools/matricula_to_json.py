@@ -2,7 +2,7 @@
 
 Reads parish index books exported as Excel from data/matricula/<contributor>/
 and emits one pair of JSON files per contributor that match the schema used by
-gedcom-to-json.py:
+gedcom_to_json.py:
 
     data/output/<contributor>-matricula-persons.json
     data/output/<contributor>-matricula-families.json
@@ -733,7 +733,7 @@ def write_matricula_index(summaries, output_dir):
 
 def update_metadata_file(new_entries, output_dir):
     """Write metadata.json with this script's "*-matricula" entries, preserving
-    all non-"-matricula" entries owned by gedcom-to-json.py.
+    all non-"-matricula" entries owned by gedcom_to_json.py.
     """
     path = os.path.join(output_dir, "metadata.json")
     existing = []

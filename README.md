@@ -32,13 +32,13 @@ All scripts must be run from the project root directory.
 
 ## Tools
 
-## gedcom-cleaner
+## gedcom_cleaner
 
 Cleans, strips, and transforms GEDCOM files. Processors are applied in order: **cleaners → transformers → strippers**.
 
 ```
-python tools/gedcom-cleaner.py <input.ged> <output.ged> [OPTIONS]
-python tools/gedcom-cleaner.py --input-dir DIR --output-dir DIR [STEM ...] [OPTIONS]
+python tools/gedcom_cleaner.py <input.ged> <output.ged> [OPTIONS]
+python tools/gedcom_cleaner.py --input-dir DIR --output-dir DIR [STEM ...] [OPTIONS]
 ```
 
 ### Options
@@ -138,29 +138,29 @@ A preset is a named combination of processors for a common use case. Can be comb
 
 ```bash
 # Apply a preset to a single file
-python tools/gedcom-cleaner.py family.ged out.ged --preset index_cleanup_sgi
+python tools/gedcom_cleaner.py family.ged out.ged --preset index_cleanup_sgi
 
 # Combine a preset with an extra stripper
-python tools/gedcom-cleaner.py family.ged out.ged --preset mft_webtrees --strip change_date
+python tools/gedcom_cleaner.py family.ged out.ged --preset mft_webtrees --strip change_date
 
 # Apply individual processors with verbose output
-python tools/gedcom-cleaner.py family.ged out.ged --clean dd_mmm_yyyy --transform living100y_private --verbose
+python tools/gedcom_cleaner.py family.ged out.ged --clean dd_mmm_yyyy --transform living100y_private --verbose
 
 # Batch: process all files in a directory
-python tools/gedcom-cleaner.py --input-dir data/input --output-dir data/filtered --preset mft_webtrees
+python tools/gedcom_cleaner.py --input-dir data/input --output-dir data/filtered --preset mft_webtrees
 
 # Batch: process specific files only
-python tools/gedcom-cleaner.py --input-dir data/input --output-dir data/filtered --preset mft_webtrees Košir Hawlina
+python tools/gedcom_cleaner.py --input-dir data/input --output-dir data/filtered --preset mft_webtrees Košir Hawlina
 ```
 
 ---
 
-## gedcom-filter
+## gedcom_filter
 
 Filters a GEDCOM file to keep only a selected subset of individuals and families relative to a root person, with optional privacy redaction of living individuals.
 
 ```
-python tools/gedcom-filter.py <input.ged> <output.ged> --person PERSON [OPTIONS]
+python tools/gedcom_filter.py <input.ged> <output.ged> --person PERSON [OPTIONS]
 ```
 
 At least one of `--ancestors` or `--descendants` must be specified.
@@ -202,42 +202,42 @@ An individual is considered living when they have no `DEAT`, `BURI`, or `CREM` r
 
 ```bash
 # Keep only ancestors of a person, identified by pointer
-python tools/gedcom-filter.py family.ged ancestors.ged --ancestors --person @I123@
+python tools/gedcom_filter.py family.ged ancestors.ged --ancestors --person @I123@
 
 # Keep only descendants, identified by full name
-python tools/gedcom-filter.py family.ged descendants.ged --descendants --person "Luka Renko"
+python tools/gedcom_filter.py family.ged descendants.ged --descendants --person "Luka Renko"
 
 # Full hourglass tree (ancestors + descendants)
-python tools/gedcom-filter.py family.ged hourglass.ged --ancestors --descendants --person @I123@
+python tools/gedcom_filter.py family.ged hourglass.ged --ancestors --descendants --person @I123@
 
 # All blood relatives reachable through the ancestor tree
-python tools/gedcom-filter.py family.ged related.ged --ancestors --related --person @I123@
+python tools/gedcom_filter.py family.ged related.ged --ancestors --related --person @I123@
 
 # Ancestors with their siblings, with name disambiguation
-python tools/gedcom-filter.py family.ged out.ged --ancestors --siblings --person Renko --birth-year 1952
+python tools/gedcom_filter.py family.ged out.ged --ancestors --siblings --person Renko --birth-year 1952
 
 # Descendants with living people shown as initials only
-python tools/gedcom-filter.py family.ged out.ged --descendants --living-initials --person @I123@
+python tools/gedcom_filter.py family.ged out.ged --descendants --living-initials --person @I123@
 
 # Full tree, living people fully redacted
-python tools/gedcom-filter.py family.ged out.ged --ancestors --descendants --living-private --person @I123@
+python tools/gedcom_filter.py family.ged out.ged --ancestors --descendants --living-private --person @I123@
 
 # Multiple root persons — union of all their ancestors
-python tools/gedcom-filter.py family.ged out.ged --ancestors --person @I123@ @I456@
+python tools/gedcom_filter.py family.ged out.ged --ancestors --person @I123@ @I456@
 
 # Descendants of two siblings
-python tools/gedcom-filter.py family.ged out.ged --descendants --person @I123@ @I124@
+python tools/gedcom_filter.py family.ged out.ged --descendants --person @I123@ @I124@
 ```
 
 ---
 
-## gedcom-merge
+## gedcom_merge
 
 Merges multiple GEDCOM files into a single output file.
 
 This tool structurally merges multiple trees by concatenating their records. To ensure unique GEDCOM IDs for individuals, families, sources, and objects, it automatically prefixes all pointers with a file-specific identifier (e.g., `@I1@` from the first file becomes `@f1_I1@`, and `@I1@` from the second becomes `@f2_I1@`).
 
-`python tools/gedcom-merge.py <input1.ged> <input2.ged> ... -o <output.ged>`
+`python tools/gedcom_merge.py <input1.ged> <input2.ged> ... -o <output.ged>`
 
 ### Options
 
@@ -249,14 +249,14 @@ This tool structurally merges multiple trees by concatenating their records. To 
 
 ```bash
 # Merge two family trees into one
-python tools/gedcom-merge.py DruzinskoDrevo_Udovic.ged DruzinskoDrevo_Brunskole.ged -o Merged_Tree.ged
+python tools/gedcom_merge.py DruzinskoDrevo_Udovic.ged DruzinskoDrevo_Brunskole.ged -o Merged_Tree.ged
 ```
 
 ---
 
-## gedcom-dedupe
+## gedcom_dedupe
 
-Finds and merges duplicate individuals in a GEDCOM file, typically after it has been combined using `gedcom-merge`.
+Finds and merges duplicate individuals in a GEDCOM file, typically after it has been combined using `gedcom_merge`.
 
 This tool identifies potential duplicate individuals based on their exact name and birth date. For each set of duplicates, it designates one as the "master" record and merges the others into it.
 
@@ -267,23 +267,23 @@ This tool identifies potential duplicate individuals based on their exact name a
 3.  All other information from the duplicate records (events, notes, sources) is preserved by converting the entire duplicate record into a `NOTE` on the master record. This allows for manual review and integration.
 4.  The original duplicate records are removed from the file.
 
-`python tools/gedcom-dedupe.py <input.ged> -o <output.ged>`
+`python tools/gedcom_dedupe.py <input.ged> -o <output.ged>`
 
 ### Example
 
 ```bash
 # Find and merge duplicates in a previously merged file
-python tools/gedcom-dedupe.py Merged_Tree.ged -o Merged_Deduplicated_Tree.ged
+python tools/gedcom_dedupe.py Merged_Tree.ged -o Merged_Deduplicated_Tree.ged
 ```
 
 ---
 
-## gedcom-to-json
+## gedcom_to_json
 
 Converts GEDCOM files from `data/filtered/` into JSON output files in `data/output/`. For each input file it produces three JSON files: `<stem>-births.json`, `<stem>-families.json`, and `<stem>-deaths.json`. Contributor metadata is read from `data/contributors.json`.
 
 ```
-python tools/gedcom-to-json.py [OPTIONS]
+python tools/gedcom_to_json.py [OPTIONS]
 ```
 
 ### Options
@@ -297,23 +297,23 @@ python tools/gedcom-to-json.py [OPTIONS]
 
 ```bash
 # Incremental update (only changed files)
-python tools/gedcom-to-json.py
+python tools/gedcom_to_json.py
 
 # Full rebuild
-python tools/gedcom-to-json.py --mode full
+python tools/gedcom_to_json.py --mode full
 
 # Full rebuild with limited parallelism
-python tools/gedcom-to-json.py --mode full --workers 4
+python tools/gedcom_to_json.py --mode full --workers 4
 ```
 
 ---
 
-## gedcom-query
+## gedcom_query
 
 Queries a GEDCOM file and prints individuals, families, surname summaries, URL matches, address matches, or duplicate media URL reports in a compact human-readable format, with an optional CSV output mode.
 
 ```
-python tools/gedcom-query.py <input.ged> [OPTIONS]
+python tools/gedcom_query.py <input.ged> [OPTIONS]
 ```
 
 At least one of `--person`, `--surnames`, `--family`, `--url`, `--addr`, or `--duplicate-url` must be specified.
@@ -414,53 +414,53 @@ Output is sorted alphabetically by surname (then given name), respecting Sloveni
 
 ```bash
 # List all individuals
-python tools/gedcom-query.py family.ged --person
+python tools/gedcom_query.py family.ged --person
 
 # List a specific person's ancestors
-python tools/gedcom-query.py family.ged --person "Franc Renko 1901" --ancestors
+python tools/gedcom_query.py family.ged --person "Franc Renko 1901" --ancestors
 
 # List a specific person's descendants
-python tools/gedcom-query.py family.ged --person "@I123@" --descendants
+python tools/gedcom_query.py family.ged --person "@I123@" --descendants
 
 # List all families
-python tools/gedcom-query.py family.ged --family
+python tools/gedcom_query.py family.ged --family
 
 # List unique surnames among all ancestors, with origin location
-python tools/gedcom-query.py family.ged --person "Luka Renko" --ancestors --surnames --location --any-place
+python tools/gedcom_query.py family.ged --person "Luka Renko" --ancestors --surnames --location --any-place
 
 # Find all records with a FamilySearch link
-python tools/gedcom-query.py family.ged --url familysearch.org
+python tools/gedcom_query.py family.ged --url familysearch.org
 
 # Find all records with any URL, including those in event subtrees
-python tools/gedcom-query.py family.ged --url --search-events
+python tools/gedcom_query.py family.ged --url --search-events
 
 # Find descendants of a person who have a FamilySearch link
-python tools/gedcom-query.py family.ged --person "Jakob Renka 1764" --descendants --url familysearch.org
+python tools/gedcom_query.py family.ged --person "Jakob Renka 1764" --descendants --url familysearch.org
 
 # Find all records at a specific address
-python tools/gedcom-query.py family.ged --addr "Sušica 47"
+python tools/gedcom_query.py family.ged --addr "Sušica 47"
 
 # Find all descendants at any recorded address
-python tools/gedcom-query.py family.ged --person "Jakob Renka 1764" --descendants --addr
+python tools/gedcom_query.py family.ged --person "Jakob Renka 1764" --descendants --addr
 
 # Find duplicate media URLs (same scan linked in multiple OBJE records)
-python tools/gedcom-query.py family.ged --duplicate-url
+python tools/gedcom_query.py family.ged --duplicate-url
 
 # Export individuals to CSV
-python tools/gedcom-query.py family.ged --person --csv > persons.csv
+python tools/gedcom_query.py family.ged --person --csv > persons.csv
 
 # Export URL matches to CSV
-python tools/gedcom-query.py family.ged --url familysearch.org --csv > fs-links.csv
+python tools/gedcom_query.py family.ged --url familysearch.org --csv > fs-links.csv
 ```
 
 ---
 
-## gedcom-links
+## gedcom_links
 
 Extracts all HTTP/HTTPS links from one or more GEDCOM files and prints frequency statistics grouped by domain and by domain + path prefix.
 
 ```
-python tools/gedcom-links.py <file.ged> [<file.ged> ...] [OPTIONS]
+python tools/gedcom_links.py <file.ged> [<file.ged> ...] [OPTIONS]
 ```
 
 ### Options
@@ -489,12 +489,12 @@ By domain + 1 path segment(s)
 
 ---
 
-## compare-links
+## compare_links
 
 Checks that every `matricula-online.eu` link in filtered GED files is referenced in the corresponding JSON output. Reports links present in the GED but missing from all three JSON files (`-births`, `-families`, `-deaths`), along with the INDI/FAM record(s) they are attached to.
 
 ```
-python tools/compare-links.py <filtered_dir> <output_dir> [STEM ...]
+python tools/compare_links.py <filtered_dir> <output_dir> [STEM ...]
 ```
 
 ### Arguments
@@ -516,12 +516,12 @@ Košir: OK
 
 ---
 
-## reset-ged-mtime
+## reset_ged_mtime
 
-Sets the modification time of each `.ged` file in `data/input/` and `data/filtered/` to the date recorded in `data/output/metadata.json`. Useful after cloning or syncing files to restore mtimes so that `gedcom-to-json` incremental mode (`--mode update`) can skip unchanged files correctly.
+Sets the modification time of each `.ged` file in `data/input/` and `data/filtered/` to the date recorded in `data/output/metadata.json`. Useful after cloning or syncing files to restore mtimes so that `gedcom_to_json` incremental mode (`--mode update`) can skip unchanged files correctly.
 
 ```
-python tools/reset-ged-mtime.py
+python tools/reset_ged_mtime.py
 ```
 
 Matching between JSON contributor names and GED filenames is done case-insensitively with Unicode NFC normalization. No arguments required.

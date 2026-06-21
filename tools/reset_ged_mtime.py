@@ -1,5 +1,5 @@
 """
-reset-ged-mtime.py
+reset_ged_mtime.py
 
 Sets the modification time of each *.GED file in the data/input and
 data/filtered directories to the date recorded in data/output/metadata.json.
@@ -8,7 +8,7 @@ Matching is done by comparing the JSON contributor name against the GED filename
 stem, case-insensitively.
 
 Usage:
-  python tools/reset-ged-mtime.py
+  python tools/reset_ged_mtime.py
 """
 
 import glob

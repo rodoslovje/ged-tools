@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-compare-links: Compare data.matricula-online.eu links between filtered GED files
+compare_links: Compare data.matricula-online.eu links between filtered GED files
 and output JSON files (persons, families).
 
 Reports matricula links that are present in the GED but missing from all JSON files,

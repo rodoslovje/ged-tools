@@ -1,8 +1,8 @@
 # Ignore: legacy scripts to be rewritten
 .todo
 
-# URL cache (will be rebuilt by gedcom-to-json.py)
-.gedcom-to-json.cache
+# URL cache (will be rebuilt by gedcom_to_json.py)
+.gedcom_to_json.cache
 
 # Data folders (user files, not tracked)
 data

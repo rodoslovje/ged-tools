@@ -1,4 +1,4 @@
-# scripts/gedcom-to-json.py
+# scripts/gedcom_to_json.py
 
 import argparse
 import locale
@@ -19,7 +19,7 @@ from gedcom.parser import Parser
 # This script should be run from the root of the project directory.
 INPUT_DIR = "data/filtered"
 OUTPUT_DIR = "data/output"
-CACHE_FILE = ".gedcom-to-json.cache"
+CACHE_FILE = ".gedcom_to_json.cache"
 CONTRIBUTORS_FILE = "data/contributors.json"
 
 
@@ -844,7 +844,7 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
     families_data = []
 
     # --- Parsing ---
-    # Input is expected to be valid UTF-8 (produced by gedcom-cleaner.py).
+    # Input is expected to be valid UTF-8 (produced by gedcom_cleaner.py).
     # python-gedcom's parse_file opens the file as binary and decodes lines
     # as utf-8-sig, so no charset preprocessing is needed here.
     gedcom_parser = Parser()
@@ -1416,7 +1416,7 @@ def main():
 
     # Write global metadata.json for the frontend. This script owns contributors
     # whose name does NOT end in "-matricula" or "-geneanet"; those namespaces
-    # belong to matricula-to-json.py / geneanet-to-json.py and are preserved as-is.
+    # belong to matricula_to_json.py / geneanet_to_json.py and are preserved as-is.
     metadata_output_path = os.path.join(OUTPUT_DIR, "metadata.json")
     metadata_out = [
         {k: v for k, v in m.items() if k not in ("filtered_count", "skipped")}

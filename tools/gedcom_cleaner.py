@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-gedcom-cleaner: Read a GEDCOM file and clean, strip, or transform its content.
+gedcom_cleaner: Read a GEDCOM file and clean, strip, or transform its content.
 
 Usage:
-    python tools/gedcom-cleaner.py <input.ged> <output.ged> [OPTIONS]
-    python tools/gedcom-cleaner.py --input-dir DIR --output-dir DIR [STEM ...] [OPTIONS]
+    python tools/gedcom_cleaner.py <input.ged> <output.ged> [OPTIONS]
+    python tools/gedcom_cleaner.py --input-dir DIR --output-dir DIR [STEM ...] [OPTIONS]
 
 Options:
     --preset PRESET                 Apply a predefined combination of processors.
@@ -184,19 +184,19 @@ Available Presets:
 
 Examples:
     # Apply a preset to a single file
-    python tools/gedcom-cleaner.py family.ged out.ged --preset index_cleanup_sgi
+    python tools/gedcom_cleaner.py family.ged out.ged --preset index_cleanup_sgi
 
     # Combine a preset with an extra stripper
-    python tools/gedcom-cleaner.py family.ged out.ged --preset mft_webtrees --strip change_date
+    python tools/gedcom_cleaner.py family.ged out.ged --preset mft_webtrees --strip change_date
 
     # Apply individual processors with verbose output
-    python tools/gedcom-cleaner.py family.ged out.ged --clean dd_mmm_yyyy --transform living100y_private --verbose
+    python tools/gedcom_cleaner.py family.ged out.ged --clean dd_mmm_yyyy --transform living100y_private --verbose
 
     # Batch: process all files in a directory
-    python tools/gedcom-cleaner.py --input-dir data/input --output-dir data/filtered --preset mft_webtrees
+    python tools/gedcom_cleaner.py --input-dir data/input --output-dir data/filtered --preset mft_webtrees
 
     # Batch: process specific files only
-    python tools/gedcom-cleaner.py --input-dir data/input --output-dir data/filtered --preset mft_webtrees Košir Hawlina
+    python tools/gedcom_cleaner.py --input-dir data/input --output-dir data/filtered --preset mft_webtrees Košir Hawlina
 """
 
 import argparse

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-gedcom-filter: Filter a GEDCOM file to keep only selected individuals and their relationships.
+gedcom_filter: Filter a GEDCOM file to keep only selected individuals and their relationships.
 
 Usage:
-    python tools/gedcom-filter.py <input.ged> <output.ged> --ancestors|--descendants --person PERSON [OPTIONS]
+    python tools/gedcom_filter.py <input.ged> <output.ged> --ancestors|--descendants --person PERSON [OPTIONS]
 
 Options:
     --person PERSON [PERSON ...]
@@ -54,32 +54,32 @@ BURI, or CREM record.
 
 Examples:
     # Ancestors only, by pointer
-    python tools/gedcom-filter.py family.ged ancestors.ged --ancestors --person @I123@
+    python tools/gedcom_filter.py family.ged ancestors.ged --ancestors --person @I123@
 
     # Descendants only, by full name
-    python tools/gedcom-filter.py family.ged descendants.ged --descendants --person "Luka Renko"
+    python tools/gedcom_filter.py family.ged descendants.ged --descendants --person "Luka Renko"
 
     # Both ancestors and descendants (full hourglass tree)
-    python tools/gedcom-filter.py family.ged hourglass.ged --ancestors --descendants --person @I123@
+    python tools/gedcom_filter.py family.ged hourglass.ged --ancestors --descendants --person @I123@
 
     # Ancestors with their siblings, birth year inline
-    python tools/gedcom-filter.py family.ged ancestors.ged --ancestors --siblings --person "Renko 1952"
+    python tools/gedcom_filter.py family.ged ancestors.ged --ancestors --siblings --person "Renko 1952"
 
     # All blood relatives reachable through the ancestor tree
-    python tools/gedcom-filter.py family.ged related.ged --ancestors --related --person @I123@
+    python tools/gedcom_filter.py family.ged related.ged --ancestors --related --person @I123@
 
     # All blood relatives (descendants of every ancestor)
-    python tools/gedcom-filter.py family.ged bloodline.ged --bloodline --person @I123@
+    python tools/gedcom_filter.py family.ged bloodline.ged --bloodline --person @I123@
 
     # Ancestors plus their spouses
-    python tools/gedcom-filter.py family.ged ancestors.ged --ancestors --partners --person @I123@
+    python tools/gedcom_filter.py family.ged ancestors.ged --ancestors --partners --person @I123@
 
     # Multiple root persons — union of all their ancestors
-    python tools/gedcom-filter.py family.ged out.ged --ancestors --person @I123@ @I456@
-    python tools/gedcom-filter.py family.ged out.ged --ancestors --person "Luka Renko" "Ana Kovač"
+    python tools/gedcom_filter.py family.ged out.ged --ancestors --person @I123@ @I456@
+    python tools/gedcom_filter.py family.ged out.ged --ancestors --person "Luka Renko" "Ana Kovač"
 
     # Descendants with living people shown as initials only
-    python tools/gedcom-filter.py family.ged out.ged --descendants --living-initials --person @I123@
+    python tools/gedcom_filter.py family.ged out.ged --descendants --living-initials --person @I123@
 """
 
 import argparse
@@ -95,7 +95,7 @@ from gedcom.parser import Parser
 import gedcom.tags
 
 # ---------------------------------------------------------------------------
-# Encoding detection & transcoding  (mirrors gedcom-cleaner.py)
+# Encoding detection & transcoding  (mirrors gedcom_cleaner.py)
 # ---------------------------------------------------------------------------
 
 _GEDCOM_CHAR_MAP = {
@@ -245,7 +245,7 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
 
 
 # ---------------------------------------------------------------------------
-# Serialization  (mirrors gedcom-cleaner.py)
+# Serialization  (mirrors gedcom_cleaner.py)
 # ---------------------------------------------------------------------------
 
 

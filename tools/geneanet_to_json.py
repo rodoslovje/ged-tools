@@ -1,7 +1,7 @@
 """Convert a Geneanet cemetery (pokopališča) CSV export to JSON.
 
 Reads the latest CSV (by filename) from data/geneanet/ and emits a single pair
-of JSON files matching the schema used by gedcom-to-json.py / matricula-to-json.py:
+of JSON files matching the schema used by gedcom_to_json.py / matricula_to_json.py:
 
     data/output/Pokopališča-geneanet-persons.json
     data/output/Pokopališča-geneanet-families.json
@@ -150,7 +150,7 @@ def make_id(row_index, depot_id, role, name, surname):
 
     The source has no person ids and depot_id repeats across rows (a grave may
     hold several entries), so the row index is folded in to guarantee
-    uniqueness, mirroring matricula-to-json's use of the row sequence number.
+    uniqueness, mirroring matricula_to_json's use of the row sequence number.
     """
     key = "\x1f".join([
         str(row_index), depot_id or "", role, name or "", surname or "",

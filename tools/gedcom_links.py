@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-gedcom-links: Extract all HTTP/HTTPS links from one or more GEDCOM files
+gedcom_links: Extract all HTTP/HTTPS links from one or more GEDCOM files
 and print statistics by domain and by domain + first path segment.
 
 Usage:
