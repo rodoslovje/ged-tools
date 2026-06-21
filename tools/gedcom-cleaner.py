@@ -101,6 +101,8 @@ Available Strippers:
     noname_indi          Remove individuals with no valid name.
     noname_fam           Remove families with no named spouses.
     living               Remove individuals who are likely still living, and their families.
+    priv                 Remove level-0 records (NOTE, OBJE, etc.) marked private with
+                         a child "1 PRIV" tag.
 
 Available Transformers (listed in execution order):
     fid_fsftid           Rename _FID to _FSFTID (FamilySearch Family Tree ID fix).
@@ -156,19 +158,23 @@ Available Presets:
                            sour_plac_auth.
     mft_sgi              Slovenian Genealogy Institute formatting.
                          Cleaners: place_slovenia_rm.
+                         Strippers: priv.
                          Transformers: addr_to_plac, living100y_private.
     mft_public           Public sharing from MacFamilyTree exports.
                          Cleaners: place_country_only.
+                         Strippers: priv.
                          Transformers: living100y_initials, fam_partner_private.
     index_cleanup_sgi    Full cleanup and anonymization for public indices (Slovenia).
                          Cleaners: dd_mmm_yyyy, name_placeholder, name_lower,
                            place_placeholder, place_duplicate_rm.
+                         Strippers: priv.
                          Transformers (in order): died20y_private,
                            living100y_private, fam_partner_private.
     index_cleanup_cgi    Full cleanup and anonymization for public indices (Croatia).
                          Same as index_cleanup_sgi without died20y_private.
                          Cleaners: dd_mmm_yyyy, name_placeholder, name_lower,
                            place_placeholder, place_duplicate_rm.
+                         Strippers: priv.
                          Transformers (in order): living100y_private,
                            fam_partner_private.
 
@@ -2426,6 +2432,7 @@ STRIPPERS: dict[str, StripSpec | None] = {
     "noname_indi": None,  # remove INDI records whose every NAME value is empty
     "noname_fam": None,  # remove FAM records where all HUSB/WIFE INDIs are nameless
     "living": None,  # remove INDI records of people likely still alive, and their FAMs
+    "priv": None,  # remove level-0 records (NOTE, OBJE, etc.) marked with a PRIV tag
 }
 
 
@@ -2512,10 +2519,12 @@ PRESETS: dict[str, dict[str, list[str]]] = {
     },
     "mft_sgi": {
         "clean": ["place_slovenia_rm"],
+        "strip": ["priv"],
         "transform": ["addr_to_plac", "living100y_private"],
     },
     "mft_public": {
         "clean": ["place_country_only"],
+        "strip": ["priv"],
         "transform": ["living100y_initials", "fam_partner_private"],
     },
     "index_cleanup_sgi": {
@@ -2526,7 +2535,7 @@ PRESETS: dict[str, dict[str, list[str]]] = {
             "place_placeholder",
             "place_duplicate_rm",
         ],
-        "strip": [],
+        "strip": ["priv"],
         "transform": ["died20y_private", "living100y_private", "fam_partner_private"],
     },
     "index_cleanup_cgi": {
@@ -2537,7 +2546,7 @@ PRESETS: dict[str, dict[str, list[str]]] = {
             "place_placeholder",
             "place_duplicate_rm",
         ],
-        "strip": [],
+        "strip": ["priv"],
         "transform": ["living100y_private", "fam_partner_private"],
     },
 }
@@ -3660,6 +3669,21 @@ def process_file(
                     f"  [strip:living] removing {_fam_label(fam, {el.get_pointer(): el for el in root_elements if el.get_pointer()})}"
                 )
             root_elements.remove(fam)
+
+    if "priv" in strippers:
+        ss = strip_stats["priv"]
+        root_elements = parser.get_root_child_elements()
+        ss.processed = len(root_elements)
+        to_remove = [
+            el
+            for el in root_elements
+            if any(ch.get_tag() == "PRIV" for ch in el.get_child_elements())
+        ]
+        for el in to_remove:
+            ss.removed += 1
+            if verbose_strip:
+                print(f"  [strip:priv] removing {_record_label(el)}")
+            root_elements.remove(el)
 
     parser.invalidate_cache()
     try:
