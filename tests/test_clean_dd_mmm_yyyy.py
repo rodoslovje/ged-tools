@@ -409,6 +409,9 @@ from tools.gedcom_cleaner import clean_date_dd_mmm_yyyy
         # Truncated decade: "184-" → ABT 1840
         ("184-", "ABT 1840"),
         ("185-", "ABT 1850"),
+        # Unrecognised month word with a real year present — salvage the year as ABT
+        # rather than discarding the whole date.
+        ("15 FOO 1900", "ABT 1900"),
     ],
 )
 def test_clean_date_success(raw, expected):
@@ -450,7 +453,6 @@ def test_clean_date_remove(raw):
     [
         "not a date",
         "sometime",
-        "15 FOO 1900",  # bad month
     ],
 )
 def test_clean_date_warns(raw):

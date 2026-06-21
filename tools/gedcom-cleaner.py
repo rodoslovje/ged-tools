@@ -143,6 +143,10 @@ Available Transformers (listed in execution order):
     living100y_initials  Same detection as living100y_private but reduces the full
                          name to initials (e.g. Luka /Renko/ -> L. /R./).
                          All events are still removed.
+    living100y_name_only Same detection as living100y_private but reduces only the
+                         given name(s) to initials, keeping the surname intact
+                         (e.g. Luka /Renko/ -> L. /Renko/). All events are still
+                         removed.
     fam_partner_private  If both spouses are private: remove the entire family record.
                          If one spouse is private: replace all non-empty event field
                          values (date, place, note, links, etc.) with "<private>".
@@ -1352,6 +1356,10 @@ PREFIX_MAP = {
     "wft est": "ABT",
 }
 
+# Single non-ASCII characters that are themselves meaningful prefixes (e.g. "ˇ" = ABT).
+# Used to keep the generic stray-accent-stripping rule below from eating them.
+_NON_ASCII_PREFIX_CHARS = {k for k in PREFIX_MAP if len(k) == 1 and ord(k) > 127}
+
 # Regex pieces
 _DAY = r"(?P<day>\d{1,2})"
 _MONTH = r"(?P<month>[^\W\d_]+\.?)"
@@ -1756,8 +1764,11 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     # Strip leading = / ) and similar junk characters (repeated, e.g. "=)=)1840")
     v = re.sub(r"^[=≈≡＝\)\(]+\s*", "", v)
 
-    # Strip stray leading non-ASCII letter before a year/date (e.g. "č2000" → "2000")
-    v = re.sub(r"^[^\x00-\x7F]\s*(?=\d)", "", v)
+    # Strip stray leading non-ASCII letter before a year/date (e.g. "č2000" → "2000").
+    # Skip when that leading char is itself a meaningful prefix (e.g. "ˇ" = ABT) so the
+    # PREFIX_MAP lookup below still sees it.
+    if v[:1] not in _NON_ASCII_PREFIX_CHARS:
+        v = re.sub(r"^[^\x00-\x7F]\s*(?=\d)", "", v)
 
     # Normalize letter O → digit 0 (OCR/typo): before digit, between digits, or after digit at word end
     v = re.sub(r"\bO(?=\d)|(?<=\d)O(?=\d)|(?<=\d)O\b", "0", v)
@@ -2477,6 +2488,7 @@ TRANSFORMERS: dict[str, dict[str, str | TagTransform] | None] = {
     "living100y_private": None,
     "living75y_private": None,
     "living100y_initials": None,
+    "living100y_name_only": None,
     "died20y_private": None,
     "fam_partner_private": None,
 }
@@ -3360,6 +3372,69 @@ def process_file(
                         print(
                             f"  [transform:living100y_initials] stripped MARR date/place from {element.get_pointer()}"
                         )
+
+    if "living100y_name_only" in transformers:
+
+        def _initials(name: str) -> str:
+            return " ".join(w[0].upper() + "." for w in name.split() if w)
+
+        def _shorten_given_name_value(val: str) -> str:
+            m = re.match(r"^(.*?)(/[^/]*/)(.*?)$", val.strip())
+            if m:
+                given = _initials(m.group(1).strip())
+                surn = m.group(2).strip()
+                parts = [p for p in [given, surn] if p]
+                return " ".join(parts)
+            return _initials(val)
+
+        def _anonymise_name_only(el) -> None:
+            _display = ""
+            children = el.get_child_elements()
+            to_keep = []
+            name_kept = False
+            for ch in children:
+                if not _display and ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME:
+                    _display = ch.get_value().replace("/", "").strip()
+                if ch.get_tag() in ("FAMC", "FAMS", "SEX"):
+                    to_keep.append(ch)
+                elif ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME and not name_kept:
+                    ch.set_value(_shorten_given_name_value(ch.get_value()))
+                    name_children = ch.get_child_elements()
+                    kept = []
+                    for gch in name_children:
+                        if gch.get_tag() == "GIVN":
+                            gch.set_value(_initials(gch.get_value()))
+                            kept.append(gch)
+                        elif gch.get_tag() == "SURN":
+                            kept.append(gch)
+                    name_children.clear()
+                    name_children.extend(kept)
+                    to_keep.append(ch)
+                    name_kept = True
+            if not name_kept:
+                name_el = Element(
+                    el.get_level() + 1,
+                    "",
+                    gedcom.tags.GEDCOM_TAG_NAME,
+                    _shorten_given_name_value(_display),
+                    "\n",
+                    multi_line=False,
+                )
+                name_el.set_parent_element(el)
+                to_keep.insert(0, name_el)
+            children.clear()
+            children.extend(to_keep)
+
+        _apply_living_private_transformer(
+            parser,
+            transform_stats["living100y_name_only"],
+            100,
+            "living100y_name_only",
+            verbose_transform,
+            verbose_private,
+            anonymise_fn=_anonymise_name_only,
+            action_label="NAME_ONLY",
+        )
 
     if "fam_partner_private" in transformers:
         ts = transform_stats["fam_partner_private"]
