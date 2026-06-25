@@ -480,11 +480,12 @@ def _book_entry(path, count, sample_url):
     }
 
 
-def _load_contributor_urls():
+def _load_contributors():
     try:
         with open(CONTRIBUTORS_FILE, encoding="utf-8") as f:
             data = json.load(f)
-        return {name: info.get("url") for name, info in data.items() if info.get("url")}
+        return {name: {"url": info.get("url"), "intro": info.get("intro")}
+                for name, info in data.items()}
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
@@ -514,7 +515,7 @@ def _load_json_list(path):
         return json.load(f)
 
 
-def _skipped_meta(contributor, births_path, marriages_path, source_mtime, contributor_urls):
+def _skipped_meta(contributor, births_path, marriages_path, source_mtime, contributors):
     """Build a metadata entry by re-reading existing JSONs (no reprocessing)."""
     try:
         births = _load_json_list(births_path)
@@ -523,13 +524,15 @@ def _skipped_meta(contributor, births_path, marriages_path, source_mtime, contri
         return None
     links_count = (sum(1 for r in births if r.get("links"))
                    + sum(1 for r in marriages if r.get("links")))
+    info = contributors.get(contributor, {})
     return {
         "contributor": f"{contributor}-matricula",
         "persons_count": len(births),
         "families_count": len(marriages),
         "links_count": links_count,
         "last_modified": datetime.fromtimestamp(source_mtime).isoformat(),
-        "url": contributor_urls.get(contributor),
+        "url": info.get("url"),
+        "intro": info.get("intro"),
         "skipped": True,
     }
 
@@ -584,7 +587,7 @@ def _check_interpreter(contributor, interpreter, path):
     sys.exit(1)
 
 
-def process_contributor(contributor, files, contributor_urls, full_mode, existing_index):
+def process_contributor(contributor, files, contributors, full_mode, existing_index):
     births_path = os.path.join(OUTPUT_DIR, f"{contributor}-matricula-persons.json")
     marriages_path = os.path.join(OUTPUT_DIR, f"{contributor}-matricula-families.json")
 
@@ -596,7 +599,7 @@ def process_contributor(contributor, files, contributor_urls, full_mode, existin
     ):
         latest_mtime = max(os.path.getmtime(p) for p in source_files)
         meta_entry = _skipped_meta(
-            contributor, births_path, marriages_path, latest_mtime, contributor_urls
+            contributor, births_path, marriages_path, latest_mtime, contributors
         )
         if meta_entry is not None:
             books_index = existing_index.get(contributor)
@@ -666,7 +669,8 @@ def process_contributor(contributor, files, contributor_urls, full_mode, existin
         "families_count": len(marriages),
         "links_count": links_count,
         "last_modified": last_modified,
-        "url": contributor_urls.get(contributor),
+        "url": contributors.get(contributor, {}).get("url"),
+        "intro": contributors.get(contributor, {}).get("intro"),
         "skipped": False,
     }
     return {
@@ -805,7 +809,7 @@ def main():
         print(f"No xlsx files found under '{args.input_root}'.", file=sys.stderr)
         return 0
 
-    contributor_urls = _load_contributor_urls()
+    contributors = _load_contributors()
 
     existing_index = {}
     index_path = os.path.join(OUTPUT_DIR, "matricula-index.json")
@@ -819,7 +823,7 @@ def main():
     summaries = []
     for contributor in sorted(by_contributor, key=locale.strxfrm):
         summaries.append(process_contributor(
-            contributor, by_contributor[contributor], contributor_urls,
+            contributor, by_contributor[contributor], contributors,
             full_mode, existing_index))
 
     update_metadata_file([s["meta_entry"] for s in summaries], OUTPUT_DIR)

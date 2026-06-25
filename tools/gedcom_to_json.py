@@ -23,12 +23,13 @@ CACHE_FILE = ".gedcom_to_json.cache"
 CONTRIBUTORS_FILE = "data/contributors.json"
 
 
-def _load_contributor_urls():
-    """Load public URLs from contributors.json. Returns dict of contributor_id -> url."""
+def _load_contributors():
+    """Load contributors.json. Returns dict of contributor_id -> {url, intro}."""
     try:
         with open(CONTRIBUTORS_FILE, encoding="utf-8") as f:
             data = json.load(f)
-        return {name: info.get("url") for name, info in data.items() if info.get("url")}
+        return {name: {"url": info.get("url"), "intro": info.get("intro")}
+                for name, info in data.items()}
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
@@ -793,7 +794,7 @@ def needs_processing(input_path, *json_paths):
     return False
 
 
-def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_dir):
+def _process_one_file(filename, full_mode, contributors, input_dir, output_dir):
     """Process a single GED file. Returns (metadata_entry_or_None, log_lines).
 
     All output is collected into log_lines instead of printed directly, so
@@ -831,7 +832,8 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
                 "filtered_count": 0,
                 "skipped": True,
                 "last_modified": ged_mtime,
-                "url": contributor_urls.get(contributor_id),
+                "url": contributors.get(contributor_id, {}).get("url"),
+                "intro": contributors.get(contributor_id, {}).get("intro"),
             }
         except Exception:
             meta = None
@@ -1280,7 +1282,8 @@ def _process_one_file(filename, full_mode, contributor_urls, input_dir, output_d
         "filtered_count": filtered_count,
         "skipped": False,
         "last_modified": datetime.fromtimestamp(ged_mtime).isoformat(),
-        "url": contributor_urls.get(contributor_id),
+        "url": contributors.get(contributor_id, {}).get("url"),
+        "intro": contributors.get(contributor_id, {}).get("intro"),
     }
     return meta, log
 
@@ -1383,7 +1386,7 @@ def main():
 
     # Store metadata about processed files for the frontend
     metadata = []
-    contributor_urls = _load_contributor_urls()
+    contributors = _load_contributors()
 
     # Process files in parallel; print each file's output as its future completes.
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
@@ -1392,7 +1395,7 @@ def main():
                 _process_one_file,
                 filename,
                 full_mode or filename in forced_files,
-                contributor_urls,
+                contributors,
                 INPUT_DIR,
                 OUTPUT_DIR,
             ): filename
@@ -1414,14 +1417,16 @@ def main():
 
     print("Completed!", file=sys.stderr)
 
-    # Write global metadata.json for the frontend. This script owns contributors
-    # whose name does NOT end in "-matricula" or "-geneanet"; those namespaces
-    # belong to matricula_to_json.py / geneanet_to_json.py and are preserved as-is.
+    # Write global metadata.json for the frontend. Each contributor name is owned
+    # by exactly one script. This script preserves any entry it is not currently
+    # (re)writing, so that matricula_to_json.py, geneanet_to_json.py, and any
+    # other scripts that maintain their own entries are not disturbed.
     metadata_output_path = os.path.join(OUTPUT_DIR, "metadata.json")
     metadata_out = [
         {k: v for k, v in m.items() if k not in ("filtered_count", "skipped")}
         for m in metadata
     ]
+    written_contributors = {m["contributor"] for m in metadata_out}
     preserved = []
     if os.path.exists(metadata_output_path):
         try:
@@ -1429,7 +1434,7 @@ def main():
                 existing = json.load(f)
             preserved = [
                 e for e in existing
-                if e.get("contributor", "").endswith(("-matricula", "-geneanet"))
+                if e.get("contributor", "") not in written_contributors
             ]
         except (json.JSONDecodeError, OSError):
             preserved = []
