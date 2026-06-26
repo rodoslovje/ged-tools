@@ -59,7 +59,9 @@ def _name_type(name_element):
 _ALT_SURNAME_NAME_TYPES = ("married", "maiden", "aka")
 
 # Sub-tags that supply an alternate surname inline under a NAME block.
-# `_MARNM` is the MyHeritage / Family Tree Maker convention for "married name".
+# `_MARNM` is the "married name" convention used by MyHeritage / Family Tree
+# Maker as well as Gramps / PAF / Brother's Keeper (typically surname-only,
+# e.g. `2 _MARNM Maček` directly under the primary NAME).
 # `_FORMERNAME` is used for a previous (often pre-marriage) surname.
 _ALT_SURNAME_SUBTAGS = ("_MARNM", "_FORMERNAME")
 
