@@ -573,18 +573,17 @@ def _check_interpreter(contributor, interpreter, path):
 
     Catches xlsx files placed under the wrong contributor directory before
     they pollute the per-contributor JSON outputs. Empty interpret cells are
-    skipped; the first non-empty mismatch aborts the whole run.
+    skipped; a non-empty mismatch raises ValueError so the caller can report
+    the file and skip it.
     """
     if not interpreter:
         return
     if _interpreter_matches(contributor, interpreter):
         return
-    print(
-        f"Error: interpret '{interpreter}' in {path} does not contain "
-        f"contributor folder name '{contributor}'",
-        file=sys.stderr,
+    raise ValueError(
+        f"interpret '{interpreter}' does not contain "
+        f"contributor folder name '{contributor}'"
     )
-    sys.exit(1)
 
 
 def process_contributor(contributor, files, contributors, full_mode, existing_index):
@@ -619,22 +618,35 @@ def process_contributor(contributor, files, contributors, full_mode, existing_in
 
     births, marriages = [], []
     books_index = []
+    failed_files = []
     latest_mtime = 0.0
 
     for path in source_files:
         kind = detect_book_kind(path)
+        try:
+            file_births, file_marriages = [], []
+            count = 0
+            sample_url = ""
+            for row in read_rows(path):
+                _check_interpreter(contributor, cell_str(row.get("interpreter")), path)
+                count += 1
+                if not sample_url:
+                    sample_url = cell_str(row.get("url"))
+                if kind == "K":
+                    file_births.append(birth_record(row))
+                else:
+                    file_marriages.append(marriage_record(row))
+        except Exception as exc:
+            failed_files.append(path)
+            print(f"Error: failed to process {path}: {exc}; skipping file",
+                  file=sys.stderr)
+            continue
+
+        # Only commit a file's records and advance the output mtime once it
+        # parsed cleanly, so a failed file is retried on the next run.
         latest_mtime = max(latest_mtime, os.path.getmtime(path))
-        count = 0
-        sample_url = ""
-        for row in read_rows(path):
-            _check_interpreter(contributor, cell_str(row.get("interpreter")), path)
-            count += 1
-            if not sample_url:
-                sample_url = cell_str(row.get("url"))
-            if kind == "K":
-                births.append(birth_record(row))
-            else:
-                marriages.append(marriage_record(row))
+        births.extend(file_births)
+        marriages.extend(file_marriages)
         books_index.append(_book_entry(path, count, sample_url))
 
     births.sort(key=lambda r: (
@@ -678,6 +690,7 @@ def process_contributor(contributor, files, contributors, full_mode, existing_in
         "births_count": len(births),
         "marriages_count": len(marriages),
         "skipped_files": skipped_files,
+        "failed_files": failed_files,
         "meta_entry": meta_entry,
         "books_index": books_index,
     }
@@ -842,6 +855,14 @@ def main():
               f"{s['meta_entry']['links_count']:>6}")
         for skipped in s["skipped_files"]:
             print(f"  skipped (unknown K/P): {skipped}", file=sys.stderr)
+
+    failed_files = [f for s in summaries for f in s.get("failed_files", [])]
+    if failed_files:
+        print(f"\n{len(failed_files)} file(s) failed and were skipped:",
+              file=sys.stderr)
+        for f in failed_files:
+            print(f"  {f}", file=sys.stderr)
+        return 1
 
     return 0
 
