@@ -152,30 +152,30 @@ def test_whole_value_placeholder_to_nn(raw, expected):
         ("XY /Smith/", "NN /Smith/"),
         ("NN /Smith/", "NN /Smith/"),  # idempotent
         ("__XY__ /Smith/", "NN /Smith/"),
-        # Surname placeholder only — given is real → surname becomes empty //
-        # (do not fabricate "NN" when a real given is the only name signal).
-        ("Jane /___/", "Jane //"),
-        ("Jane /_?_/", "Jane //"),
-        ("Jane /NN/", "Jane //"),  # /NN/ → // when given is real
-        ("Jane /XXX/", "Jane //"),
-        ("Jane Marie /XY/", "Jane Marie //"),
-        ("Jane /__NN__/", "Jane //"),
+        # Surname placeholder only — given is real → explicit "NN" surname
+        # ("Given /NN/"): an unknown surname is recorded as the "NN" stub.
+        ("Jane /___/", "Jane /NN/"),
+        ("Jane /_?_/", "Jane /NN/"),
+        ("Jane /NN/", "Jane /NN/"),  # idempotent
+        ("Jane /XXX/", "Jane /NN/"),
+        ("Jane Marie /XY/", "Jane Marie /NN/"),
+        ("Jane /__NN__/", "Jane /NN/"),
         # "UNNAMED" in slash-format
         ("/UNNAMED/", "NN"),  # collapsed (no real given)
         ("/Unnamed/", "NN"),
-        ("Jane /UNNAMED/", "Jane //"),  # real given → empty surname
+        ("Jane /UNNAMED/", "Jane /NN/"),  # real given → explicit NN surname
         ("UNNAMED /Smith/", "NN /Smith/"),
         ("Unnamed /unnamed/", "NN"),  # both placeholders → collapsed
         # "UNKNOWN" in slash-format
         ("/UNKNOWN/", "NN"),  # collapsed (no real given)
         ("/Unknown/", "NN"),
-        ("Jane /UNKNOWN/", "Jane //"),  # real given → empty surname
+        ("Jane /UNKNOWN/", "Jane /NN/"),  # real given → explicit NN surname
         ("UNKNOWN /Smith/", "NN /Smith/"),
         # "XX" / "NEZNAN" in slash-format
         ("/XX/", "NN"),
         ("/Neznan/", "NN"),
-        ("Jane /XX/", "Jane //"),
-        ("Jane /Neznan/", "Jane //"),
+        ("Jane /XX/", "Jane /NN/"),
+        ("Jane /Neznan/", "Jane /NN/"),
         ("XX /Smith/", "NN /Smith/"),
         ("Neznan /Smith/", "NN /Smith/"),
         ("XX /Neznan/", "NN"),
@@ -187,7 +187,7 @@ def test_whole_value_placeholder_to_nn(raw, expected):
         # Repeated-letter runs in slash-format
         ("/AAAA/", "NN"),
         ("/qqqq/", "NN"),
-        ("Jane /AAAA/", "Jane //"),
+        ("Jane /AAAA/", "Jane /NN/"),
         ("AAAA /Smith/", "NN /Smith/"),
         ("AAAA /BBBB/", "NN"),
         ("ZZZ /YYY/", "NN"),
@@ -211,13 +211,11 @@ def test_slash_placeholder_to_nn(raw, expected):
         # Real names — no change.
         "John /Smith/",
         "Ana",
-        "/Novak/",
         "J. /Doe/",
         "",  # already empty — stays empty
         # Real names that *contain* a stub substring but are not pure stubs.
         "XYla",
         "XYZ",
-        "/Xyrus/",
         "Anna",
         "XYz /smith/",
         # Real given + surname — no change.
@@ -228,7 +226,6 @@ def test_slash_placeholder_to_nn(raw, expected):
         # pure stubs.
         "Unnameds",
         "Unnamedfoo",
-        "/Unnameds/",
         # 2-char same-letter strings stay (Roman numeral suffixes etc.).
         "II",
         "VV",
@@ -237,19 +234,12 @@ def test_slash_placeholder_to_nn(raw, expected):
         "Aaron",
         "Lee",
         "Anna",
-        "/Aaron/",
         "Aaron /Smith/",
         # 2-char Roman-numeral suffix as part of a full name stays.
         "John /Smith/ II",
         # Note: 3+ same-letter sequences are aggressive — e.g. "III" suffix
         # would be mistaken for a placeholder. The user explicitly requested
         # this rule, so that trade-off is accepted.
-        # Empty surname is preserved when there is a real given:
-        # "Jane //" means "surname intentionally absent / unrecorded",
-        # which is different from a placeholder marker like "___" or "XY".
-        "Jane //",
-        "John //",
-        "Jane Marie //",
     ],
 )
 def test_real_names_unchanged(raw):
@@ -274,9 +264,9 @@ def test_real_names_unchanged(raw):
         ("John / Smith /", "John /Smith/"),
         ("John /Mary  Ann/", "John /Mary Ann/"),
         ("John /  Smith  /", "John /Smith/"),
-        # Whitespace-only surname collapses to empty.
-        ("Jane / /", "Jane //"),
-        ("Jane /   /", "Jane //"),
+        # Whitespace-only surname with a real given → explicit "/NN/".
+        ("Jane / /", "Jane /NN/"),
+        ("Jane /   /", "Jane /NN/"),
         # Plain-value tags (no slashes)
         ("  Ana  Marija  ", "Ana Marija"),
         ("Ana   Marija", "Ana Marija"),
@@ -289,25 +279,25 @@ def test_whitespace_normalized(raw, expected):
 
 
 # ---------------------------------------------------------------------------
-# "Real given + placeholder surname" rule: surname becomes empty //, not /NN/.
+# "Real given + placeholder/empty surname" rule: surname becomes "/NN/".
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     "raw, expected",
     [
-        # Various placeholder surname forms with a real given → empty surname.
-        ("John /???/", "John //"),
-        ("John /(?)/", "John //"),
-        ("Luka /XY/", "Luka //"),
-        ("Luka /XXY/", "Luka //"),
-        ("Luka Anton /...___.../", "Luka Anton //"),
-        ("Jože /__/", "Jože //"),
-        ("Špela /Unnamed/", "Špela //"),
-        # Already-NN surname with real given is also normalized to empty //.
-        ("John /NN/", "John //"),
-        ("John /N.N./", "John //"),
-        ("John /. . ./", "John //"),
+        # Various placeholder surname forms with a real given → explicit NN.
+        ("John /???/", "John /NN/"),
+        ("John /(?)/", "John /NN/"),
+        ("Luka /XY/", "Luka /NN/"),
+        ("Luka /XXY/", "Luka /NN/"),
+        ("Luka Anton /...___.../", "Luka Anton /NN/"),
+        ("Jože /__/", "Jože /NN/"),
+        ("Špela /Unnamed/", "Špela /NN/"),
+        # Already-NN surname with real given stays "/NN/" (idempotent).
+        ("John /NN/", "John /NN/"),
+        ("John /N.N./", "John /NN/"),
+        ("John /. . ./", "John /NN/"),
         # No real given AND no real surname → collapsed to "NN".
         ("/???/", "NN"),
         ("___ /???/", "NN"),
@@ -317,6 +307,37 @@ def test_whitespace_normalized(raw, expected):
     ],
 )
 def test_placeholder_surname_with_real_given(raw, expected):
+    result, warning = clean_name_placeholder(raw)
+    assert warning is None
+    assert result == expected
+
+
+# ---------------------------------------------------------------------------
+# "Real surname + empty/placeholder given" rule: given becomes "NN"
+# ("/Smith/" -> "NN /Smith/"). An unknown given name is recorded explicitly.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        # Surname-only (empty given) → explicit "NN" given.
+        ("/Smith/", "NN /Smith/"),
+        ("/Novak/", "NN /Novak/"),
+        ("/Xyrus/", "NN /Xyrus/"),
+        ("/Unnameds/", "NN /Unnameds/"),
+        ("/Aaron/", "NN /Aaron/"),
+        (" /Smith/ ", "NN /Smith/"),
+        ("/ Smith /", "NN /Smith/"),
+        # Multi-variant surname list with no given is left as-is: the text
+        # between the inner slashes parses as a "given", so no "NN" is added.
+        ("/Wershnig/Verschnig/Berschnik/", "/Wershnig/Verschnig/Berschnik/"),
+        # A real given already present is NOT touched by this rule.
+        ("J. /Doe/", "J. /Doe/"),
+        ("NN /Smith/", "NN /Smith/"),  # idempotent
+    ],
+)
+def test_empty_given_with_real_surname(raw, expected):
     result, warning = clean_name_placeholder(raw)
     assert warning is None
     assert result == expected
@@ -341,8 +362,8 @@ def test_placeholder_surname_with_real_given(raw, expected):
         ("XY /XXX/", "NN"),
         # Real content blocks the collapse.
         ("NN /Smith/", "NN /Smith/"),
-        ("Jane /NN/", "Jane //"),
-        ("Jane //", "Jane //"),
+        ("Jane /NN/", "Jane /NN/"),
+        ("Jane //", "Jane /NN/"),
         # Empty/all-slashes — no name signal at all → "NN".
         ("//", "NN"),
         ("/ /", "NN"),
@@ -358,8 +379,8 @@ def test_all_nn_collapse(raw, expected):
 
 # ---------------------------------------------------------------------------
 # Integration: SURN child must reflect the parent NAME's slash content.
-# When NAME's surname collapses to empty ("Jane /NN/" -> "Jane //"), the
-# SURN child should not retain "NN" either.
+# When NAME's surname becomes "NN" ("Jane //" -> "Jane /NN/") the SURN child
+# is synced to "NN"; when NAME collapses to a bare "NN" the SURN is cleared.
 # ---------------------------------------------------------------------------
 
 
@@ -441,10 +462,9 @@ def test_surn_synced_to_empty_when_name_surname_empty():
         )
         content = open(out, encoding="utf-8").read()
 
-        # I1: NAME's surname collapsed to empty → SURN must be empty.
-        assert "1 NAME Jane //" in content
-        assert "2 SURN NN" not in content  # the orphaned "NN" is gone
-        assert "1 NAME Jane //\n2 GIVN Jane\n2 SURN" in content
+        # I1: unknown surname recorded as "NN" → SURN synced to "NN".
+        assert "1 NAME Jane /NN/" in content
+        assert "1 NAME Jane /NN/\n2 GIVN Jane\n2 SURN NN" in content
 
         # I2: real surname kept; SURN unchanged.
         assert "1 NAME NN /Smith/" in content

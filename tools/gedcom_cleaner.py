@@ -55,12 +55,14 @@ Available Cleaners:
                          stub words "XY"/"XX"/"XXY"/"XXX"/"NN"/"UNNAMED"/
                          "UNKNOWN"/"NEZNAN" (case-insensitive, with optional surrounding
                          punctuation), and any run of 3+ of the same letter
-                         ("AAA", "BBBB", "qqqq"). Each placeholder given-name
-                         segment becomes "NN". A placeholder surname becomes
-                         "/NN/" only when no real given is present; if there
-                         IS a real given, the placeholder surname becomes
-                         empty ("//") — e.g. "___ /___/" → "NN", "Jane /___/"
-                         → "Jane //", "//" → "NN", "AAAA /BBBB/" → "NN".
+                         ("AAA", "BBBB", "qqqq"). Every unknown or empty name
+                         component becomes an explicit "NN": a placeholder/empty
+                         surname next to a real given → "Given /NN/", a
+                         placeholder/empty given next to a real surname → "NN
+                         /Surname/". When nothing real remains the value
+                         collapses to a bare "NN" — e.g. "/Smith/" → "NN
+                         /Smith/", "Jane /___/" → "Jane /NN/", "Jane //" →
+                         "Jane /NN/", "___ /___/" → "NN", "//" → "NN".
     name_capitalization  Title-case all name parts ("JOŽE /KOVAČ/" -> "Jože /Kovač/").
                          Particles like "de"/"von"/"der"/"des"/"v." stay lowercase
                          in the middle of a name but are capitalized when they
@@ -135,10 +137,10 @@ Available Transformers (listed in execution order):
                          Falls back to relative-based birth year estimation
                          (parents +35y, children -35y) when birth date is entirely
                          absent. Also fires on manual privacy markers (case-
-                         insensitive): the word "Living" anywhere in NAME / GIVN /
-                         SURN, or a NOTE that starts with "living" (e.g.
-                         "living - details excluded"). Complies with ZVOP-2 for
-                         living persons.
+                         insensitive): the word "Living", "Private", or "Privat"
+                         anywhere in NAME / GIVN / SURN, or a NOTE that starts
+                         with one of those words (e.g. "living - details
+                         excluded"). Complies with ZVOP-2 for living persons.
     living75y_private    Same as living100y_private but with a 75-year cutoff.
     living100y_initials  Same detection as living100y_private but reduces the full
                          name to initials (e.g. Luka /Renko/ -> L. /R./).
@@ -709,32 +711,40 @@ def _indi_is_private_name(indi_el) -> bool:
     return False
 
 
-_LIVING_WORD_RE = re.compile(r"\bliving\b", re.IGNORECASE)
+# Manual privacy markers used in place of a real name (or in a NOTE) to flag a
+# record as private: the standalone words "living", "private", or "privat"
+# (case-insensitive). "private" is listed before "privat" so the full word is
+# captured in the reason string.
+_PRIVACY_MARKER_RE = re.compile(r"\b(?:living|private|privat)\b", re.IGNORECASE)
+_PRIVACY_MARKER_START_RE = re.compile(r"^(living|private|privat)\b", re.IGNORECASE)
 
 
 def _indi_marked_living(indi_el) -> str:
-    """Return reason string if INDI is manually marked as living, else ''.
+    """Return reason string if INDI is manually marked private, else ''.
 
     Triggers on (case-insensitive):
-      - any whitespace-separated word in NAME (or GIVN/SURN) equal to 'living'
-      - any NOTE child whose value begins with 'living' as a standalone word
-        (e.g. 'living - details excluded').
+      - any whitespace-separated word in NAME (or GIVN/SURN) equal to
+        'living', 'private', or 'privat'
+      - any NOTE child whose value begins with one of those words as a
+        standalone word (e.g. 'living - details excluded', 'private').
     """
     for _c in indi_el.get_child_elements():
         tag = _c.get_tag()
         if tag == gedcom.tags.GEDCOM_TAG_NAME:
             name_val = _c.get_value().replace("/", " ")
-            if _LIVING_WORD_RE.search(name_val):
-                return "name marked 'Living'"
+            m = _PRIVACY_MARKER_RE.search(name_val)
+            if m:
+                return f"name marked '{m.group(0)}'"
             for gch in _c.get_child_elements():
-                if gch.get_tag() in ("GIVN", "SURN") and _LIVING_WORD_RE.search(
-                    gch.get_value()
-                ):
-                    return f"{gch.get_tag()} marked 'Living'"
+                if gch.get_tag() in ("GIVN", "SURN"):
+                    m = _PRIVACY_MARKER_RE.search(gch.get_value())
+                    if m:
+                        return f"{gch.get_tag()} marked '{m.group(0)}'"
         elif tag == "NOTE":
             note_val = _c.get_value().strip()
-            if re.match(r"^living\b", note_val, re.IGNORECASE):
-                return "NOTE marked 'living'"
+            m = _PRIVACY_MARKER_START_RE.match(note_val)
+            if m:
+                return f"NOTE marked '{m.group(1)}'"
     return ""
 
 
@@ -1971,7 +1981,7 @@ def _simplify_all_nn(value: str) -> str:
         "NN /NN/"  -> "NN"
         "/NN/"     -> "NN"
         "NN //"    -> "NN"
-        "Jane //"  -> "Jane //"   (real given preserved)
+        "Jane /NN/" -> "Jane /NN/"  (real given preserved)
         "//"       -> "//"        (no NN signal — leave as truly empty)
     """
     if "/" not in value:
@@ -1998,23 +2008,27 @@ def _simplify_all_nn(value: str) -> str:
 def clean_name_placeholder(raw: str) -> tuple[str, None]:
     """
     Replace placeholder name segments with the conventional "NN" stub
-    (Nomen Nescio — name unknown). Two refinements:
-      1. When a real given name is present, a placeholder surname becomes
-         an EMPTY surname ("//") instead of "/NN/" — we don't fabricate a
-         fake surname for someone with a known given name.
-      2. When no real name content remains (every segment is empty or "NN"),
+    (Nomen Nescio — name unknown). Every unknown or empty name component
+    becomes an explicit "NN"; the only time nothing is filled is when the
+    whole value has no signal, in which case it collapses to a bare "NN":
+      1. A placeholder OR empty surname alongside a real given becomes "/NN/"
+         (Given /NN/).
+      2. A placeholder OR empty given alongside a real surname becomes "NN"
+         (NN /Surname/).
+      3. When no real name content remains (every segment is empty or "NN"),
          the value is collapsed to a single "NN".
         '___'              -> 'NN'
         '___ /___/'        -> 'NN'              (was 'NN /NN/' — collapsed)
         'NN /NN/'          -> 'NN'              (collapsed)
         '/NN/'             -> 'NN'              (collapsed)
         'NN //'            -> 'NN'              (collapsed)
+        '/Smith/'          -> 'NN /Smith/'      (empty given → explicit NN given)
         '___ /Smith/'      -> 'NN /Smith/'
         'XY /Smith/'       -> 'NN /Smith/'
-        'Jane /___/'       -> 'Jane //'         (real given → no fake surname)
-        'Jane /XY/'        -> 'Jane //'
-        'Jane /NN/'        -> 'Jane //'
-        'Jane //'          -> 'Jane //'         (empty surname preserved)
+        'Jane /___/'       -> 'Jane /NN/'       (real given → explicit NN surname)
+        'Jane /XY/'        -> 'Jane /NN/'
+        'Jane /NN/'        -> 'Jane /NN/'
+        'Jane //'          -> 'Jane /NN/'       (empty surname → NN)
     A placeholder is either pure punctuation (___, ???, ..., (?), . . .),
     an "all slashes" value (//, /  /), a stub word (XY, XX, XXY, XXX, NN,
     N.N., N N, UNNAMED, NEZNAN — case-insensitive, with optional surrounding
@@ -2035,21 +2049,27 @@ def clean_name_placeholder(raw: str) -> tuple[str, None]:
 
     # Determine whether the given-name segment(s) of `raw` already contain a
     # real (non-placeholder) name. Given parts are everything OUTSIDE slash-
-    # pairs. When a real given exists, a placeholder surname is rewritten to
-    # an EMPTY surname ("//") rather than "/NN/" — the given is the only
-    # name-bearing signal, so we don't fabricate a fake "NN" surname for it.
+    # pairs. When a real given exists, an unknown surname — placeholder OR
+    # empty — is recorded explicitly as "/NN/" (Given /NN/). When there is no
+    # real given, the value carries no name signal and is collapsed to a bare
+    # "NN" further below.
     raw_parts = re.split(r"(/[^/]*/)", raw)
     given_text = "".join(
         p for p in raw_parts if not (p.startswith("/") and p.endswith("/"))
     ).strip()
     has_real_given = bool(given_text) and not _is_name_placeholder(given_text)
-    surname_target = "//" if has_real_given else "/NN/"
 
     # Slash format: replace placeholder surname (between slashes).
     def repl_surname(match):
         inner = match.group(1)
+        # A placeholder surname always becomes the "NN" stub.
         if inner and _is_name_placeholder(inner):
-            return surname_target
+            return "/NN/"
+        # An empty/whitespace surname becomes "/NN/" only when a real given is
+        # present ("Jane //" -> "Jane /NN/"); with no real given the whole
+        # value collapses to "NN" below, so leave it untouched here.
+        if not inner.strip() and has_real_given:
+            return "/NN/"
         return match.group(0)
 
     cleaned = re.sub(r"/([^/]*)/", repl_surname, raw)
@@ -2076,9 +2096,22 @@ def clean_name_placeholder(raw: str) -> tuple[str, None]:
     # a single "NN" — there is no signal beyond "name unknown".
     cleaned = _simplify_all_nn(cleaned)
 
+    # A real surname with no given name at all gets an explicit "NN" given
+    # ("/Smith/" -> "NN /Smith/") — the given name is unknown. Only fires when
+    # a real surname survives; "//" and "/NN/" (which collapse to "NN") do not.
+    now_parts = re.split(r"(/[^/]*/)", cleaned)
+    given_now = "".join(
+        p for p in now_parts if not (p.startswith("/") and p.endswith("/"))
+    ).strip()
+    surname_now = "".join(
+        p[1:-1] for p in now_parts if p.startswith("/") and p.endswith("/")
+    ).strip()
+    if not given_now and surname_now and surname_now != "NN":
+        cleaned = _normalize_name_whitespace(f"NN {cleaned}")
+
     # If the value carries no name content whatsoever — just slashes and
     # whitespace, like "//" or "/  /" — output "NN" (the whole record has
-    # no name signal). A real given like "Jane //" is preserved by the
+    # no name signal). A real given like "Jane /NN/" is preserved by the
     # earlier branch logic and does NOT trip this check.
     if not cleaned.replace("/", "").strip():
         cleaned = "NN"
@@ -2687,9 +2720,9 @@ def process_file(
                 element.set_value(cleaned)
 
         # Align SURN children to the surname between slashes in their parent
-        # NAME. If the NAME's surname collapsed to empty (e.g. "Jane /NN/" ->
-        # "Jane //"), the SURN child must not retain the now-orphaned "NN".
-        # The match is greedy from the first "/" to the last "/", so multi-
+        # NAME. E.g. "Jane //" -> "Jane /NN/" makes the SURN child "NN", and a
+        # collapse to a bare "NN" (no slashes) clears the SURN child. The
+        # match is greedy from the first "/" to the last "/", so multi-
         # variant surnames like "Helena /Wershnig/Verschnig/Berschnik/" keep
         # their full inner content "Wershnig/Verschnig/Berschnik" in SURN.
         for element in parser.get_element_list():

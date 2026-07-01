@@ -2,6 +2,7 @@ import os
 import tempfile
 import textwrap
 import datetime
+import pytest
 from tools.gedcom_cleaner import process_file
 
 _CURR = datetime.date.today().year
@@ -108,6 +109,52 @@ def test_living100y_private_named_living():
     """), ["living100y_private"])
     assert "1 NAME <private>" in content
     assert stats["living100y_private"].transformed == 1
+
+
+@pytest.mark.parametrize("marker", ["Private", "private", "PRIVATE", "Privat", "privat"])
+def test_living100y_private_named_private(marker):
+    """A name marked 'Private'/'Privat' (any case) is always anonymised,
+    even with no dates."""
+    content, stats = _run(textwrap.dedent(f"""\
+        0 HEAD
+        1 CHAR UTF-8
+        0 @I1@ INDI
+        1 NAME {marker}
+        1 SEX F
+        0 TRLR
+    """), ["living100y_private"])
+    assert "1 NAME <private>" in content
+    assert stats["living100y_private"].transformed == 1
+
+
+def test_living100y_private_marker_in_surname():
+    """The privacy word inside a slash-surname also triggers anonymisation."""
+    content, stats = _run(textwrap.dedent("""\
+        0 HEAD
+        1 CHAR UTF-8
+        0 @I1@ INDI
+        1 NAME Ana /Private/
+        1 SEX F
+        0 TRLR
+    """), ["living100y_private"])
+    assert "1 NAME <private>" in content
+    assert stats["living100y_private"].transformed == 1
+
+
+def test_living100y_private_privatnik_not_a_marker():
+    """A real name that merely contains 'privat' as a substring (e.g. the
+    surname 'Privatnik') is NOT treated as a privacy marker."""
+    content, stats = _run(textwrap.dedent(f"""\
+        0 HEAD
+        1 CHAR UTF-8
+        0 @I1@ INDI
+        1 NAME Ana /Privatnik/
+        1 BIRT
+        2 DATE {_OLD}
+        0 TRLR
+    """), ["living100y_private"])
+    assert "1 NAME Ana /Privatnik/" in content
+    assert stats["living100y_private"].transformed == 0
 
 
 def test_living100y_private_uses_baptism_as_fallback():
