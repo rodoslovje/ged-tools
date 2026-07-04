@@ -450,6 +450,32 @@ def _stitch_conc_split_utf8(raw: bytes) -> bytes:
     return raw
 
 
+# Some exporters (e.g. MyHeritage record-citation notes) embed literal
+# newlines inside a CONC/CONT value instead of encoding each physical line
+# as its own CONT. The GEDCOM parser tolerates such bare continuation lines
+# — unless a fragment happens to start with "<digits> " (e.g. "7 from the
+# Psalm of Life:" inside pasted article text), which then looks exactly
+# like a real "<level> <tag>" line. If the apparent level jumps by more
+# than one from the last real line, it can only be leftover text, not
+# structure — fold it back onto the previous line before parsing.
+_GEDCOM_LEVEL_LINE_RE = re.compile(rb"^(0|[1-9][0-9]*) (?:@[^@]+@ )?[A-Za-z0-9_]+(?: .*)?$")
+
+
+def _rejoin_false_level_lines(raw: bytes) -> bytes:
+    out: list[bytes] = []
+    last_level = -1
+    for line in raw.splitlines(keepends=True):
+        stripped = line.rstrip(b"\r\n")
+        match = _GEDCOM_LEVEL_LINE_RE.match(stripped)
+        if match and out and int(match.group(1)) > last_level + 1:
+            out[-1] = out[-1].rstrip(b"\r\n") + b" " + line
+            continue
+        if match:
+            last_level = int(match.group(1))
+        out.append(line)
+    return b"".join(out)
+
+
 # Brother's Keeper sometimes mixes DOS-codepage bytes for Western umlauts
 # (e.g. München = 'M' 0x81 'nchen') into otherwise cp1250 exports. These
 # byte values are undefined in cp1250, so a plain decode raises and the
@@ -542,6 +568,12 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
     _conc_stitched = stitched != raw
     raw = stitched
 
+    # Fold back stray digit-prefixed fragments of a raw-newline-broken text
+    # field that would otherwise be misread as a real "<level> <tag>" line.
+    rejoined = _rejoin_false_level_lines(raw)
+    _false_level_rejoined = rejoined != raw
+    raw = rejoined
+
     # Brother's Keeper "A-prefix" custom encoding (the CHAR header lies and
     # claims UTF-8). Detected and decoded before standard codec dispatch.
     if _is_broskeep_aprefix(raw):
@@ -557,11 +589,16 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
     if norm in ("utf8", "utf8sig"):
         try:
             text = raw.decode(encoding)
-            if not _cr_normalised and not _conc_stitched and not _nul_stripped:
+            if (
+                not _cr_normalised
+                and not _conc_stitched
+                and not _nul_stripped
+                and not _false_level_rejoined
+            ):
                 return input_path, False
-            # CR-normalisation or CONC-stitching changed the bytes; write the
-            # decoded text to a temp UTF-8 file so the parser sees the fixed
-            # version.
+            # CR-normalisation, CONC-stitching, or false-level-line rejoining
+            # changed the bytes; write the decoded text to a temp UTF-8 file
+            # so the parser sees the fixed version.
             fd, tmp_path = tempfile.mkstemp(suffix=".ged")
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(text)
