@@ -32,6 +32,11 @@ from gedcom.element.element import Element
 from gedcom.parser import Parser
 import gedcom.tags
 
+try:
+    from tools.gedcom_merge import _Person, find_potential_duplicates
+except ImportError:  # run as a script: tools/ is on sys.path, the repo root is not
+    from gedcom_merge import _Person, find_potential_duplicates
+
 # ---------------------------------------------------------------------------
 # Encoding detection & transcoding (reused from gedcom_merge)
 # ---------------------------------------------------------------------------
@@ -172,18 +177,66 @@ def _get_event_date(indi_el, event_tag: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def find_duplicates(parser: Parser) -> list[list[Element]]:
-    key_to_indis = defaultdict(list)
+def find_duplicates(
+    parser: Parser, min_confidence: int = 85, file_label: str = ""
+) -> list[list[Element]]:
+    """Group individuals that match at or above `min_confidence`.
+
+    Matching is shared with gedcom_merge, so it is case- and diacritic-
+    insensitive and tolerates partial dates. Pairs are grouped transitively:
+    if A matches B and B matches C, all three merge into one record.
+    """
+    label = os.path.basename(file_label) or "input"
+    indi_by_ptr = {}
+    people = []
     for el in parser.get_root_child_elements():
         if el.get_tag() != gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
             continue
-        given, surname = _get_name(el)
-        birth_date = _get_event_date(el, gedcom.tags.GEDCOM_TAG_BIRTH)
-        if not surname or not given or not birth_date:
-            continue
-        key = (surname.lower(), given.lower(), birth_date)
-        key_to_indis[key].append(el)
-    return [group for group in key_to_indis.values() if len(group) > 1]
+        indi_by_ptr[el.get_pointer()] = el
+        people.append(_Person(el, label))
+
+    # Union-find over the matched pairs.
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x: str, y: str) -> None:
+        rx, ry = find(x), find(y)
+        if rx != ry:
+            parent[ry] = rx
+
+    for _confidence, _reason, a, b in find_potential_duplicates(people, min_confidence):
+        union(a.pointer, b.pointer)
+
+    groups = defaultdict(list)
+    for ptr in parent:
+        groups[find(ptr)].append(ptr)
+
+    result = []
+    for members in groups.values():
+        if len(members) > 1:
+            result.append([indi_by_ptr[p] for p in sorted(members)])
+    result.sort(key=lambda g: g[0].get_pointer())
+    return result
+
+
+def _describe(indi_el) -> str:
+    """One-line summary of an individual: pointer, name, birth and death dates."""
+    given, surname = _get_name(indi_el)
+    name = f"{given} {surname}".strip() or "?"
+    p = _Person(indi_el, "")
+    dates = []
+    if p.birth:
+        dates.append(f"b. {p.birth}")
+    if p.death:
+        dates.append(f"d. {p.death}")
+    detail = ", ".join(dates) if dates else "no dates"
+    return f"{indi_el.get_pointer()} {name} ({detail})"
 
 
 def merge_and_redirect(
@@ -196,9 +249,9 @@ def merge_and_redirect(
         group.sort(key=lambda el: el.get_pointer())
         master, sources = group[0], group[1:]
         master_ptr = master.get_pointer()
-        print(
-            f"Merging {len(sources)} duplicate(s) into {master_ptr} ({_get_name(master)[0]} {_get_name(master)[1]})"
-        )
+        print(f"Merging {len(sources)} duplicate(s) into {_describe(master)}")
+        for source in sources:
+            print(f"    from {_describe(source)}")
 
         for source in sources:
             source_ptr = source.get_pointer()
@@ -271,6 +324,18 @@ def main():
     )
     parser.add_argument("input", help="Input GEDCOM file to process")
     parser.add_argument("-o", "--output", required=True, help="Output GEDCOM file")
+    parser.add_argument(
+        "--min-confidence",
+        type=int,
+        default=85,
+        help="Minimum match confidence to merge, 0-100 (default: 85). "
+        "See gedcom_merge for the scoring table.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List the groups that would be merged without writing output",
+    )
     args = parser.parse_args()
     args.input = unicodedata.normalize("NFC", args.input)
     args.output = unicodedata.normalize("NFC", args.output)
@@ -284,18 +349,26 @@ def main():
         if is_tmp:
             os.unlink(parse_path)
 
-    duplicate_groups = find_duplicates(ged_parser)
+    duplicate_groups = find_duplicates(ged_parser, args.min_confidence, args.input)
 
     if not duplicate_groups:
         print("No duplicates found based on name and birth date.")
         # Still write to output to ensure a clean UTF-8 copy
         with open(args.output, "w", encoding="utf-8") as f_out:
-            with open(parse_path, "r", encoding="utf-8") as f_in:
-                f_out.write(f_in.read())
+            for el in ged_parser.get_root_child_elements():
+                f_out.write(_serialize(el))
         print(f"Wrote clean copy to: {args.output}")
         return
 
     print(f"Found {len(duplicate_groups)} group(s) of potential duplicates.")
+
+    if args.dry_run:
+        for group in duplicate_groups:
+            print(f"  Would merge into {_describe(group[0])}")
+            for el in group[1:]:
+                print(f"    {_describe(el)}")
+        print("Dry run: no output written.")
+        return
 
     delete_set = merge_and_redirect(duplicate_groups, ged_parser)
 

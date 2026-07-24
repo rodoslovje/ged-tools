@@ -237,19 +237,47 @@ Merges multiple GEDCOM files into a single output file.
 
 This tool structurally merges multiple trees by concatenating their records. To ensure unique GEDCOM IDs for individuals, families, sources, and objects, it automatically prefixes all pointers with a file-specific identifier (e.g., `@I1@` from the first file becomes `@f1_I1@`, and `@I1@` from the second becomes `@f2_I1@`).
 
-`python tools/gedcom_merge.py <input1.ged> <input2.ged> ... -o <output.ged>`
+After writing the output it scans the merged individuals and **warns about potential duplicates** — people that appear in more than one input file and should probably be merged into a single record. The scan only reports; it never changes the output. Use `gedcom_dedupe` to actually merge, or resolve them manually in your genealogy program.
+
+```
+python tools/gedcom_merge.py <input1.ged> <input2.ged> ... -o <output.ged>
+python tools/gedcom_merge.py --input-dir DIR -o <output.ged>
+```
 
 ### Options
 
-| Option         | Description                       |
-| -------------- | --------------------------------- |
-| `-o, --output` | **Required.** Output GEDCOM file. |
+| Option                   | Description                                                                             |
+| ------------------------ | --------------------------------------------------------------------------------------- |
+| `-o, --output`           | **Required.** Output GEDCOM file.                                                       |
+| `--input-dir DIR`        | Merge all `.ged` files in DIR, sorted by name (may be combined with explicit file args). |
+| `--no-check-duplicates`  | Skip the potential-duplicate scan.                                                      |
+| `--min-confidence N`     | Only report pairs at or above this confidence, 0–100 (default: `50`).                   |
+| `--duplicate-report FILE` | Write the duplicate report to FILE instead of stdout.                                   |
+
+### Duplicate detection
+
+Individuals are bucketed by normalized surname + first given name (case-, diacritic-, and punctuation-insensitive, so `Glavnik` matches `GLAVNIK` and `Božič` matches `Bozic`). Placeholder names (`N`, `NN`, `Unknown`, `Neznan`, `Private`, `Living`) are ignored. Each pair in a bucket is then scored on dates; a pair with conflicting `SEX` is never reported.
+
+| Confidence | Signal                                          |
+| ---------- | ------------------------------------------------ |
+| 100%       | Identical full birth date                        |
+| 85% / 65%  | Same birth year (full given-name match / first name only) |
+| 70% / 50%  | Same death year, birth unknown                   |
+| 60% / 45%  | Same birth year, different day                   |
+| 50% / 35%  | Birth years within 2 years                       |
+| 30%        | Same full name, no dates on either record        |
+
+`BAPM`/`CHR` stand in for a missing `BIRT`, and `BURI` for a missing `DEAT`.
 
 ### Example
 
 ```bash
 # Merge two family trees into one
 python tools/gedcom_merge.py DruzinskoDrevo_Udovic.ged DruzinskoDrevo_Brunskole.ged -o Merged_Tree.ged
+
+# Merge a whole folder and save the duplicate warnings for review
+python tools/gedcom_merge.py --input-dir ~/Downloads/Glavnik -o Glavnik_Merged.ged \
+    --duplicate-report Glavnik_duplicates.txt
 ```
 
 ---
@@ -258,7 +286,7 @@ python tools/gedcom_merge.py DruzinskoDrevo_Udovic.ged DruzinskoDrevo_Brunskole.
 
 Finds and merges duplicate individuals in a GEDCOM file, typically after it has been combined using `gedcom_merge`.
 
-This tool identifies potential duplicate individuals based on their exact name and birth date. For each set of duplicates, it designates one as the "master" record and merges the others into it.
+This tool identifies potential duplicate individuals using the same scoring as `gedcom_merge`'s duplicate scan (case- and diacritic-insensitive names, partial dates tolerated). Matches are grouped transitively — if A matches B and B matches C, all three become one record. For each group it designates one as the "master" record and merges the others into it.
 
 **Merge strategy:**
 
@@ -267,13 +295,26 @@ This tool identifies potential duplicate individuals based on their exact name a
 3.  All other information from the duplicate records (events, notes, sources) is preserved by converting the entire duplicate record into a `NOTE` on the master record. This allows for manual review and integration.
 4.  The original duplicate records are removed from the file.
 
+Only individuals are deduplicated. Duplicate `FAM` records describing the same couple are left in place for manual review.
+
 `python tools/gedcom_dedupe.py <input.ged> -o <output.ged>`
+
+### Options
+
+| Option               | Description                                                                                                    |
+| -------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `-o, --output`       | **Required.** Output GEDCOM file.                                                                              |
+| `--min-confidence N` | Minimum match confidence to merge, 0–100 (default: `85`). See the scoring table under `gedcom_merge`. Use `100` to merge only records with an identical full birth date. |
+| `--dry-run`          | List the groups that would be merged without writing output.                                                   |
 
 ### Example
 
 ```bash
 # Find and merge duplicates in a previously merged file
 python tools/gedcom_dedupe.py Merged_Tree.ged -o Merged_Deduplicated_Tree.ged
+
+# Preview the merges, only for records with an identical full birth date
+python tools/gedcom_dedupe.py Merged_Tree.ged -o /dev/null --min-confidence 100 --dry-run
 ```
 
 ---
