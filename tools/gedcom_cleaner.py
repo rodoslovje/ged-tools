@@ -458,7 +458,15 @@ def _stitch_conc_split_utf8(raw: bytes) -> bytes:
 # like a real "<level> <tag>" line. If the apparent level jumps by more
 # than one from the last real line, it can only be leftover text, not
 # structure — fold it back onto the previous line before parsing.
-_GEDCOM_LEVEL_LINE_RE = re.compile(rb"^(0|[1-9][0-9]*) (?:@[^@]+@ )?[A-Za-z0-9_]+(?: .*)?$")
+#
+# The prefix match mirrors the parser's own non-strict fallback, which stops
+# at the tag and ignores whatever follows: a fragment like
+# "1822 k.o. Rakitna, Alphabetical list of landowners" is read by the parser
+# as level 1822 / tag "k", so it has to be recognised here too even though
+# the remainder is not a well-formed value.
+_GEDCOM_LEVEL_LINE_RE = re.compile(
+    rb"^(?:\xef\xbb\xbf)?(0|[1-9][0-9]*) (?:@[^@]+@ )?([A-Za-z0-9_]+)"
+)
 
 
 def _rejoin_false_level_lines(raw: bytes) -> bytes:
@@ -467,13 +475,68 @@ def _rejoin_false_level_lines(raw: bytes) -> bytes:
     for line in raw.splitlines(keepends=True):
         stripped = line.rstrip(b"\r\n")
         match = _GEDCOM_LEVEL_LINE_RE.match(stripped)
-        if match and out and int(match.group(1)) > last_level + 1:
+        # last_level stays -1 until a real line has been seen; nothing can be
+        # "too deep" before then, and there is no line to fold onto.
+        if match and last_level >= 0 and int(match.group(1)) > last_level + 1:
             out[-1] = out[-1].rstrip(b"\r\n") + b" " + line
             continue
         if match:
             last_level = int(match.group(1))
         out.append(line)
     return b"".join(out)
+
+
+# When an export terminates its records with CRLF, a bare LF can only be a
+# literal newline that the exporter left inside a value — never a record
+# separator. MyHeritage does this on a large scale: a single "1 NOTE" can
+# carry a dozen embedded LFs, and every fragment after one is then read as a
+# separate GEDCOM line. Most fragments are harmless (the parser folds them
+# into a CONC), but any fragment starting with digits and a space — a year,
+# a cadastral reference — is read as a level, which either aborts the parse
+# on a level jump or silently reparents the following lines.
+#
+# Splitting on CRLF instead resolves the whole class deterministically, and
+# re-emitting each fragment as a proper CONT keeps the line break that the
+# heuristic fold above would flatten into a space.
+def _fold_embedded_lf_lines(raw: bytes) -> bytes:
+    crlf_count = raw.count(b"\r\n")
+    if crlf_count == 0:
+        return raw
+    lone_lf_count = len(re.findall(rb"(?<!\r)\n", raw))
+    # Only trust the terminator when CRLF is clearly the dominant one; a file
+    # that is mostly bare LF is an LF-terminated export and tells us nothing.
+    if lone_lf_count == 0 or crlf_count <= lone_lf_count:
+        return raw
+
+    out: list[bytes] = []
+    for logical in raw.split(b"\r\n"):
+        if b"\n" not in logical:
+            out.append(logical)
+            continue
+        head, *fragments = logical.split(b"\n")
+        match = _GEDCOM_LEVEL_LINE_RE.match(head)
+        if not match:
+            # Not a GEDCOM line to begin with — leave it for the parser's own
+            # bare-continuation fallback rather than inventing structure.
+            out.append(logical)
+            continue
+        level = int(match.group(1))
+        # CONC/CONT are siblings of the value they continue; every other tag
+        # owns its continuation one level deeper.
+        cont_level = level if match.group(2) in (b"CONC", b"CONT") else level + 1
+        prefix = b"%d CONT" % cont_level
+        rebuilt = [head]
+        rebuilt.extend(prefix + (b" " + f if f else b"") for f in fragments)
+        out.append(b"\r\n".join(rebuilt))
+    return b"\r\n".join(out)
+
+
+def _repair_broken_lines(raw: bytes) -> bytes:
+    """
+    Repair GEDCOM lines that an exporter broke apart by writing a raw newline
+    inside a value. Shared by every tool that hands a file to the parser.
+    """
+    return _rejoin_false_level_lines(_fold_embedded_lf_lines(raw))
 
 
 # Brother's Keeper sometimes mixes DOS-codepage bytes for Western umlauts
@@ -568,11 +631,10 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
     _conc_stitched = stitched != raw
     raw = stitched
 
-    # Fold back stray digit-prefixed fragments of a raw-newline-broken text
-    # field that would otherwise be misread as a real "<level> <tag>" line.
-    rejoined = _rejoin_false_level_lines(raw)
-    _false_level_rejoined = rejoined != raw
-    raw = rejoined
+    # Repair lines an exporter broke apart with a raw newline inside a value.
+    repaired = _repair_broken_lines(raw)
+    _lines_repaired = repaired != raw
+    raw = repaired
 
     # Brother's Keeper "A-prefix" custom encoding (the CHAR header lies and
     # claims UTF-8). Detected and decoded before standard codec dispatch.
@@ -593,12 +655,12 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
                 not _cr_normalised
                 and not _conc_stitched
                 and not _nul_stripped
-                and not _false_level_rejoined
+                and not _lines_repaired
             ):
                 return input_path, False
-            # CR-normalisation, CONC-stitching, or false-level-line rejoining
-            # changed the bytes; write the decoded text to a temp UTF-8 file
-            # so the parser sees the fixed version.
+            # CR-normalisation, CONC-stitching, or broken-line repair changed
+            # the bytes; write the decoded text to a temp UTF-8 file so the
+            # parser sees the fixed version.
             fd, tmp_path = tempfile.mkstemp(suffix=".ged")
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(text)

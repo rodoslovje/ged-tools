@@ -23,6 +23,11 @@ import chardet
 from gedcom.parser import Parser
 import gedcom.tags
 
+try:
+    from tools.gedcom_cleaner import _repair_broken_lines
+except ImportError:  # run as a script: tools/ is on sys.path, the repo root is not
+    from gedcom_cleaner import _repair_broken_lines
+
 # ---------------------------------------------------------------------------
 # Encoding detection & transcoding (reused from gedcom_cleaner for robustness)
 # ---------------------------------------------------------------------------
@@ -119,6 +124,8 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
     with open(input_path, "rb") as f:
         raw = f.read()
     encoding = _detect_encoding(input_path)
+    # Repair lines an exporter broke apart with a raw newline inside a value.
+    raw = _repair_broken_lines(raw)
     try:
         text = raw.decode(encoding)
     except UnicodeDecodeError:
