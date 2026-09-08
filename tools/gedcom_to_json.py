@@ -24,11 +24,15 @@ CONTRIBUTORS_FILE = "data/contributors.json"
 
 
 def _load_contributors():
-    """Load contributors.json. Returns dict of contributor_id -> {url, intro}."""
+    """Load contributors.json. Returns dict of contributor_id ->
+    {full_name, url, intro, deceased, memorial_url}."""
     try:
         with open(CONTRIBUTORS_FILE, encoding="utf-8") as f:
             data = json.load(f)
-        return {name: {"url": info.get("url"), "intro": info.get("intro")}
+        return {name: {"full_name": info.get("full_name"),
+                       "url": info.get("url"), "intro": info.get("intro"),
+                       "deceased": info.get("deceased"),
+                       "memorial_url": info.get("memorial_url")}
                 for name, info in data.items()}
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
@@ -834,8 +838,11 @@ def _process_one_file(filename, full_mode, contributors, input_dir, output_dir):
                 "filtered_count": 0,
                 "skipped": True,
                 "last_modified": ged_mtime,
+                "full_name": contributors.get(contributor_id, {}).get("full_name"),
                 "url": contributors.get(contributor_id, {}).get("url"),
                 "intro": contributors.get(contributor_id, {}).get("intro"),
+                "deceased": contributors.get(contributor_id, {}).get("deceased"),
+                "memorial_url": contributors.get(contributor_id, {}).get("memorial_url"),
             }
         except Exception:
             meta = None
@@ -1284,8 +1291,11 @@ def _process_one_file(filename, full_mode, contributors, input_dir, output_dir):
         "filtered_count": filtered_count,
         "skipped": False,
         "last_modified": datetime.fromtimestamp(ged_mtime).isoformat(),
+        "full_name": contributors.get(contributor_id, {}).get("full_name"),
         "url": contributors.get(contributor_id, {}).get("url"),
         "intro": contributors.get(contributor_id, {}).get("intro"),
+        "deceased": contributors.get(contributor_id, {}).get("deceased"),
+        "memorial_url": contributors.get(contributor_id, {}).get("memorial_url"),
     }
     return meta, log
 
