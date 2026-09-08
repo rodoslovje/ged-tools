@@ -144,14 +144,21 @@ Available Transformers (listed in execution order):
     living75y_private    Same as living100y_private but with a 75-year cutoff.
     living100y_initials  Same detection as living100y_private but reduces the full
                          name to initials (e.g. Luka /Renko/ -> L. /R./).
-                         All events are still removed.
+                         All events are still removed. Combine with
+                         fam_partner_private to redact family events too.
     living100y_name_only Same detection as living100y_private but reduces only the
                          given name(s) to initials, keeping the surname intact
                          (e.g. Luka /Renko/ -> L. /Renko/). All events are still
                          removed.
-    fam_partner_private  If both spouses are private: remove the entire family record.
-                         If one spouse is private: replace all non-empty event field
-                         values (date, place, note, links, etc.) with "<private>".
+    fam_partner_private  A spouse counts as private if NAME is "<private>" or if any
+                         privacy transformer in the same run anonymised it (born75y,
+                         died20y, living*_private, living100y_initials,
+                         living100y_name_only). If at least one spouse is private:
+                         redact every family event (MARR, MARB/MARC/MARL/MARS, ENGA,
+                         EVEN) while keeping the family record and its HUSB/WIFE/CHIL
+                         links: TYPE is kept, ASSO/SOUR/OBJE/CHAN/CREA are dropped,
+                         all other sub-records (date, place, address, agency, note,
+                         ...) are replaced with "<private>".
 
 Available Presets:
     mft_webtrees         WebTrees compatibility for MacFamilyTree exports.
@@ -3210,6 +3217,12 @@ def process_file(
                     )
                 element.get_child_elements().remove(ch)
 
+    # Pointers of every INDI anonymised by any privacy transformer in this run
+    # (born75y/died20y/living*). fam_partner_private consults this set so it
+    # also recognises individuals reduced to initials / given-name initials,
+    # whose NAME is no longer the literal "<private>".
+    _anonymised_ptrs: set[str] = set()
+
     if "born75y_private" in transformers:
         import datetime as _dt_b75
 
@@ -3226,6 +3239,7 @@ def process_file(
             if birth_year is None or birth_year <= _cutoff_b75:
                 continue
             _anonymise_indi(element)
+            _anonymised_ptrs.add(element.get_pointer())
             ts.transformed += 1
             if verbose_transform or verbose_private:
                 print(
@@ -3294,6 +3308,7 @@ def process_file(
                 _trigger = "birth"
             if _trigger is not None:
                 _anonymise_indi(element)
+                _anonymised_ptrs.add(element.get_pointer())
                 ts.transformed += 1
                 if verbose_transform or verbose_private:
                     _dy2 = (
@@ -3384,6 +3399,7 @@ def process_file(
                             )
                 if _is_private:
                     _anon(_element)
+                    _anonymised_ptrs.add(_element.get_pointer())
                     _ts.transformed += 1
                     _new_in_pass += 1
                     if _verbose_transform or _verbose_private:
@@ -3417,7 +3433,6 @@ def process_file(
         )
 
     if "living100y_initials" in transformers:
-        _affected_fams: set[str] = set()
 
         def _initials(name: str) -> str:
             return " ".join(w[0].upper() + "." for w in name.split() if w)
@@ -3440,8 +3455,6 @@ def process_file(
                 if not _display and ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME:
                     _display = ch.get_value().replace("/", "").strip()
                 if ch.get_tag() in ("FAMC", "FAMS", "SEX"):
-                    if ch.get_tag() == "FAMS":
-                        _affected_fams.add(ch.get_value().strip())
                     to_keep.append(ch)
                 elif ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME and not name_kept:
                     ch.set_value(_shorten_name_value(ch.get_value()))
@@ -3479,31 +3492,6 @@ def process_file(
             anonymise_fn=_anonymise_initials,
             action_label="INITIALS",
         )
-
-        # Strip marriage date and place from families of anonymised individuals
-        for element in parser.get_root_child_elements():
-            if element.get_tag() != "FAM":
-                continue
-            if element.get_pointer() not in _affected_fams:
-                continue
-            for ch in element.get_child_elements():
-                if ch.get_tag() == "MARR":
-                    marr_children = ch.get_child_elements()
-                    stripped = [
-                        gch
-                        for gch in marr_children
-                        if gch.get_tag()
-                        not in (
-                            gedcom.tags.GEDCOM_TAG_DATE,
-                            gedcom.tags.GEDCOM_TAG_PLACE,
-                        )
-                    ]
-                    marr_children.clear()
-                    marr_children.extend(stripped)
-                    if verbose_transform or verbose_private:
-                        print(
-                            f"  [transform:living100y_initials] stripped MARR date/place from {element.get_pointer()}"
-                        )
 
     if "living100y_name_only" in transformers:
 
@@ -3572,11 +3560,11 @@ def process_file(
         ts = transform_stats["fam_partner_private"]
 
         def _indi_is_private(indi_el) -> bool:
-            """Return True if the individual has been anonymised by living100y_private (NAME == '<private>')."""
-            for ch in indi_el.get_child_elements():
-                if ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME:
-                    return ch.get_value().strip().lower() == "<private>"
-            return False
+            """True if the INDI was anonymised in this run (any privacy transformer,
+            including initials / name_only variants) or already carries NAME '<private>'."""
+            if indi_el.get_pointer() in _anonymised_ptrs:
+                return True
+            return _indi_is_private_name(indi_el)
 
         _ptr_index_fpp = {
             el.get_pointer(): el
@@ -3594,7 +3582,10 @@ def process_file(
             "ENGA",  # engagement
         }
 
-        _fams_to_remove = []
+        # Event sub-records that must be dropped rather than replaced with
+        # "<private>": pointers (a "<private>" pointer is invalid GEDCOM) and
+        # bookkeeping.
+        _fam_event_drop_tags = {"ASSO", "SOUR", "OBJE", "CHAN", "CREA", "_UID", "UID"}
 
         for element in parser.get_root_child_elements():
             if element.get_tag() != gedcom.tags.GEDCOM_TAG_FAMILY:
@@ -3609,46 +3600,41 @@ def process_file(
             if not refs:
                 continue
 
-            private_flags = [
+            if not any(
                 ptr in _ptr_index_fpp and _indi_is_private(_ptr_index_fpp[ptr])
                 for ptr in refs
-            ]
-            all_private = all(private_flags)
-            any_private = any(private_flags)
-
-            if not any_private:
+            ):
                 continue
 
-            if all_private:
-                # Both partners private — drop the whole family record
-                _fams_to_remove.append(element)
+            # At least one spouse private — redact every event sub-record but
+            # keep the family record itself (HUSB/WIFE/CHIL links stay intact).
+            # TYPE is kept so the fact kind stays readable, pointer/bookkeeping
+            # tags are dropped, everything else becomes "<private>" (subtree removed).
+            changed_any = False
+            for ch in element.get_child_elements():
+                if ch.get_tag() not in _fam_event_tags:
+                    continue
+                ev_children = ch.get_child_elements()
+                kept = []
+                for gch in ev_children:
+                    tag = gch.get_tag()
+                    if tag == "TYPE":
+                        kept.append(gch)
+                        continue
+                    changed_any = True
+                    if tag in _fam_event_drop_tags or gch.get_value().strip().startswith("@"):
+                        continue
+                    gch.set_value("<private>")
+                    gch.get_child_elements().clear()
+                    kept.append(gch)
+                ev_children.clear()
+                ev_children.extend(kept)
+            if changed_any:
                 ts.transformed += 1
                 if verbose_transform or verbose_private:
                     print(
-                        f"  [transform:fam_partner_private] remove {_fam_label(element, _ptr_index_fpp)}"
+                        f"  [transform:fam_partner_private] redact event fields {_fam_label(element, _ptr_index_fpp)}"
                     )
-            else:
-                # Mixed — replace all non-empty event field values with "<private>"
-                changed_any = False
-                for ch in element.get_child_elements():
-                    if ch.get_tag() not in _fam_event_tags:
-                        continue
-                    for gch in ch.get_child_elements():
-                        if gch.get_value().strip():
-                            gch.set_value("<private>")
-                            gch.get_child_elements().clear()
-                            changed_any = True
-                if changed_any:
-                    ts.transformed += 1
-                    if verbose_transform or verbose_private:
-                        print(
-                            f"  [transform:fam_partner_private] redact event fields {_fam_label(element, _ptr_index_fpp)}"
-                        )
-
-        _root = parser.get_root_child_elements()
-        for _fam in _fams_to_remove:
-            if _fam in _root:
-                _root.remove(_fam)
 
     # Regular tag-based strippers (run after cleaners and transformers)
     for name in strippers:
