@@ -3,6 +3,7 @@ chardet
 openpyxl
 ansel
 pytest
+pdfminer.six
 certifi
 anthropic
 pillow
