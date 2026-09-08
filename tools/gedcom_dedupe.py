@@ -15,6 +15,13 @@ Merge strategy:
     master record. This allows for manual review and integration.
 4.  The original duplicate records are removed from the file.
 
+Merging people leaves duplicate families behind: if the same couple was
+recorded twice, both FAM records survive and their children end up with two
+sets of parents.  A second pass therefore merges FAM records that share the
+same husband and wife (a family with one parent still unknown is absorbed
+into the matching full couple), unioning their children and marriage facts.
+Pass --no-merge-families to skip it.
+
 Usage:
     python tools/gedcom_dedupe.py <input.ged> -o <output.ged>
 """
@@ -322,6 +329,118 @@ def merge_and_redirect(
     return delete_set
 
 
+def _fam_spouses(fam_el) -> tuple[str, str]:
+    husb = wife = ""
+    for ch in fam_el.get_child_elements():
+        if ch.get_tag() == gedcom.tags.GEDCOM_TAG_HUSBAND:
+            husb = (ch.get_value() or "").strip()
+        elif ch.get_tag() == gedcom.tags.GEDCOM_TAG_WIFE:
+            wife = (ch.get_value() or "").strip()
+    return husb, wife
+
+
+def _fam_key(fam_el) -> tuple[str, str] | None:
+    husb, wife = _fam_spouses(fam_el)
+    return (husb, wife) if (husb or wife) else None
+
+
+def merge_families(parser: Parser) -> set[str]:
+    """Merge FAM records describing the same couple.
+
+    Runs after the individual merge, which is what creates the duplicates:
+    two chapters recorded the same couple, the spouses merged, and now both
+    FAM records point at the same pair.  A half-known family (husband known,
+    wife not, or vice versa) is absorbed into the full couple when exactly one
+    full couple shares its known spouse.
+    """
+    fams = [el for el in parser.get_root_child_elements()
+            if el.get_tag() == gedcom.tags.GEDCOM_TAG_FAMILY]
+
+    groups: dict[tuple[str, str], list] = defaultdict(list)
+    for el in fams:
+        key = _fam_key(el)
+        if key and key[0] and key[1]:
+            groups[key].append(el)
+
+    # index full couples by each spouse, to absorb the half-known families
+    by_spouse: dict[str, set[tuple[str, str]]] = defaultdict(set)
+    for key in groups:
+        by_spouse[key[0]].add(key)
+        by_spouse[key[1]].add(key)
+
+    for el in fams:
+        key = _fam_key(el)
+        if not key or (key[0] and key[1]):
+            continue
+        known = key[0] or key[1]
+        targets = by_spouse.get(known, set())
+        if len(targets) == 1:
+            groups[next(iter(targets))].append(el)
+
+    redirect_map: dict[str, str] = {}
+    delete_set: set[str] = set()
+    merged = 0
+
+    for key, group in sorted(groups.items()):
+        if len(group) < 2:
+            continue
+        # a record naming both spouses beats a half-known one; otherwise the
+        # lowest pointer wins, so the result does not depend on input order
+        group.sort(key=lambda el: (
+            0 if all(_fam_spouses(el)) else 1,
+            el.get_pointer()))
+        master, sources = group[0], group[1:]
+        master_ptr = master.get_pointer()
+        merged += len(sources)
+        print(f"Merging {len(sources)} duplicate family record(s) into "
+              f"{master_ptr} ({key[0] or '?'} + {key[1] or '?'})")
+
+        for source in sources:
+            redirect_map[source.get_pointer()] = master_ptr
+            delete_set.add(source.get_pointer())
+
+            have_chil = {c.get_value() for c in master.get_child_elements()
+                         if c.get_tag() == gedcom.tags.GEDCOM_TAG_CHILD}
+            have_tags = {c.get_tag() for c in master.get_child_elements()}
+            for child in source.get_child_elements():
+                tag = child.get_tag()
+                if tag == gedcom.tags.GEDCOM_TAG_CHILD:
+                    if child.get_value() not in have_chil:
+                        master.add_child_element(child)
+                        have_chil.add(child.get_value())
+                elif tag in (gedcom.tags.GEDCOM_TAG_HUSBAND,
+                             gedcom.tags.GEDCOM_TAG_WIFE):
+                    if tag not in have_tags:      # fills in the missing spouse
+                        master.add_child_element(child)
+                        have_tags.add(tag)
+                elif tag not in have_tags:        # MARR, NOTE, SOUR ...
+                    master.add_child_element(child)
+                    have_tags.add(tag)
+
+    if redirect_map:
+        for el in parser.get_element_list():
+            val = el.get_value()
+            if val and isinstance(val, str) and val in redirect_map:
+                el.set_value(redirect_map[val])
+
+    # a person merged from two records can now hold the same FAMC/FAMS twice
+    for el in parser.get_root_child_elements():
+        if el.get_tag() != gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
+            continue
+        seen = set()
+        for ch in list(el.get_child_elements()):
+            if ch.get_tag() in (gedcom.tags.GEDCOM_TAG_FAMILY_CHILD,
+                                gedcom.tags.GEDCOM_TAG_FAMILY_SPOUSE):
+                sig = (ch.get_tag(), ch.get_value())
+                if sig in seen:
+                    el.get_child_elements().remove(ch)
+                else:
+                    seen.add(sig)
+
+    print(f"Merged {merged} duplicate family record(s).")
+    return delete_set
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Find and merge duplicate individuals in a GEDCOM file."
@@ -334,6 +453,11 @@ def main():
         default=85,
         help="Minimum match confidence to merge, 0-100 (default: 85). "
         "See gedcom_merge for the scoring table.",
+    )
+    parser.add_argument(
+        "--no-merge-families",
+        action="store_true",
+        help="Skip the second pass that merges FAM records for the same couple",
     )
     parser.add_argument(
         "--dry-run",
@@ -355,16 +479,10 @@ def main():
 
     duplicate_groups = find_duplicates(ged_parser, args.min_confidence, args.input)
 
-    if not duplicate_groups:
+    if duplicate_groups:
+        print(f"Found {len(duplicate_groups)} group(s) of potential duplicates.")
+    else:
         print("No duplicates found based on name and birth date.")
-        # Still write to output to ensure a clean UTF-8 copy
-        with open(args.output, "w", encoding="utf-8") as f_out:
-            for el in ged_parser.get_root_child_elements():
-                f_out.write(_serialize(el))
-        print(f"Wrote clean copy to: {args.output}")
-        return
-
-    print(f"Found {len(duplicate_groups)} group(s) of potential duplicates.")
 
     if args.dry_run:
         for group in duplicate_groups:
@@ -374,7 +492,11 @@ def main():
         print("Dry run: no output written.")
         return
 
-    delete_set = merge_and_redirect(duplicate_groups, ged_parser)
+    delete_set = set()
+    if duplicate_groups:
+        delete_set = merge_and_redirect(duplicate_groups, ged_parser)
+    if not args.no_merge_families:
+        delete_set |= merge_families(ged_parser)
 
     print(f"Writing deduplicated file to: {args.output}")
     root_elements = ged_parser.get_root_child_elements()
