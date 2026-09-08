@@ -16,7 +16,9 @@ The username is resolved to a contributor id through data/geneanet/
 username-map.csv (its contributor_id column). The map is also folded into
 contributors.json — each mapped contributor gets a "geneanetID" string holding
 its username (missing contributors are created from the map's full_name /
-profile_url) — so contributors.json always mirrors the sheet. Rows whose
+profile_url, and a contributor with a geneanetID but no url gets its
+Geneanet profile page as url) — so contributors.json always mirrors the
+sheet. Rows whose
 username has no contributor_id — or no map row at all — stay in the
 Pokopališča-geneanet set, and every export username that has no row in the
 map at all is reported as a warning so the sheet can be extended. Plus a
@@ -445,7 +447,8 @@ def sync_contributors(contributors, username_map):
     removed from everyone. geneanetID holds a single username; when the sheet
     maps several usernames to one contributor the first is kept and the rest
     are reported (their rows still route to that contributor via the map).
-    Returns a list of human-readable changes.
+    Any contributor with a geneanetID but no url gets its Geneanet profile
+    page as url. Returns a list of human-readable changes.
     """
     changes = []
     # Legacy list values -> single string.
@@ -479,6 +482,13 @@ def sync_contributors(contributors, username_map):
         elif info["geneanetID"] != handle:
             print(f"Warning: {cid} already has geneanetID '{info['geneanetID']}'; "
                   f"'{handle}' is routed to it but not recorded.", file=sys.stderr)
+    # A contributor known only by a Geneanet username gets its profile page
+    # as url so the site can link to it; an explicit url is left alone.
+    for cid, info in contributors.items():
+        gid = info.get("geneanetID")
+        if gid and not info.get("url"):
+            info["url"] = PROFILE_URL.format(gid)
+            changes.append(f"{cid}: url <- {info['url']}")
     return changes
 
 
