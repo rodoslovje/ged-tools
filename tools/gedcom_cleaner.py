@@ -114,6 +114,17 @@ Available Transformers (listed in execution order):
     sour_plac_auth       Rename PLAC to AUTH inside source records (when AUTH is absent).
     latr_even            Convert LATR to EVEN type="Land Transaction".
     prs_even_type        Convert _PRS (civil partnership) to EVEN type="Civil Partnership".
+    asso_role_rela       Convert GEDCOM 7 ASSO:ROLE to 5.5.1 ASSO:RELA (webtrees only
+                         reads RELA). Enumerations map to webtrees' translatable
+                         lowercase words: GODP -> godfather/godmother by the
+                         associate's SEX (godparent if unknown), WITN -> witness,
+                         CLERGY -> priest, FRIEND -> friend, NGHBR -> neighbor,
+                         MULTIPLE -> multiple, PARENT/FATH/MOTH/SPOU/HUSB/WIFE/
+                         CHIL -> the plain word. OTHER uses the PHRASE text.
+                         PHRASE is dropped. ASSO under an event (level 2+, not
+                         valid 5.5.1) is renamed to webtrees' _ASSO; record-level
+                         1 ASSO stays. ROLE inside source citations
+                         (SOUR:DATA:EVEN:ROLE) is left alone.
     secg_givn            Append NAME:SECG content to NAME:GIVN and remove the SECG tag.
     addr_to_plac         Merge ADDR values into event PLAC tags.
     sour_peri_titl       Rename PERI to TITL inside source records (when TITL is absent).
@@ -166,9 +177,9 @@ Available Presets:
                          Strippers: ste, stf, sto, bkm, labl, addr_longlati,
                            place_tran, mise, object_crop, change_date, create_date,
                            indi_race, sour_tags, stp.
-                         Transformers: secg_givn, fid_fsftid, latr_even, prs_even_type,
-                           nobi_fact, sour_peri_titl, sour_date_publ, sour_filn_abbr,
-                           sour_plac_auth.
+                         Transformers: asso_role_rela, secg_givn, fid_fsftid, latr_even,
+                           prs_even_type, nobi_fact, sour_peri_titl, sour_date_publ,
+                           sour_filn_abbr, sour_plac_auth.
     mft_sgi              Slovenian Genealogy Institute formatting.
                          Cleaners: place_slovenia_rm.
                          Strippers: priv.
@@ -2601,6 +2612,28 @@ class TagTransform:
     )  # (tag, value) prepended to children
 
 
+# GEDCOM 7 ASSO.ROLE enumeration → 5.5.1 ASSO.RELA descriptor. Lowercase
+# words are the ones webtrees translates (RelationIsDescriptor); GODP is
+# refined to godfather/godmother from the associate's SEX when known.
+_ASSO_ROLE_TO_RELA: dict[str, str] = {
+    "GODP": "godparent",
+    "WITN": "witness",
+    "CLERGY": "priest",
+    "OFFICIATOR": "officiator",
+    "FRIEND": "friend",
+    "NGHBR": "neighbor",
+    "MULTIPLE": "multiple",
+    "PARENT": "parent",
+    "FATH": "father",
+    "MOTH": "mother",
+    "SPOU": "spouse",
+    "HUSB": "husband",
+    "WIFE": "wife",
+    "CHIL": "child",
+    "OTHER": "other",
+}
+
+
 # Each transformer maps source tag → str (simple rename) or TagTransform (rename + add children).
 # A None value marks a custom transformer handled separately in the processing loop.
 # Note: python-gedcom has no set_tag(); we write to the private _Element__tag
@@ -2620,6 +2653,7 @@ TRANSFORMERS: dict[str, dict[str, str | TagTransform] | None] = {
         )
     },
     # Custom transformers (None = handled separately):
+    "asso_role_rela": None,  # GEDCOM 7 ASSO:ROLE (+PHRASE) -> 5.5.1 ASSO:RELA
     "secg_givn": None,  # append NAME:SECG content to NAME:GIVN and remove SECG
     "addr_to_plac": None,  # merge ADDR value into PLAC (prepend with ", ") for event elements
     "sour_peri_titl": None,  # rename SOUR:PERI to SOUR:TITL when no TITL already present
@@ -2657,6 +2691,7 @@ PRESETS: dict[str, dict[str, list[str]]] = {
             "stp",
         ],
         "transform": [
+            "asso_role_rela",
             "secg_givn",
             "fid_fsftid",
             "latr_even",
@@ -2995,6 +3030,58 @@ def process_file(
             if verbose_transform:
                 print(
                     f"  [transform:{name}] {old_tag} -> {new_tag}  {element.get_value()!r}  — {_record_label(element)}"
+                )
+
+    if "asso_role_rela" in transformers:
+        ts = transform_stats["asso_role_rela"]
+        _sex_by_ptr: dict[str, str] = {}
+        for _rec in parser.get_root_child_elements():
+            if _rec.get_tag() != gedcom.tags.GEDCOM_TAG_INDIVIDUAL or not _rec.get_pointer():
+                continue
+            for _ch in _rec.get_child_elements():
+                if _ch.get_tag() == "SEX":
+                    _sex_by_ptr[_rec.get_pointer()] = _ch.get_value().strip().upper()[:1]
+                    break
+        for element in parser.get_element_list():
+            if element.get_tag() != "ROLE":
+                continue
+            asso = element.get_parent_element()
+            if asso is None or asso.get_tag() != "ASSO":
+                continue  # e.g. SOUR.DATA.EVEN.ROLE citation role — not an association
+            ts.processed += 1
+            role = element.get_value().strip().upper()
+            phrase = next(
+                (
+                    c.get_value().strip()
+                    for c in element.get_child_elements()
+                    if c.get_tag() == "PHRASE" and c.get_value().strip()
+                ),
+                "",
+            )
+            if role == "GODP":
+                sex = _sex_by_ptr.get(asso.get_value().strip(), "")
+                rela = {"M": "godfather", "F": "godmother"}.get(sex, "godparent")
+            elif role == "OTHER" and phrase:
+                rela = phrase
+            elif role in _ASSO_ROLE_TO_RELA:
+                rela = _ASSO_ROLE_TO_RELA[role]
+            else:
+                rela = phrase or element.get_value().strip()
+            element._Element__tag = "RELA"
+            element.set_value(rela)
+            element.get_child_elements().clear()
+            # 5.5.1 only defines ASSO at record level (1 ASSO / 2 RELA). An
+            # association under an event is GEDCOM 7; webtrees' 5.5.1 form for
+            # that is the custom tag _ASSO (INDI:*:_ASSO:RELA, FAM:*:_ASSO:RELA).
+            if asso.get_level() >= 2:
+                asso._Element__tag = "_ASSO"
+            ts.transformed += 1
+            if verbose_transform:
+                _top = asso
+                while _top.get_parent_element() is not None and _top.get_parent_element().get_tag() != "ROOT":
+                    _top = _top.get_parent_element()
+                print(
+                    f"  [transform:asso_role_rela] ROLE {role}{' / ' + phrase if phrase else ''} -> RELA {rela}  — {_record_label(_top)}"
                 )
 
     if "secg_givn" in transformers:
