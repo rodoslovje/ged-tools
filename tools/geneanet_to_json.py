@@ -1,12 +1,22 @@
 """Convert a Geneanet cemetery (pokopališča) CSV export to JSON.
 
-Reads the latest CSV (by filename) from data/geneanet/ and emits a single pair
-of JSON files matching the schema used by gedcom_to_json.py / matricula_to_json.py:
+Reads the latest CSV (by filename) from data/geneanet/ and, by default, emits a
+single pair of JSON files (schema matching gedcom_to_json.py /
+matricula_to_json.py):
 
     data/output/Pokopališča-geneanet-persons.json
     data/output/Pokopališča-geneanet-families.json
 
-Plus a per-cemetery statistics index:
+With --per-contributor it instead emits one pair per contributor, keyed off the
+row's Geneanet username:
+
+    data/output/<contributor>-geneanet-persons.json
+    data/output/<contributor>-geneanet-families.json
+
+The username is resolved to a contributor id via the "geneanetID" lists in
+contributors.json; an unmapped username becomes its own contributor (and is
+registered with a stub entry). Plus a per-cemetery statistics index — a flat
+list in single-file mode, a dict keyed by contributor with --per-contributor:
 
     data/output/geneanet-index.json
 
@@ -35,9 +45,17 @@ INPUT_ROOT = "data/geneanet"
 OUTPUT_DIR = "data/output"
 CONTRIBUTORS_FILE = "data/contributors.json"
 
-CONTRIBUTOR = "Pokopališča-geneanet"
+# Fallback contributor id for rows whose Geneanet username is empty (every real
+# row carries a username, so this is only a safety net). Suffixed with
+# CONTRIB_SUFFIX it yields the historical "Pokopališča-geneanet" name.
+FALLBACK_ID = "Pokopališča"
+# Output files and metadata entries are named "<contributor>-geneanet-*", one
+# set per contributor, mirroring matricula_to_json's "<contributor>-matricula".
+CONTRIB_SUFFIX = "-geneanet"
 CEMETERY_URL = "https://en.geneanet.org/cemetery"
 DEPOT_URL = "https://en.geneanet.org/cemetery/view/{}"
+# Public Geneanet profile page for a username (used for auto-created stubs).
+PROFILE_URL = "https://en.geneanet.org/{}"
 
 MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
           "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
@@ -174,12 +192,32 @@ def build_burial_place(place, nom_projet):
     return ", ".join(parts)
 
 
-def process_row(row_index, row, persons, families, cemetery_stats):
+def get_bucket(buckets, contributor):
+    """Return (creating if needed) the per-contributor accumulator."""
+    bucket = buckets.get(contributor)
+    if bucket is None:
+        bucket = {"persons": [], "families": [], "stats": {}}
+        buckets[contributor] = bucket
+    return bucket
+
+
+def process_row(row_index, row, buckets, handle_to_id, force_contributor=None):
     depot_id = (row.get("depot_id") or "").strip()
     place = (row.get("place") or "").strip()
     nom_projet = (row.get("nom_projet") or "").strip()
+    url_projet = (row.get("url_projet") or "").strip()
+    username = (row.get("username") or "").strip()
     burial_place = build_burial_place(place, nom_projet)
     link = DEPOT_URL.format(depot_id) if depot_id else ""
+
+    # Route the row to a contributor: single-file mode forces one bucket;
+    # otherwise a mapped geneanetID handle wins, else the raw username becomes
+    # its own contributor id, else the generic fallback.
+    contributor = force_contributor or handle_to_id.get(username) or username or FALLBACK_ID
+    bucket = get_bucket(buckets, contributor)
+    persons = bucket["persons"]
+    families = bucket["families"]
+    cemetery_stats = bucket["stats"]
 
     name = (row.get("prenom") or "").strip()
     surname = title_surname(row.get("nom"))
@@ -278,10 +316,17 @@ def process_row(row_index, row, persons, families, cemetery_stats):
             "persons_count": 0,
             "families_count": 0,
             "graves_count": 0,
-            "url": CEMETERY_URL,
+            # Real per-cemetery collection URL from the export; the generic
+            # cemetery landing page is used only when a row lacks one.
+            "url": url_projet or CEMETERY_URL,
             "_depots": set(),
+            "_usernames": set(),
         }
         cemetery_stats[nom_projet] = stat
+    if url_projet and stat["url"] == CEMETERY_URL:
+        stat["url"] = url_projet
+    if username:
+        stat["_usernames"].add(username)
     stat["persons_count"] += person_count
     if primary is not None and partner is not None:
         stat["families_count"] += 1
@@ -301,12 +346,14 @@ def _to_nfc(obj):
 
 
 def latest_csv(input_root):
-    """Return the lexicographically-latest .csv under input_root, or None.
+    """Return the lexicographically-latest export .csv under input_root, or None.
 
-    Geneanet exports are named with a 'YYYYMMDDhhmmss' timestamp, so the max
-    filename is the most recent export.
+    Geneanet exports are named with a 'YYYYMMDD...' timestamp, so the max
+    filename is the most recent export. Only timestamp-named files qualify, so
+    helper files like username-map.csv sitting in the same directory are ignored.
     """
-    files = glob(os.path.join(input_root, "*.csv"))
+    files = [p for p in glob(os.path.join(input_root, "*.csv"))
+             if re.match(r"^\d{8}", os.path.basename(p))]
     if not files:
         return None
     return max(files, key=lambda p: os.path.basename(p))
@@ -319,8 +366,96 @@ def write_json(path, data, mtime):
         os.utime(path, (mtime, mtime))
 
 
-def update_metadata_file(entry, output_dir):
-    """Write the Geneanet entry into metadata.json, preserving all others."""
+# Extracts the Geneanet username from a contributor's tree/profile url, e.g.
+# 'https://gw.geneanet.org/gregorcd_w' -> 'gregorcd_w'.
+GENEANET_URL_RE = re.compile(r"geneanet\.org/(?:gw/)?([A-Za-z0-9_]+)")
+
+
+def load_contributors(path):
+    """Load contributors.json as an ordered dict (empty on error/absence)."""
+    if not os.path.exists(path):
+        return OrderedDict()
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f, object_pairs_hook=OrderedDict)
+    except (json.JSONDecodeError, OSError):
+        return OrderedDict()
+
+
+def build_handle_map(contributors):
+    """Map each geneanetID handle -> contributor id, from contributors.json."""
+    handle_to_id = {}
+    for cid, info in contributors.items():
+        for handle in (info.get("geneanetID") or []):
+            handle = (handle or "").strip()
+            if handle:
+                handle_to_id[handle] = cid
+    return handle_to_id
+
+
+def seed_handles_from_urls(contributors, handle_to_id, csv_handles):
+    """Auto-fill geneanetID from existing tree/profile urls (URL-confirmed only).
+
+    For a contributor whose url is a Geneanet page, the username there (and its
+    tree-suffix-stripped form, 'gregorcd_w' -> 'gregorcd') is added to their
+    geneanetID when it is an actual cemetery handle that isn't mapped yet.
+    Returns the list of (handle, contributor_id) pairs newly seeded.
+    """
+    seeded = []
+    for cid, info in contributors.items():
+        m = GENEANET_URL_RE.search(info.get("url") or "")
+        if not m:
+            continue
+        candidates = {m.group(1), re.sub(r"_[a-z0-9]+$", "", m.group(1))}
+        for handle in candidates:
+            if handle in csv_handles and handle not in handle_to_id:
+                info.setdefault("geneanetID", [])
+                if handle not in info["geneanetID"]:
+                    info["geneanetID"].append(handle)
+                handle_to_id[handle] = cid
+                seeded.append((handle, cid))
+    return seeded
+
+
+def merge_stats(dst, src):
+    """Merge one contributor's per-cemetery stats dict into another."""
+    for name, s in src.items():
+        d = dst.get(name)
+        if d is None:
+            dst[name] = s
+            continue
+        d["persons_count"] += s["persons_count"]
+        d["families_count"] += s["families_count"]
+        d["_depots"] |= s["_depots"]
+        d["_usernames"] |= s["_usernames"]
+        if d["url"] == CEMETERY_URL and s["url"] != CEMETERY_URL:
+            d["url"] = s["url"]
+
+
+def merge_bucket(buckets, src_id, dst_id):
+    """Fold the src contributor's accumulated data into the dst contributor."""
+    if src_id == dst_id or src_id not in buckets:
+        return
+    src = buckets.pop(src_id)
+    dst = get_bucket(buckets, dst_id)
+    dst["persons"].extend(src["persons"])
+    dst["families"].extend(src["families"])
+    merge_stats(dst["stats"], src["stats"])
+
+
+def finalize_index(stats):
+    """Turn a contributor's stats dict into a sorted list, resolving scratch keys."""
+    index = []
+    for stat in stats.values():
+        stat["graves_count"] = len(stat.pop("_depots"))
+        stat["username"] = sorted(stat.pop("_usernames"))
+        index.append(stat)
+    index.sort(key=lambda s: locale.strxfrm(s.get("name", "")))
+    return index
+
+
+def update_metadata_file(entries, output_dir):
+    """Write the per-contributor "-geneanet" entries, preserving all others."""
     path = os.path.join(output_dir, "metadata.json")
     existing = []
     if os.path.exists(path):
@@ -329,8 +464,9 @@ def update_metadata_file(entry, output_dir):
                 existing = json.load(f)
         except (json.JSONDecodeError, OSError):
             existing = []
-    preserved = [e for e in existing if e.get("contributor") != CONTRIBUTOR]
-    combined = preserved + [entry]
+    preserved = [e for e in existing
+                 if not e.get("contributor", "").endswith(CONTRIB_SUFFIX)]
+    combined = preserved + entries
     try:
         combined.sort(key=lambda x: locale.strxfrm(x.get("contributor", "")))
     except Exception:
@@ -338,24 +474,122 @@ def update_metadata_file(entry, output_dir):
     write_json(path, combined, None)
 
 
-def update_contributors_file(path):
-    """Register Geneanet-Pokopališča in contributors.json if not already present."""
-    if not os.path.exists(path):
+def write_contributors_file(path, contributors, new_ids):
+    """Persist seeded geneanetID edits and register auto-created stubs.
+
+    `new_ids` are contributor ids produced from unmapped usernames; each gets a
+    minimal stub (full_name = handle, Geneanet profile url, geneanetID = handle)
+    so every handle is documented and self-maps on the next run.
+    """
+    for cid in new_ids:
+        if cid == FALLBACK_ID:
+            contributors.setdefault(cid, OrderedDict([
+                ("full_name", "Pokopališča Geneanet"),
+                ("email", None),
+                ("url", CEMETERY_URL),
+                ("geneanetID", []),
+            ]))
+        else:
+            contributors.setdefault(cid, OrderedDict([
+                ("full_name", cid),
+                ("email", None),
+                ("url", PROFILE_URL.format(cid)),
+                ("geneanetID", [cid]),
+            ]))
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(_to_nfc(contributors), f, ensure_ascii=False, indent=2)
+
+
+def derive_id_from_name(full_name):
+    """Contributor id from a full name: the last (surname) token, title-cased.
+
+    'Jana Pahovnik' -> 'Pahovnik'. Multi-word surnames keep their spaces.
+    """
+    tokens = (full_name or "").strip().split()
+    return tokens[-1] if tokens else ""
+
+
+def import_username_map(map_path, contributors_path):
+    """Fold a filled username-map.csv into contributors.json.
+
+    For every worksheet row that has a full_name and/or contributor_id, the
+    username is attached (via geneanetID) to that contributor, creating the
+    entry when new. The contributor id is the contributor_id column, else the
+    surname derived from full_name. Existing entries are never overwritten;
+    the username is only added to their geneanetID. Rows left blank are
+    ignored, so the sheet can be filled incrementally.
+    """
+    if not os.path.exists(map_path):
+        print(f"Error: worksheet '{map_path}' not found.", file=sys.stderr)
+        return 1
+    contributors = load_contributors(contributors_path)
+    # username -> owning contributor id, to catch a handle mapped twice.
+    claimed = {h: cid for cid, info in contributors.items()
+               for h in (info.get("geneanetID") or [])}
+
+    added, attached, skipped = [], [], []
+    with open(map_path, encoding="utf-8", newline="") as f:
+        for row in csv.DictReader(f):
+            handle = (row.get("username") or "").strip()
+            full_name = (row.get("full_name") or "").strip()
+            cid = (row.get("contributor_id") or "").strip() or derive_id_from_name(full_name)
+            if not handle or not cid:
+                continue
+            if handle in claimed and claimed[handle] != cid:
+                skipped.append(f"{handle}: already mapped to {claimed[handle]}, not {cid}")
+                continue
+            info = contributors.get(cid)
+            if info is None:
+                contributors[cid] = OrderedDict([
+                    ("full_name", full_name or cid),
+                    ("email", None),
+                    ("url", PROFILE_URL.format(handle)),
+                    ("geneanetID", [handle]),
+                ])
+                added.append(f"{handle} -> {cid}")
+            else:
+                ids = info.setdefault("geneanetID", [])
+                if handle not in ids:
+                    ids.append(handle)
+                    attached.append(f"{handle} -> {cid}")
+            claimed[handle] = cid
+
+    with open(contributors_path, "w", encoding="utf-8") as f:
+        json.dump(_to_nfc(contributors), f, ensure_ascii=False, indent=2)
+
+    print(f"Created {len(added)} contributor(s), attached {len(attached)} handle(s) "
+          f"to existing contributors.", file=sys.stderr)
+    for line in added + attached:
+        print(f"  {line}", file=sys.stderr)
+    for line in skipped:
+        print(f"  SKIPPED {line}", file=sys.stderr)
+    return 0
+
+
+def register_single_contributor(path, contributors):
+    """Register the single "Pokopališča-geneanet" entry (single-file mode).
+
+    Mirrors the historical behaviour: add the entry when missing and leave the
+    rest of contributors.json untouched. No handle stubs are created.
+    """
+    key = f"{FALLBACK_ID}{CONTRIB_SUFFIX}"
+    if not os.path.exists(path) or key in contributors:
         return
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f, object_pairs_hook=OrderedDict)
-    except (json.JSONDecodeError, OSError):
-        return
-    if CONTRIBUTOR in data:
-        return
-    data[CONTRIBUTOR] = OrderedDict([
+    contributors[key] = OrderedDict([
         ("full_name", "Pokopališča Geneanet"),
         ("email", None),
         ("url", CEMETERY_URL),
     ])
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(_to_nfc(data), f, ensure_ascii=False, indent=2)
+        json.dump(_to_nfc(contributors), f, ensure_ascii=False, indent=2)
+
+
+def remove_stale_outputs(output_dir, keep):
+    """Delete "*-geneanet-persons/families.json" no longer produced this run."""
+    for suffix in ("-geneanet-persons.json", "-geneanet-families.json"):
+        for path in glob(os.path.join(output_dir, f"*{suffix}")):
+            if path not in keep:
+                os.remove(path)
 
 
 def main():
@@ -368,13 +602,25 @@ def main():
                         help=f"Output directory for JSON files (default: {OUTPUT_DIR}).")
     parser.add_argument("--csv", default=None,
                         help="Use this CSV file instead of the latest one in --input-root.")
+    parser.add_argument("--contributors", default=CONTRIBUTORS_FILE,
+                        help=f"Path to contributors.json (default: {CONTRIBUTORS_FILE}).")
+    parser.add_argument("--import-map", default=None, metavar="CSV",
+                        help="Fold a filled username-map.csv (full_name / contributor_id "
+                             "columns) into contributors.json, then exit.")
+    parser.add_argument("--per-contributor", action="store_true",
+                        help="Split output into one <contributor>-geneanet-* set per "
+                             "contributor (default: a single Pokopališča-geneanet set).")
     args = parser.parse_args()
     OUTPUT_DIR = args.output_dir
+    per_contributor = args.per_contributor
 
     try:
         locale.setlocale(locale.LC_COLLATE, ("sl_SI", "UTF-8"))
     except locale.Error:
         locale.setlocale(locale.LC_COLLATE, "")
+
+    if args.import_map:
+        return import_username_map(args.import_map, args.contributors)
 
     csv_path = args.csv or latest_csv(args.input_root)
     if not csv_path or not os.path.exists(csv_path):
@@ -384,62 +630,108 @@ def main():
     print(f"Reading: {csv_path}", file=sys.stderr)
     source_mtime = os.path.getmtime(csv_path)
 
-    persons, families = [], []
-    cemetery_stats = {}
+    contributors = load_contributors(args.contributors)
+    # Handle -> contributor routing only matters when splitting per contributor;
+    # single-file mode funnels every row into the FALLBACK_ID bucket.
+    handle_to_id = build_handle_map(contributors) if per_contributor else {}
 
+    buckets = {}
+    csv_handles = set()
     csv.field_size_limit(10 * 1024 * 1024)
     with open(csv_path, encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f, delimiter=";")
         for row_index, row in enumerate(reader):
             if not any((v or "").strip() for v in row.values()):
                 continue
-            process_row(row_index, row, persons, families, cemetery_stats)
+            # The export concatenates one CSV per cemetery, so a header line
+            # is repeated before each block; skip these embedded headers.
+            if (row.get("nom") or "").strip() == "nom" \
+                    and (row.get("prenom") or "").strip() == "prenom":
+                continue
+            handle = (row.get("username") or "").strip()
+            if handle:
+                csv_handles.add(handle)
+            process_row(row_index, row, buckets, handle_to_id,
+                        force_contributor=None if per_contributor else FALLBACK_ID)
 
-    # Sort persons and families to match the other tools' stable ordering.
-    persons.sort(key=lambda r: (
-        r.get("surname", "") or "",
-        r.get("name", "") or "",
-        r.get("burial", {}).get("place", "") or "",
-        r.get("birth", {}).get("date", "") or "",
-    ))
-    families.sort(key=lambda r: (
-        r.get("husband", {}).get("surname", "") or "",
-        r.get("husband", {}).get("name", "") or "",
-        r.get("wife", {}).get("surname", "") or "",
-        r.get("wife", {}).get("name", "") or "",
-    ))
-
-    # Finalize the per-cemetery index (resolve grave counts, drop scratch keys).
-    index = []
-    for stat in cemetery_stats.values():
-        stat["graves_count"] = len(stat.pop("_depots"))
-        index.append(stat)
-    index.sort(key=lambda s: locale.strxfrm(s.get("name", "")))
+    # Auto-map handles that match an existing contributor's Geneanet url, then
+    # fold those handle-keyed buckets into the resolved contributor.
+    seeded = []
+    if per_contributor:
+        seeded = seed_handles_from_urls(contributors, handle_to_id, csv_handles)
+        for handle, cid in seeded:
+            merge_bucket(buckets, handle, cid)
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    persons_path = os.path.join(OUTPUT_DIR, f"{CONTRIBUTOR}-persons.json")
-    families_path = os.path.join(OUTPUT_DIR, f"{CONTRIBUTOR}-families.json")
+    written, meta_entries = [], []
+    index = {} if per_contributor else []
+    new_ids = []
+    total_persons = total_families = 0
+
+    for cid in sorted(buckets, key=locale.strxfrm):
+        bucket = buckets[cid]
+        persons, families = bucket["persons"], bucket["families"]
+        persons.sort(key=lambda r: (
+            r.get("surname", "") or "",
+            r.get("name", "") or "",
+            r.get("burial", {}).get("place", "") or "",
+            r.get("birth", {}).get("date", "") or "",
+        ))
+        families.sort(key=lambda r: (
+            r.get("husband", {}).get("surname", "") or "",
+            r.get("husband", {}).get("name", "") or "",
+            r.get("wife", {}).get("surname", "") or "",
+            r.get("wife", {}).get("name", "") or "",
+        ))
+
+        name = f"{cid}{CONTRIB_SUFFIX}"
+        persons_path = os.path.join(OUTPUT_DIR, f"{name}-persons.json")
+        families_path = os.path.join(OUTPUT_DIR, f"{name}-families.json")
+        write_json(persons_path, persons, source_mtime)
+        write_json(families_path, families, source_mtime)
+        written += [persons_path, families_path]
+
+        cem_index = finalize_index(bucket["stats"])
+        if per_contributor:
+            index[cid] = cem_index
+        else:
+            index = cem_index
+        if cid not in contributors:
+            new_ids.append(cid)
+        url = (contributors.get(cid) or {}).get("url") or (
+            CEMETERY_URL if cid == FALLBACK_ID else PROFILE_URL.format(cid))
+        meta_entries.append({
+            "contributor": name,
+            "persons_count": len(persons),
+            "families_count": len(families),
+            "links_count": sum(1 for p in persons if p.get("links")),
+            "last_modified": datetime.fromtimestamp(source_mtime).isoformat(),
+            "url": url,
+        })
+        total_persons += len(persons)
+        total_families += len(families)
+
     index_path = os.path.join(OUTPUT_DIR, "geneanet-index.json")
-
-    write_json(persons_path, persons, source_mtime)
-    write_json(families_path, families, source_mtime)
     write_json(index_path, index, source_mtime)
+    remove_stale_outputs(OUTPUT_DIR, set(written))
+    update_metadata_file(meta_entries, OUTPUT_DIR)
+    if per_contributor:
+        if os.path.exists(args.contributors):
+            write_contributors_file(args.contributors, contributors, new_ids)
+    else:
+        register_single_contributor(args.contributors, contributors)
 
-    links_count = sum(1 for p in persons if p.get("links"))
-    update_metadata_file({
-        "contributor": CONTRIBUTOR,
-        "persons_count": len(persons),
-        "families_count": len(families),
-        "links_count": links_count,
-        "last_modified": datetime.fromtimestamp(source_mtime).isoformat(),
-        "url": CEMETERY_URL,
-    }, OUTPUT_DIR)
-    update_contributors_file(CONTRIBUTORS_FILE)
-
+    all_stats = (s for stats in index.values() for s in stats) \
+        if per_contributor else iter(index)
+    cemeteries = len({s["name"] for s in all_stats})
     print("Completed!", file=sys.stderr)
-    print(f"\nCemeteries: {len(index)}")
-    print(f"Persons:    {len(persons)}")
-    print(f"Families:   {len(families)}")
+    if per_contributor:
+        print(f"\nContributors: {len(buckets)}")
+    print(f"Cemeteries:   {cemeteries}")
+    print(f"Persons:      {total_persons}")
+    print(f"Families:     {total_families}")
+    if seeded:
+        print(f"Auto-mapped:  {', '.join(f'{h}->{c}' for h, c in seeded)}")
     return 0
 
 
