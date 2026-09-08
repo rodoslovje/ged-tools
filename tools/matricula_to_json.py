@@ -7,25 +7,55 @@ gedcom_to_json.py:
     data/output/<contributor>-matricula-persons.json
     data/output/<contributor>-matricula-families.json
 
-Birth books are recognised by " K " in the filename, marriage books by " P ".
+Birth books are recognised by " K " in the filename, marriage books by " P ";
+workbooks that hold both kinds keep each in its own sheet and the kind is then
+taken from the sheet's own columns.
+
+data/output/matricula-index.json lists the matricula books behind those
+records, one entry per book. A spreadsheet usually indexes a single book and
+is named after it, but some walk several ('Indeks P in K Čepovan 1735-1910'
+covers five); those are split by the book URL of each row and named
+'Indeks K/P <parish> - <years>', with the year range read off the book's
+parish page on matricula-online.eu and cached in .matricula_to_json.cache.
 """
 
 import argparse
 import hashlib
+import html
 import json
 import locale
 import os
 import re
+import ssl
 import sys
 import unicodedata
+import urllib.parse
+import urllib.request
 from datetime import date, datetime
 from glob import glob
 
 import openpyxl
 
+try:
+    import certifi
+except ImportError:  # falls back to whatever CA store this Python was built with
+    certifi = None
+
 INPUT_ROOT = "data/matricula"
 OUTPUT_DIR = "data/output"
 CONTRIBUTORS_FILE = "data/contributors.json"
+
+# Book titles and year ranges are only published on matricula's parish pages,
+# so files that index several books need one HTTP request per parish (the page
+# lists every book of that parish). Results are cached so repeat runs and
+# --no-fetch stay offline.
+CACHE_FILE = ".matricula_to_json.cache"
+MATRICULA_HOST = "data.matricula-online.eu"
+FETCH_TIMEOUT = 20
+USER_AGENT = "ged-tools/matricula_to_json"
+# Parish pages list 50 books each; large parishes run to several pages.
+MAX_PARISH_PAGES = 50
+ALLOW_FETCH = True
 
 MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
           "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
@@ -226,7 +256,12 @@ def build_place(row):
 
 
 def detect_book_kind(filename):
-    """Return 'K' (births), 'P' (marriages), or None."""
+    """Return 'K' (births), 'P' (marriages), or None.
+
+    Files holding both kinds name both markers ('Indeks P in K Čepovan
+    1735-1910'); 'K' wins here, but for those the per-sheet columns decide
+    and this only serves as a fallback.
+    """
     base = os.path.basename(filename)
     if re.search(r"(?:^|[ _])K(?:[ _])", base):
         return "K"
@@ -235,16 +270,55 @@ def detect_book_kind(filename):
     return None
 
 
-def read_rows(path):
-    """Yield dicts keyed by canonical field name for each data row.
+BIRTH_FIELDS = frozenset({
+    "birth_date", "baptism_date", "child_name", "child_alt_name",
+    "father_name", "father_surname", "father_alt_surname",
+    "mother_name", "mother_surname", "mother_alt_surname",
+})
 
-    Reads the first sheet whose header row contains at least three known
-    column names. For columns whose header is None but which sit between
+MARRIAGE_FIELDS = frozenset({
+    "marriage_date",
+    "groom_name", "groom_surname", "groom_alt_surname",
+    "bride_name", "bride_surname", "bride_alt_surname",
+})
+
+
+def detect_sheet_kind(fields):
+    """Return 'K'/'P' from a sheet's resolved column names, or None if unclear.
+
+    The two record types share their generic columns ('zp. št.', 'župnija',
+    'naslov', 'url naslov') and differ in the role-specific ones, so counting
+    role columns separates them without depending on sheet names.
+    """
+    present = set(fields)
+    births = len(present & BIRTH_FIELDS)
+    marriages = len(present & MARRIAGE_FIELDS)
+    if births > marriages:
+        return "K"
+    if marriages > births:
+        return "P"
+    return None
+
+
+def read_rows(path):
+    """Yield (kind, record) pairs, one per data row, record keyed by field name.
+
+    A sheet qualifies as data when its header row contains at least three
+    known column names. For columns whose header is None but which sit between
     'X name' and 'X surname' (or 'X surname' and the next labelled field),
     we infer alt-name slots positionally — this covers the wide variant
     of K Kranj-Šmartin 1892-1908 where alt-name columns lack headers.
+
+    Most workbooks hold one index, but some keep one sheet per record type —
+    'Indeks P in K Čepovan 1735-1910.xlsx' has a 'Poroke' (marriages) and a
+    'Krsti' (births) sheet — so every qualifying sheet is read. Only the FIRST
+    sheet of a given kind is used: workbooks routinely keep working copies of
+    the same index in extra sheets ('List1', or per-decade splits of a merged
+    sheet), and reading those would duplicate every record.
     """
+    fallback_kind = detect_book_kind(path)
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    seen_kinds = set()
     try:
         for sheet in wb.worksheets:
             rows = sheet.iter_rows(values_only=True)
@@ -256,6 +330,11 @@ def read_rows(path):
             field_for_col = _resolve_columns(header_row)
             if sum(1 for f in field_for_col if f) < 3:
                 continue  # not a data sheet (e.g. 'imena' helper sheet)
+
+            kind = detect_sheet_kind(field_for_col) or fallback_kind
+            if kind is None or kind in seen_kinds:
+                continue
+            seen_kinds.add(kind)
 
             for raw in rows:
                 if raw is None:
@@ -273,8 +352,7 @@ def read_rows(path):
                         continue
                     record[field] = value
                 if record:
-                    yield record
-            return  # use only the first valid sheet per file
+                    yield kind, record
     finally:
         wb.close()
 
@@ -441,12 +519,13 @@ def _first_page_url(url):
 def _parish_from_name(name):
     """Extract the parish from a book filename stem like
     'Indeks K Cerklje na Gorenjskem 1635-1643', 'Indeks P Adlešiči - 1791-1879',
-    or 'Indeks P Golac - 1861-1884 - objavljen del'. The parish is everything
-    between the 'Indeks K/P' prefix and the first 4-digit year, so trailing
-    annotations after the year range are dropped too. Returns '' if the prefix
-    doesn't match the expected pattern.
+    or 'Indeks P Golac - 1861-1884 - objavljen del'. Files carrying both kinds
+    spell both markers ('Indeks P in K Čepovan 1735-1910'). The parish is
+    everything between the 'Indeks K/P' prefix and the first 4-digit year, so
+    trailing annotations after the year range are dropped too. Returns '' if
+    the prefix doesn't match the expected pattern.
     """
-    m = re.match(r"^Indeks\s+[KP]\s+(.+)$", name)
+    m = re.match(r"^Indeks\s+[KP](?:\s+in\s+[KP])?\s+(.+)$", name)
     if not m:
         return ""
     rest = m.group(1)
@@ -466,8 +545,287 @@ def _date_from_name(name):
     return m.group(1) if m else ""
 
 
-def _book_entry(path, count, sample_url):
-    kind = detect_book_kind(path)
+def _split_book_url(url):
+    """Split a matricula row URL into (parish_path, signature).
+
+    Row URLs address one page of one book:
+      https://data.matricula-online.eu/sl/slovenia/koper/Cepovan/<sig>/?pg=108
+    The last path segment is the book signature (percent-encoded, and
+    double-encoded in the Koper archive); everything before it addresses the
+    parish. The leading locale segment is dropped so the same book reached
+    through /sl/, /de/ or /en/ groups together. Returns (None, None) for cells
+    that are not matricula book URLs — some sheets keep free-text notes such
+    as 'ne najdem več v knjigi' in the url column.
+    """
+    if not url:
+        return None, None
+    parts = urllib.parse.urlsplit(url.strip())
+    if parts.scheme not in ("http", "https"):
+        return None, None
+    if not parts.netloc.lower().endswith("matricula-online.eu"):
+        return None, None
+    segments = [seg for seg in parts.path.split("/") if seg]
+    if segments and len(segments[0]) == 2 and segments[0].isalpha():
+        segments = segments[1:]
+    if len(segments) < 2:
+        return None, None
+    return "/".join(segments[:-1]), segments[-1]
+
+
+def _decode_signature(signature):
+    """Human-readable form of a URL signature segment ('ŠAK Ž Čep MKK 1')."""
+    decoded = urllib.parse.unquote_plus(signature)
+    if "%" in decoded:  # Koper signatures are percent-encoded twice
+        decoded = urllib.parse.unquote_plus(decoded)
+    return re.sub(r"\s+", " ", decoded).strip()
+
+
+# One <tr> per book: view/details links, signature, title, displayed span.
+_BOOK_ROW_RE = re.compile(
+    r"<tr>\s*<td[^>]*>(?P<links>.*?)</td>\s*"
+    r"<td[^>]*>(?P<signature>.*?)</td>\s*"
+    r"<td[^>]*>(?P<title>.*?)</td>\s*"
+    r"<td[^>]*>(?P<span>.*?)</td>\s*</tr>",
+    re.S,
+)
+_DETAILS_RE = re.compile(r'id="details-(?P<id>\d+)"(?P<body>.*?)</tr>', re.S)
+_DT_DD_RE = re.compile(r"<dt>(.*?)</dt>\s*<dd>(.*?)</dd>", re.S)
+_YEAR_RE = re.compile(r"(?<!\d)(\d{4})(?!\d)")
+
+
+def _strip_tags(fragment):
+    text = html.unescape(re.sub(r"<[^>]+>", " ", fragment))
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _book_date(details, span_cell):
+    """Year range for a book: 'Od/Do datuma' if present, else the span cell.
+
+    The detail dates are authoritative; the displayed span is free text and
+    may list several sub-ranges ('1743-1783, 1784-1819').
+    """
+    years = []
+    for label in ("Od datuma", "Do datuma"):
+        found = _YEAR_RE.search((details or {}).get(label, ""))
+        if found:
+            years.append(found.group(1))
+    if len(years) != 2:
+        years = _YEAR_RE.findall(_strip_tags(span_cell))
+    if not years:
+        return ""
+    first, last = years[0], years[-1]
+    return first if first == last else f"{first}-{last}"
+
+
+def parse_parish_books(page_html):
+    """Map signature segment -> {'title', 'date'} from a parish listing page.
+
+    Every book of a parish is listed on that one page, each as a four-cell row
+    followed by a collapsed detail row carrying 'Od datuma' / 'Do datuma'.
+    """
+    details = {
+        m.group("id"): {_strip_tags(k): _strip_tags(v)
+                        for k, v in _DT_DD_RE.findall(m.group("body"))}
+        for m in _DETAILS_RE.finditer(page_html)
+    }
+
+    books = {}
+    for m in _BOOK_ROW_RE.finditer(page_html):
+        links = m.group("links")
+        href = re.search(r'href="(/[^"#]+)"', links)
+        if not href:
+            continue
+        _, signature = _split_book_url(
+            urllib.parse.urljoin(f"https://{MATRICULA_HOST}/", href.group(1))
+        )
+        if not signature:
+            continue
+        detail_id = re.search(r'href="#details-(\d+)"', links)
+        info = details.get(detail_id.group(1)) if detail_id else None
+        books[signature] = {
+            "title": _strip_tags(m.group("title")),
+            "date": _book_date(info, m.group("span")),
+        }
+    return books
+
+
+_parish_cache = None
+_parish_fetched = set()
+
+
+def _ssl_context():
+    """Verified TLS context, using certifi's CA bundle when it is installed.
+
+    Python builds from python.org ship without a CA store until the bundled
+    'Install Certificates.command' is run, which makes every https fetch fail;
+    certifi covers that case without touching the interpreter.
+    """
+    if certifi is not None:
+        return ssl.create_default_context(cafile=certifi.where())
+    return ssl.create_default_context()
+
+
+def _load_parish_cache():
+    global _parish_cache
+    if _parish_cache is None:
+        try:
+            with open(CACHE_FILE, encoding="utf-8") as f:
+                _parish_cache = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            _parish_cache = {}
+    return _parish_cache
+
+
+def save_parish_cache():
+    """Persist fetched parish listings so later runs need no network."""
+    if _parish_cache is None:
+        return
+    try:
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(_parish_cache, f, ensure_ascii=False, indent=1, sort_keys=True)
+    except OSError as exc:
+        print(f"Warning: could not write {CACHE_FILE}: {exc}", file=sys.stderr)
+
+
+def _fetch_page(url):
+    """Return the page body, or None after reporting why it could not be read."""
+    try:
+        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT,
+                                    context=_ssl_context()) as response:
+            return response.read().decode("utf-8", "replace")
+    except ssl.SSLCertVerificationError as exc:
+        print(f"Warning: could not fetch {url}: {exc}\n"
+              "  This Python has no CA bundle. Install one with "
+              "'pip install certifi', or run\n"
+              "  /Applications/Python 3.x/Install Certificates.command on macOS.",
+              file=sys.stderr)
+    except Exception as exc:
+        print(f"Warning: could not fetch {url}: {exc}", file=sys.stderr)
+    return None
+
+
+def fetch_parish_books(parish_path):
+    """Fetch every book of a parish, following the listing's pagination.
+
+    Parish pages show 50 books at a time and their pager only links to
+    neighbouring pages, so we walk forward while the current page still points
+    at the next one. Returns {} when the first page could not be read.
+    """
+    base = f"https://{MATRICULA_HOST}/sl/{parish_path}/"
+    books = {}
+    for page in range(1, MAX_PARISH_PAGES + 1):
+        url = base if page == 1 else f"{base}?page={page}"
+        print(f"Fetching book list: {url}", file=sys.stderr)
+        body = _fetch_page(url)
+        if body is None:
+            break
+        found = parse_parish_books(body)
+        if not found:
+            print(f"Warning: no books listed on {url}", file=sys.stderr)
+            break
+        books.update(found)
+        if f'href="?page={page + 1}"' not in body:
+            break
+    return books
+
+
+def lookup_books(parish_path, signatures):
+    """Return {signature: {'title', 'date'}} for one parish, fetching if needed.
+
+    One parish listing describes every book of that parish, so it covers all
+    signatures a file references. We only go back to the network when a needed
+    signature is missing from the cache (a newly indexed book), and at most
+    once per parish per run. A failed fetch is not fatal: callers fall back to
+    filename- and signature-derived values.
+    """
+    cache = _load_parish_cache()
+    books = cache.get(parish_path) or {}
+    if not ALLOW_FETCH or parish_path in _parish_fetched:
+        return books
+    if all(sig in books for sig in signatures):
+        return books
+
+    _parish_fetched.add(parish_path)
+    fetched = fetch_parish_books(parish_path)
+    if not fetched:
+        return books
+    merged = dict(books)
+    merged.update(fetched)
+    cache[parish_path] = merged
+    return merged
+
+
+def new_bucket_state():
+    """Accumulator for grouping a file's rows by the matricula book they cite."""
+    return {"buckets": [], "by_key": {}, "current": {}, "pending": {}}
+
+
+def bucket_row(state, kind, row):
+    """Attribute one row to its book bucket, creating it on first sight.
+
+    A single sheet often indexes several books — 'Krsti' in the Čepovan file
+    walks MKK 1, 2 and 3 — and the book is the row URL minus its '?pg='
+    argument. Rows whose url cell is empty or free text are attributed to the
+    book of the preceding row of the same kind, so a stray blank url does not
+    split a book in two; rows seen before that kind's first URL are credited
+    to the first book found.
+    """
+    parish_path, signature = _split_book_url(cell_str(row.get("url")))
+    if signature:
+        key = (kind, parish_path, signature)
+        bucket = state["by_key"].get(key)
+        if bucket is None:
+            bucket = {
+                "kind": kind,
+                "parish_path": parish_path,
+                "signature": signature,
+                "url": cell_str(row.get("url")),
+                "count": state["pending"].pop(kind, 0),
+                "parishes": {},
+            }
+            state["by_key"][key] = bucket
+            state["buckets"].append(bucket)
+        state["current"][kind] = bucket
+    else:
+        bucket = state["current"].get(kind)
+        if bucket is None:
+            state["pending"][kind] = state["pending"].get(kind, 0) + 1
+            return
+
+    bucket["count"] += 1
+    parish = cell_str(row.get("parish"))
+    if parish:
+        bucket["parishes"][parish] = bucket["parishes"].get(parish, 0) + 1
+
+
+def _same_parish(a, b):
+    """True when two parish spellings differ only in punctuation or accents."""
+    def key(value):
+        stripped = "".join(c for c in unicodedata.normalize("NFD", value)
+                           if unicodedata.category(c) != "Mn")
+        return re.sub(r"[^a-z0-9]+", " ", stripped.lower()).strip()
+    return bool(a) and key(a) == key(b)
+
+
+def _bucket_parish(bucket, fallback):
+    """Parish of a book: the most common 'župnija' cell, else the filename's.
+
+    A file can span parishes, so the cell is authoritative — but when both
+    agree apart from punctuation ('Sv Jurij ob Ščavnici' vs the filename's
+    'Sv. Jurij ob Ščavnici') the filename spelling wins, so these entries read
+    the same as the single-book ones beside them in the index.
+    """
+    if not bucket["parishes"]:
+        return fallback
+    parish = max(sorted(bucket["parishes"]), key=bucket["parishes"].get)
+    return fallback if _same_parish(parish, fallback) else parish
+
+
+def _book_entry(path, count, sample_url, kind=None):
+    """Index entry for a file that indexes a single book: the filename is the
+    curator's own label and reads better than anything we could synthesise."""
+    kind = kind or detect_book_kind(path)
     name = os.path.splitext(os.path.basename(path))[0]
     return {
         "name": name,
@@ -478,6 +836,57 @@ def _book_entry(path, count, sample_url):
         "url": _first_page_url(sample_url),
         "last_modified": datetime.fromtimestamp(os.path.getmtime(path)).isoformat(),
     }
+
+
+def book_entries(path, buckets, total_count):
+    """Index entries for one xlsx file: one per matricula book it references.
+
+    A file spanning several books has no single filename-derived name, parish
+    or year range to give them, so each book is named
+    'Indeks K/P <parish> - <years>' with the year range read off the parish
+    listing page. Books whose range could not be fetched are disambiguated by
+    their matricula signature instead.
+    """
+    if len(buckets) <= 1:
+        sample_url = buckets[0]["url"] if buckets else ""
+        kind = buckets[0]["kind"] if buckets else None
+        return [_book_entry(path, total_count, sample_url, kind)]
+
+    stem = os.path.splitext(os.path.basename(path))[0]
+    fallback_parish = _parish_from_name(stem)
+    last_modified = datetime.fromtimestamp(os.path.getmtime(path)).isoformat()
+
+    signatures_by_parish = {}
+    for bucket in buckets:
+        signatures_by_parish.setdefault(bucket["parish_path"], []).append(
+            bucket["signature"])
+    metadata = {parish_path: lookup_books(parish_path, signatures)
+                for parish_path, signatures in signatures_by_parish.items()}
+
+    entries = []
+    for bucket in buckets:
+        info = metadata.get(bucket["parish_path"], {}).get(bucket["signature"], {})
+        parish = _bucket_parish(bucket, fallback_parish)
+        date = info.get("date", "")
+        suffix = date or _decode_signature(bucket["signature"])
+        entries.append({
+            "name": f"Indeks {bucket['kind']} {parish} - {suffix}".strip(),
+            "parish": parish,
+            "type": "birth" if bucket["kind"] == "K" else "marriage",
+            "date": date,
+            "count": bucket["count"],
+            "url": _first_page_url(bucket["url"]),
+            "last_modified": last_modified,
+        })
+
+    # Two books of the same kind, parish and range would otherwise collide.
+    counts = {}
+    for entry in entries:
+        counts[entry["name"]] = counts.get(entry["name"], 0) + 1
+    for entry, bucket in zip(entries, buckets):
+        if counts[entry["name"]] > 1:
+            entry["name"] = f"{entry['name']} ({_decode_signature(bucket['signature'])})"
+    return entries
 
 
 def _load_contributors():
@@ -622,16 +1031,14 @@ def process_contributor(contributor, files, contributors, full_mode, existing_in
     latest_mtime = 0.0
 
     for path in source_files:
-        kind = detect_book_kind(path)
         try:
             file_births, file_marriages = [], []
+            state = new_bucket_state()
             count = 0
-            sample_url = ""
-            for row in read_rows(path):
+            for kind, row in read_rows(path):
                 _check_interpreter(contributor, cell_str(row.get("interpreter")), path)
                 count += 1
-                if not sample_url:
-                    sample_url = cell_str(row.get("url"))
+                bucket_row(state, kind, row)
                 if kind == "K":
                     file_births.append(birth_record(row))
                 else:
@@ -647,7 +1054,7 @@ def process_contributor(contributor, files, contributors, full_mode, existing_in
         latest_mtime = max(latest_mtime, os.path.getmtime(path))
         births.extend(file_births)
         marriages.extend(file_marriages)
-        books_index.append(_book_entry(path, count, sample_url))
+        books_index.extend(book_entries(path, state["buckets"], count))
 
     births.sort(key=lambda r: (
         r.get("surname", "") or "",
@@ -723,16 +1130,15 @@ def _write_or_remove(path, records, mtime):
 
 
 def _read_books_index(source_files):
-    """Lightweight pass: row count + first URL per book (for skip-mode fallback)."""
+    """Lightweight pass: per-book row counts and URLs (for skip-mode fallback)."""
     entries = []
     for path in source_files:
+        state = new_bucket_state()
         count = 0
-        sample_url = ""
-        for row in read_rows(path):
+        for kind, row in read_rows(path):
             count += 1
-            if not sample_url:
-                sample_url = cell_str(row.get("url"))
-        entries.append(_book_entry(path, count, sample_url))
+            bucket_row(state, kind, row)
+        entries.extend(book_entries(path, state["buckets"], count))
     return entries
 
 
@@ -774,7 +1180,7 @@ def update_metadata_file(new_entries, output_dir):
 
 
 def main():
-    global OUTPUT_DIR
+    global OUTPUT_DIR, ALLOW_FETCH
     parser = argparse.ArgumentParser(description="Convert Matricula xlsx index files to JSON.")
     parser.add_argument(
         "--mode",
@@ -787,10 +1193,14 @@ def main():
                         help=f"Root directory to scan recursively (default: {INPUT_ROOT}).")
     parser.add_argument("--output-dir", default=OUTPUT_DIR,
                         help=f"Output directory for JSON files (default: {OUTPUT_DIR}).")
+    parser.add_argument("--no-fetch", action="store_true",
+                        help="Never contact matricula-online.eu; name multi-book "
+                             f"files from {CACHE_FILE} alone.")
     args = parser.parse_args()
     full_mode = args.mode == "full"
 
     OUTPUT_DIR = args.output_dir
+    ALLOW_FETCH = not args.no_fetch
 
     print(f"Starting Matricula data extraction process (mode: {args.mode})...",
           file=sys.stderr)
@@ -841,6 +1251,7 @@ def main():
 
     update_metadata_file([s["meta_entry"] for s in summaries], OUTPUT_DIR)
     write_matricula_index(summaries, OUTPUT_DIR)
+    save_parish_cache()
 
     print("Completed!", file=sys.stderr)
 

@@ -3,3 +3,4 @@ chardet
 openpyxl
 ansel
 pytest
+certifi

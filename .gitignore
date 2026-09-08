@@ -52,3 +52,7 @@ Thumbs.db
 *.swp
 *.swo
 /.claude
+
+# Matricula parish/book cache (rebuilt by matricula_to_json.py)
+.matricula_to_json.cache
+
