@@ -570,6 +570,122 @@ Matching between JSON contributor names and GED filenames is done case-insensiti
 
 ---
 
+## matricula_transcribe
+
+Transcribes a parish book on [Matricula Online](https://data.matricula-online.eu/) into an index spreadsheet, page by page, in the column layout `matricula_to_json` consumes. Claude reads each scan; the handwriting in these books is 18th- and 19th-century Latin or German and is not OCR-able, so **every row is a machine reading and needs a human pass before it is published.**
+
+```
+python tools/matricula_transcribe.py <book-url> --interpret NAME --output-dir DIR [OPTIONS]
+```
+
+Baptism books (`Krstna knjiga` / `Taufbuch`) produce the K layout, marriage books (`Poročna knjiga` / `Trauungsbuch`) the P layout. Death books are recognised and refused — `matricula_to_json` has no death column set yet.
+
+Requires an Anthropic API key in `ANTHROPIC_API_KEY`. If the key is identity-linked, the API also needs the workspace each request acts in — set `ANTHROPIC_WORKSPACE_ID` or pass `--workspace` (the id is in the Anthropic Console under Settings → Workspaces and looks like `wrkspc_...`). Errors that would hit every page the same way — a rejected key, a missing workspace, an unknown model — stop the run after the first one rather than failing the whole book.
+
+### Arguments
+
+| Argument             | Description                                                                          |
+| -------------------- | ------------------------------------------------------------------------------------ |
+| `book-url`           | Any page URL of the book, e.g. `https://data.matricula-online.eu/sl/slovenia/ljubljana/podzemelj/04455/?pg=1` |
+| `--interpret NAME`   | Value written into the `interpret` column, e.g. `Priimek_Ime` (required)              |
+| `--output-dir DIR`   | Directory the `.xlsx` is written to, e.g. `data/matricula/<contributor>` (required)  |
+
+### Options
+
+| Option             | Description                                                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `--pages SPEC`     | Pages to transcribe: `6-40`, `6,8,10-12` (default: all)                                                       |
+| `--output NAME`    | Output filename (default: derived, e.g. `Indeks P Podzemelj - 1873-1922.xlsx`)                                |
+| `--parish NAME`    | Override the parish name written into every row                                                               |
+| `--workspace ID`   | Workspace the requests act in (default: `$ANTHROPIC_WORKSPACE_ID`). Required for an identity-linked API key    |
+| `--model ID`       | Model to transcribe with (default: `claude-opus-5`)                                                           |
+| `--effort LEVEL`   | Reasoning effort: `low`/`medium`/`high`/`xhigh`/`max` (default: `high`)                                        |
+| `--max-tokens N`   | Output cap per page (default: 16000)                                                                          |
+| `--tiles N`        | Vertical strips sent alongside the full page (default: 2, one per book page; `1` disables strips)              |
+| `--workers N`      | Pages transcribed in parallel (default: 4)                                                                    |
+| `--delay SECONDS`  | Pause between scan downloads (default: 1.0)                                                                   |
+| `--image-dir DIR`  | Scan cache directory (default: `.matricula_images`)                                                           |
+| `--cache-dir DIR`  | Transcription cache directory (default: `.matricula_transcribe.cache`)                                        |
+| `--rebuild`        | Rebuild the `.xlsx` from cached readings only — no API calls, no downloads                                     |
+| `--reuse-cached`   | Reuse readings taken under an older prompt instead of paying to read those pages again                        |
+| `--refresh`        | Re-transcribe pages even when a cached reading exists                                                         |
+| `--no-flags`       | Leave out the `preveri` column that names the fields the model was unsure of                                  |
+| `--dry-run`        | Show the book, the page count and the output path, then stop — no scans fetched, no API calls                 |
+
+### How a page is read
+
+The book's viewer config lists every scan at once, so one request to the book page is enough to learn its length and where each scan lives. Each spread is sent to the model three times over: the whole page for the table's structure, then one vertical strip per book page. The strips exist because the API shrinks anything wider than 1568px, which costs a two-page spread a third of its detail — cutting the spread down the gutter gets that back. The cut is vertical because a register row runs the full width of the spread.
+
+Scans and page transcriptions are both cached on disk. Re-running the same command re-reads only what is missing, so `--pages` can walk a long book in batches, and a page that fails is retried for free on the next run.
+
+**Reading a book is the expensive part; everything else is free.** Every rule that can be applied to a reading after the fact — how `zp. št.` is numbered, which alt surnames are inventions, where a widow's maiden name belongs, place names — runs when the workbook is written, not when the scan is read. So a change to those rules never needs the book read again:
+
+```
+# Rebuild the .xlsx from cached readings. No API calls, no downloads.
+python tools/matricula_transcribe.py <book-url> \
+    --interpret Priimek_Ime --output-dir data/matricula/Priimek --rebuild
+```
+
+`--rebuild` fails if any requested page has no cached reading, so it can never quietly give you a partial book; pages whose scan was never downloaded are named and left out. `--reuse-cached` is the softer form: transcribe what is genuinely missing, but reuse readings taken under an older prompt rather than paying to read those pages again. Use it whenever the prompt has changed but you do not need the change badly enough to re-read 200 pages.
+
+The model follows the conventions the project's human indexers use: given names and surnames in modern Slovenian, addresses as village plus house number, dates as `yyyy-mm-dd`.
+
+Fields the model could read only partially are named in a **`preveri` column** of its own, appended after `interpret` — e.g. `priimek ženina, naslov`. Keeping the flags out of `opombe` means a reviewer can sort and filter on them, and deleting the whole column once the index is checked cannot take a real note with it. `matricula_to_json` does not know that header, so it ignores the column entirely. `--no-flags` leaves it out, giving a workbook with exactly the columns a human indexer would write.
+
+Place names take today's Slovenian form, like given names and surnames do — these registers were kept under Austrian administration and name places in German (`Möttling` → `Metlika`, `Gottschee` → `Kočevje`, `Laibach` → `Ljubljana`, `Cilli` → `Celje`). Where the register's own form is worth showing a reviewer, it is kept in brackets after the Slovenian one: `Celje (Cilli) 53`.
+
+`opombe` records only what departs from the ordinary — `vdovec`/`vdova` but never `samski`/`samska`, `nezakonski` but never `zakonski`, and never the officiating priest. For a marriage it runs groom, then bride, then the witnesses they share:
+
+```
+Ženin: vdovec, 42 let; starša Matija Jakofčič, kmet, in Barbara Simec. Nevesta: 32 let;
+starša Matija Križan, kmet, in Marija Milek. Priči: Matija Jakofčič, Miha Križan.
+```
+
+A **widow remarrying** is filed under her maiden surname, not the one the register enters her under. These books name a widow by the surname she carries on the day — her dead husband's — so `priimek neveste` is taken from her father (whom the same entry names as a parent) and the married surname goes into `alt. priimek neveste`. A widow the book calls *Anna Filak*, daughter of Marko Vardijan, is indexed `Vardijan` / `Filak`. The model is asked to do this while reading; a check afterwards catches the entries where it did not, naming `priimek neveste` in the `preveri` column so a reviewer sees it. A groom's surname does not change when he marries, so widowers need none of this.
+
+`zp. št.` is the entry's position on its page and restarts at 1 on the next one, matching the hand-made indexes; it is counted here rather than read off the scan. The `alt. priimek` column holds a literal transcription of the book's own spelling and is left empty when that already matches the modern form — an alt that differs from the surname only by letters outside the Slovenian alphabet (`ć`, `đ`, `ś`) is discarded as an invention rather than a reading.
+
+### Examples
+
+```
+# See what the book is and where the output would go — no downloads, no API calls
+python tools/matricula_transcribe.py \
+    "https://data.matricula-online.eu/sl/slovenia/ljubljana/podzemelj/04455/?pg=1" \
+    --interpret Priimek_Ime --output-dir data/matricula/Priimek --dry-run
+
+# Transcribe a first batch of pages
+python tools/matricula_transcribe.py \
+    "https://data.matricula-online.eu/sl/slovenia/ljubljana/podzemelj/04455/?pg=1" \
+    --interpret Priimek_Ime --output-dir data/matricula/Priimek --pages 6-40
+
+# Extend it — pages 6-40 come from the cache, only 41-80 are transcribed
+python tools/matricula_transcribe.py \
+    "https://data.matricula-online.eu/sl/slovenia/ljubljana/podzemelj/04455/?pg=1" \
+    --interpret Priimek_Ime --output-dir data/matricula/Priimek --pages 6-80
+```
+
+### Example output
+
+```
+book page: https://data.matricula-online.eu/sl/slovenia/ljubljana/podzemelj/04455/?pg=1
+title:  Poročna knjiga / Trauungsbuch - 04455 | Podzemelj | ...
+book:   P Podzemelj 1873-1922 (marriages)
+parish: Podzemelj
+pages:  35 of 192 (--pages 6-40)
+output: data/matricula/Priimek/Indeks P Podzemelj - 1873-1922.xlsx
+scans:  35 downloaded, 0 already cached
+pages:  0 read from cache, 35 to transcribe
+  [1/35] page 7: 9 entries
+  [2/35] page 6: 9 entries
+  ...
+
+wrote 312 entries from 35 pages to data/matricula/Priimek/Indeks P Podzemelj - 1873-1922.xlsx
+24 entries have something named in the 'preveri' column
+every row is a machine reading — check it against the scan before publishing
+```
+
+---
+
 ## Project structure
 
 ```

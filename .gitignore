@@ -56,3 +56,7 @@ Thumbs.db
 # Matricula parish/book cache (rebuilt by matricula_to_json.py)
 .matricula_to_json.cache
 
+# Matricula scans and page transcriptions (matricula_transcribe.py)
+.matricula_images/
+.matricula_transcribe.cache/
+.env

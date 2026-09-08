@@ -4,3 +4,5 @@ openpyxl
 ansel
 pytest
 certifi
+anthropic
+pillow
