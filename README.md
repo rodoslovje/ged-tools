@@ -74,7 +74,7 @@ At least one of `--preset`, `--clean`, `--strip`, or `--transform` must be speci
 | Name                 | Description                                                           |
 | -------------------- | --------------------------------------------------------------------- |
 | `dd_mmm_yyyy`        | Normalize all dates to DD MMM YYYY format.                            |
-| `name_placeholder`   | Clear empty/placeholder names (e.g. `___`, `???`).                    |
+| `name_placeholder`   | Replace empty/placeholder names (e.g. `___`, `???`, `XY`) with `NN`; empty segments are filled only on the primary NAME, secondary NAMEs (married, aka …) keep them. |
 | `place_placeholder`  | Clear empty/placeholder places.                                       |
 | `place_slovenia_rm`  | Remove "Slovenia" / "Slovenija" suffix from places.                   |
 | `place_duplicate_rm` | Remove adjacent duplicate components in places.                       |

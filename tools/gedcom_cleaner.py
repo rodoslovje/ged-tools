@@ -63,6 +63,11 @@ Available Cleaners:
                          collapses to a bare "NN" — e.g. "/Smith/" → "NN
                          /Smith/", "Jane /___/" → "Jane /NN/", "Jane //" →
                          "Jane /NN/", "___ /___/" → "NN", "//" → "NN".
+                         Empty segments are only filled on the primary NAME
+                         (first NAME of an INDI); secondary NAMEs (married,
+                         aka, nick, variation …) keep them — "/Sajovic/" with
+                         TYPE married stays as is — while explicit
+                         placeholders ("XY /Sajovic/") are still replaced.
     name_capitalization  Title-case all name parts ("JOŽE /KOVAČ/" -> "Jože /Kovač/").
                          Particles like "de"/"von"/"der"/"des"/"v." stay lowercase
                          in the middle of a name but are capitalized when they
@@ -2122,12 +2127,18 @@ def _simplify_all_nn(value: str) -> str:
     return "NN" if has_nn and not has_real else value
 
 
-def clean_name_placeholder(raw: str) -> tuple[str, None]:
+def clean_name_placeholder(raw: str, fill_empty: bool = True) -> tuple[str, None]:
     """
     Replace placeholder name segments with the conventional "NN" stub
     (Nomen Nescio — name unknown). Every unknown or empty name component
     becomes an explicit "NN"; the only time nothing is filled is when the
-    whole value has no signal, in which case it collapses to a bare "NN":
+    whole value has no signal, in which case it collapses to a bare "NN".
+
+    `fill_empty=False` is used for secondary NAMEs (married, aka, nick,
+    variation …): explicit placeholders (___, XY, N.N.) are still replaced,
+    but EMPTY segments are left alone — a married name "/Sajovic/" carries
+    the given name implicitly from the primary NAME, so it must not become
+    "NN /Sajovic/". With `fill_empty=True` (the primary NAME):
       1. A placeholder OR empty surname alongside a real given becomes "/NN/"
          (Given /NN/).
       2. A placeholder OR empty given alongside a real surname becomes "NN"
@@ -2185,7 +2196,7 @@ def clean_name_placeholder(raw: str) -> tuple[str, None]:
         # An empty/whitespace surname becomes "/NN/" only when a real given is
         # present ("Jane //" -> "Jane /NN/"); with no real given the whole
         # value collapses to "NN" below, so leave it untouched here.
-        if not inner.strip() and has_real_given:
+        if not inner.strip() and has_real_given and fill_empty:
             return "/NN/"
         return match.group(0)
 
@@ -2223,14 +2234,14 @@ def clean_name_placeholder(raw: str) -> tuple[str, None]:
     surname_now = "".join(
         p[1:-1] for p in now_parts if p.startswith("/") and p.endswith("/")
     ).strip()
-    if not given_now and surname_now and surname_now != "NN":
+    if fill_empty and not given_now and surname_now and surname_now != "NN":
         cleaned = _normalize_name_whitespace(f"NN {cleaned}")
 
     # If the value carries no name content whatsoever — just slashes and
     # whitespace, like "//" or "/  /" — output "NN" (the whole record has
     # no name signal). A real given like "Jane /NN/" is preserved by the
     # earlier branch logic and does NOT trip this check.
-    if not cleaned.replace("/", "").strip():
+    if fill_empty and not cleaned.replace("/", "").strip():
         cleaned = "NN"
 
     if cleaned == raw:
@@ -2846,12 +2857,34 @@ def process_file(
 
     if "name_placeholder" in cleaners:
         s = stats["name_placeholder"]
+        # Only the primary NAME (the first NAME child of an INDI) gets empty
+        # segments filled with "NN". Secondary NAMEs (TYPE married / aka /
+        # nick / variation …) keep empty segments — MacFamilyTree exports a
+        # married name as "/Surname/" with the given name implied by the
+        # primary NAME — but explicit placeholders are still replaced.
+        primary_names: set[int] = set()
+        for indi in parser.get_element_list():
+            if indi.get_tag() != gedcom.tags.GEDCOM_TAG_INDIVIDUAL:
+                continue
+            for ch in indi.get_child_elements():
+                if ch.get_tag() == gedcom.tags.GEDCOM_TAG_NAME:
+                    primary_names.add(id(ch))
+                    break
         for element in parser.get_element_list():
             if element.get_tag() not in _NAME_TAGS:
                 continue
             raw = element.get_value()
             s.processed += 1
-            cleaned, _ = clean_name_placeholder(raw)
+            fill_empty = True
+            if element.get_tag() == gedcom.tags.GEDCOM_TAG_NAME:
+                parent = element.get_parent_element()
+                if (
+                    parent is not None
+                    and parent.get_tag() == gedcom.tags.GEDCOM_TAG_INDIVIDUAL
+                    and id(element) not in primary_names
+                ):
+                    fill_empty = False
+            cleaned, _ = clean_name_placeholder(raw, fill_empty=fill_empty)
             if cleaned != raw:
                 s.fixed += 1
                 if verbose_clean:

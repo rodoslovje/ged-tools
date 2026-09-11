@@ -481,3 +481,63 @@ def test_surn_synced_to_empty_when_name_surname_empty():
     finally:
         os.unlink(inp)
         os.unlink(out)
+
+
+def test_secondary_name_empty_given_not_filled():
+    """Empty segments are only filled on the primary NAME. A married /
+    aka / nick NAME exported by MacFamilyTree as "/Surname/" must stay as
+    is (the given name is implied by the primary NAME); explicit
+    placeholders in secondary NAMEs are still replaced."""
+    sample = textwrap.dedent("""\
+        0 HEAD
+        1 CHAR UTF-8
+        0 @I1@ INDI
+        1 NAME Jera /Mubi/
+        2 GIVN Jera
+        2 SURN Mubi
+        1 NAME /Sajovic/
+        2 TYPE married
+        2 SURN Sajovic
+        1 NAME XY /Kovač/
+        2 TYPE aka
+        2 GIVN XY
+        2 SURN Kovač
+        1 NAME Jerica //
+        2 TYPE nick
+        2 GIVN Jerica
+        0 @I2@ INDI
+        1 NAME /Novak/
+        2 SURN Novak
+        1 NAME /Kranjc/
+        2 TYPE married
+        2 SURN Kranjc
+        0 TRLR
+    """)
+    inp = _write_tmp(sample)
+    out = _write_tmp("")
+    try:
+        process_file(
+            inp,
+            out,
+            cleaners=["name_placeholder"],
+            strippers=[],
+            transformers=[],
+            warn=False,
+        )
+        content = open(out, encoding="utf-8").read()
+        # Primary NAME untouched (real name).
+        assert "1 NAME Jera /Mubi/" in content
+        # Secondary married name: empty given NOT filled.
+        assert "1 NAME /Sajovic/\n2 TYPE married\n2 SURN Sajovic" in content
+        assert "NN /Sajovic/" not in content
+        # Secondary aka with explicit placeholder given: still replaced.
+        assert "1 NAME NN /Kovač/" in content
+        assert "2 GIVN NN" in content
+        # Secondary nick with empty surname: left empty, SURN not added.
+        assert "1 NAME Jerica //\n2 TYPE nick" in content
+        # I2: primary NAME with empty given IS filled; secondary is not.
+        assert "1 NAME NN /Novak/" in content
+        assert "1 NAME /Kranjc/\n2 TYPE married" in content
+    finally:
+        os.unlink(inp)
+        os.unlink(out)
