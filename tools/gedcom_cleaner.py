@@ -225,6 +225,7 @@ Examples:
 """
 
 import argparse
+import codecs
 import io
 import locale
 import os
@@ -575,6 +576,41 @@ _DOS_LEFTOVER_TO_CP1250 = bytes.maketrans(
 )
 
 
+def _cp1250_fallback(err: UnicodeDecodeError) -> tuple[str, int]:
+    bad = err.object[err.start : err.end].translate(_DOS_LEFTOVER_TO_CP1250)
+    return bad.decode("windows-1250", errors="replace"), err.end
+
+
+codecs.register_error("cp1250_fallback", _cp1250_fallback)
+
+
+def _decode_mostly_utf8(raw: bytes) -> str | None:
+    """
+    Decode a UTF-8 file that has a few stray cp1250 bytes mixed in (MyHeritage
+    exports carry over old cp1250 notes verbatim). A whole-file cp1250 decode
+    would garble every valid UTF-8 č/š/ž, so decode as UTF-8 and fall back to
+    cp1250 only for the invalid byte runs. Returns None when there is no UTF-8
+    BOM and the non-ASCII lines are not predominantly valid UTF-8 — that is a
+    genuine cp1250 file behind a lying header, handled by the caller.
+    """
+    has_bom = raw.startswith(b"\xef\xbb\xbf")
+    if has_bom:
+        raw = raw[3:]
+    else:
+        valid = invalid = 0
+        for line in raw.split(b"\n"):
+            if line.isascii():
+                continue
+            try:
+                line.decode("utf-8")
+                valid += 1
+            except UnicodeDecodeError:
+                invalid += 1
+        if valid <= invalid:
+            return None
+    return raw.decode("utf-8", errors="cp1250_fallback")
+
+
 def _detect_encoding(raw: bytes) -> str:
     """Detect encoding of GEDCOM raw bytes. Returns a Python codec name."""
     # 1. BOM detection
@@ -689,6 +725,12 @@ def _transcode_to_utf8(input_path: str) -> tuple[str, bool]:
                 f.write(text)
             return tmp_path, True
         except UnicodeDecodeError:
+            mixed = _decode_mostly_utf8(raw)
+            if mixed is not None:
+                fd, tmp_path = tempfile.mkstemp(suffix=".ged")
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(mixed)
+                return tmp_path, True
             if _is_disguised_cp1250(raw):
                 encoding = "windows-1250"
             else:
