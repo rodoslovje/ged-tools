@@ -320,6 +320,23 @@ def _link_from_subelement(element, sources_dict):
         urls = _find_all_links(val)
         if urls:
             return urls
+        # P3: inline SOUR > PAGE / P4: inline SOUR > DATA > TEXT/WWW — a URL written on the
+        #     citation wins over the source record's template (FLORJANČIČ.GED: generic
+        #     source with an example URL in NOTE, real URL in each citation's PAGE)
+        urls = []
+        for sour_child in element.get_child_elements():
+            if sour_child.get_tag() == "PAGE":
+                for url in _find_all_links(_full_text(sour_child)):
+                    if url not in urls:
+                        urls.append(url)
+            elif sour_child.get_tag() == "DATA":
+                for data_child in sour_child.get_child_elements():
+                    if data_child.get_tag() in ("TEXT", "WWW"):
+                        for url in _find_all_links(_full_text(data_child)):
+                            if url not in urls:
+                                urls.append(url)
+        if urls:
+            return urls
         # P5/P7: reference pointer @Sxxx@
         if val.startswith("@") and val.endswith("@"):
             template = sources_dict.get(val, "")
@@ -348,21 +365,7 @@ def _link_from_subelement(element, sources_dict):
                             return [_apply_page(template, m.group())]
                 # P5: plain URL stored directly in sources_dict (no page substitution needed)
                 return _find_all_links(template) or [template]
-            # pointer not in sources_dict — fall through to check inline DATA > WWW/TEXT children
-        # P3: inline SOUR > PAGE / P4: inline SOUR > DATA > TEXT/WWW
-        urls = []
-        for sour_child in element.get_child_elements():
-            if sour_child.get_tag() == "PAGE":
-                for url in _find_all_links(_full_text(sour_child)):
-                    if url not in urls:
-                        urls.append(url)
-            elif sour_child.get_tag() == "DATA":
-                for data_child in sour_child.get_child_elements():
-                    if data_child.get_tag() in ("TEXT", "WWW"):
-                        for url in _find_all_links(_full_text(data_child)):
-                            if url not in urls:
-                                urls.append(url)
-        return urls
+        return []
 
     return []
 
@@ -676,7 +679,8 @@ def build_sources_dict(root_elements, obje_dict=None):
     """
     Pre-build a mapping of source pointer → matricula URL (or URL template) from
     all root SOUR records. Two patterns covered:
-      P5  SOUR with TITL/ABBR containing a direct URL (MAUKO.GED, MODRIJAN.GED)
+      P5  SOUR with TITL/ABBR containing a direct URL (MAUKO.GED, MODRIJAN.GED),
+          or with the URL only in NOTE (ZANJKOVIČ.GED)
       P7  SOUR with FILN + OBJE children: store first OBJE URL as template for
           page substitution (RENKO.GED pattern — caller substitutes ?pg=N)
     """
@@ -689,13 +693,16 @@ def build_sources_dict(root_elements, obje_dict=None):
         pointer = element.get_pointer()
         if not pointer:
             continue
-        # P5: direct URL in TITL or ABBR
-        for child in element.get_child_elements():
-            if child.get_tag() in ("TITL", "ABBR"):
-                url = _find_matricula_url(child.get_value() or "")
-                if url:
-                    sources[pointer] = url
-                    break
+        # P5: direct URL in TITL or ABBR, else in NOTE (Brother's Keeper: ZANJKOVIČ.GED)
+        for tags in (("TITL", "ABBR"), ("NOTE",)):
+            for child in element.get_child_elements():
+                if child.get_tag() in tags:
+                    url = _find_matricula_url(_full_text(child))
+                    if url:
+                        sources[pointer] = url
+                        break
+            if pointer in sources:
+                break
         if pointer in sources:
             continue
         # P7: FILN-based source — build a page→URL map from all OBJE children so that
@@ -718,6 +725,27 @@ def build_sources_dict(root_elements, obje_dict=None):
     return sources
 
 
+# Generic EVEN + TYPE values that stand for a standard event tag (ŠKOF.GED,
+# PRATNEKAR.GED: "1 EVEN / 2 TYPE Marriage" on FAM instead of "1 MARR").
+_EVEN_TYPE_ALIASES = {"MARR": {"marriage", "marr", "poroka"}}
+
+
+def _event_elements(element, event_tag):
+    """Return the element's event_tag children, followed by any EVEN children
+    whose TYPE is an alias of event_tag (so a real tag wins when both exist)."""
+    children = element.get_child_elements()
+    events = [c for c in children if c.get_tag() == event_tag]
+    aliases = _EVEN_TYPE_ALIASES.get(event_tag)
+    if aliases:
+        for c in children:
+            if c.get_tag() != "EVEN":
+                continue
+            types = [s.get_value() or "" for s in c.get_child_elements() if s.get_tag() == "TYPE"]
+            if types and types[0].strip().lower() in aliases:
+                events.append(c)
+    return events
+
+
 def get_event_data(element, event_tag, sources_dict=None, obje_dict=None):
     """
     Extract date, place, and all links for an event (BIRT/MARR/DEAT/BURI).
@@ -728,9 +756,7 @@ def get_event_data(element, event_tag, sources_dict=None, obje_dict=None):
         sources_dict = {}
     if obje_dict is None:
         obje_dict = {}
-    for child in element.get_child_elements():
-        if child.get_tag() != event_tag:
-            continue
+    for child in _event_elements(element, event_tag):
         date, place = "", ""
         # P6: URL stored directly as the event tag value (RENKO.GED pattern)
         links = _find_all_links(_full_text(child))
@@ -749,7 +775,10 @@ def get_event_data(element, event_tag, sources_dict=None, obje_dict=None):
                 for url in _link_from_subelement(subchild, sources_dict):
                     if url not in links:
                         links.append(url)
-        return date, place, links
+        # Skip an empty event ("1 MARR" / "1 MARR Y") when another one carries data
+        # (ŠKOF.GED: empty MARR plus "EVEN / TYPE Marriage" with DATE/PLAC)
+        if date or place or links:
+            return date, place, links
     return "", "", []
 
 
@@ -973,6 +1002,7 @@ def _process_one_file(filename, full_mode, contributors, input_dir, output_dir):
                 "marr_links": marr_links,
                 "famc": famc_pointers,
                 "fams": fams_pointers,
+                "own_marr": get_event_data(element, "MARR", sources_dict, obje_dict),
             }
 
             has_events = bool(
@@ -1148,6 +1178,25 @@ def _process_one_file(filename, full_mode, contributors, input_dir, output_dir):
 
         husb = individuals_dict.get(husb_pointer, {})
         wife = individuals_dict.get(wife_pointer, {})
+
+        # No marriage data on the FAM: fall back to a marriage event on a spouse's
+        # INDI ("1 EVEN / 2 TYPE MARR|Marriage|Poroka" — ŠKOF.GED, KNAPIČ.GED), but only
+        # if that spouse has this as their only family, so it can't be misattributed.
+        # If both spouses have one, prefer the one with a date (then place), else husband's.
+        if not marr_date and not marr_place:
+            candidates = [
+                spouse["own_marr"] for spouse in (husb, wife)
+                if spouse.get("fams") == [family.get_pointer()]
+                and (spouse["own_marr"][0] or spouse["own_marr"][1])
+            ]
+            if candidates:
+                own_date, own_place, own_links = max(
+                    candidates, key=lambda m: (bool(m[0]), bool(m[1]))
+                )
+                marr_date, marr_place = own_date, own_place
+                for url in own_links:
+                    if url not in raw_marr_links:
+                        raw_marr_links.append(url)
 
         family_context = (
             " & ".join(
