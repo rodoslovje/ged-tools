@@ -9,7 +9,8 @@ gedcom_to_json.py:
 
 Birth books are recognised by " K " in the filename, marriage books by " P ";
 workbooks that hold both kinds keep each in its own sheet and the kind is then
-taken from the sheet's own columns.
+taken from the sheet's own columns. Every record carries a "source_unit": the
+parish of its book, which the genealogical index groups matches by.
 
 data/output/matricula-index.json lists the matricula books behind those
 records, one entry per book. A spreadsheet usually indexes a single book and
@@ -770,6 +771,8 @@ def bucket_row(state, kind, row):
     book of the preceding row of the same kind, so a stray blank url does not
     split a book in two; rows seen before that kind's first URL are credited
     to the first book found.
+
+    Returns the bucket when the row's own URL names its book, else None.
     """
     parish_path, signature = _split_book_url(cell_str(row.get("url")))
     if signature:
@@ -791,12 +794,13 @@ def bucket_row(state, kind, row):
         bucket = state["current"].get(kind)
         if bucket is None:
             state["pending"][kind] = state["pending"].get(kind, 0) + 1
-            return
+            return None
 
     bucket["count"] += 1
     parish = cell_str(row.get("parish"))
     if parish:
         bucket["parishes"][parish] = bucket["parishes"].get(parish, 0) + 1
+    return bucket if signature else None
 
 
 def _same_parish(a, b):
@@ -820,6 +824,16 @@ def _bucket_parish(bucket, fallback):
         return fallback
     parish = max(sorted(bucket["parishes"]), key=bucket["parishes"].get)
     return fallback if _same_parish(parish, fallback) else parish
+
+
+def book_parishes(path, buckets):
+    """Parish of each book bucket of one xlsx file, as matricula-index.json
+    names it: a single-book file's comes from its filename, the books of a
+    multi-book file from their 'župnija' cells (see _bucket_parish)."""
+    fallback = _parish_from_name(os.path.splitext(os.path.basename(path))[0])
+    if len(buckets) <= 1:
+        return [fallback for _ in buckets]
+    return [_bucket_parish(bucket, fallback) for bucket in buckets]
 
 
 def _book_entry(path, count, sample_url, kind=None):
@@ -852,8 +866,6 @@ def book_entries(path, buckets, total_count):
         kind = buckets[0]["kind"] if buckets else None
         return [_book_entry(path, total_count, sample_url, kind)]
 
-    stem = os.path.splitext(os.path.basename(path))[0]
-    fallback_parish = _parish_from_name(stem)
     last_modified = datetime.fromtimestamp(os.path.getmtime(path)).isoformat()
 
     signatures_by_parish = {}
@@ -864,9 +876,8 @@ def book_entries(path, buckets, total_count):
                 for parish_path, signatures in signatures_by_parish.items()}
 
     entries = []
-    for bucket in buckets:
+    for bucket, parish in zip(buckets, book_parishes(path, buckets)):
         info = metadata.get(bucket["parish_path"], {}).get(bucket["signature"], {})
-        parish = _bucket_parish(bucket, fallback_parish)
         date = info.get("date", "")
         suffix = date or _decode_signature(bucket["signature"])
         entries.append({
@@ -887,6 +898,20 @@ def book_entries(path, buckets, total_count):
         if counts[entry["name"]] > 1:
             entry["name"] = f"{entry['name']} ({_decode_signature(bucket['signature'])})"
     return entries
+
+
+def assign_source_units(path, buckets, record_books):
+    """Set each record's "source_unit" — the parish the genealogical index
+    groups matches against Matricula by — to the parish of the book its own
+    page link points into, else to the row's 'župnija' cell.
+
+    `record_books` holds (record, bucket or None, row parish) per row.
+    """
+    parish_of = {id(b): p for b, p in zip(buckets, book_parishes(path, buckets))}
+    for record, book, row_parish in record_books:
+        unit = (parish_of.get(id(book)) if book else "") or row_parish
+        if unit:
+            record["source_unit"] = unit
 
 
 def _load_contributors():
@@ -1033,16 +1058,21 @@ def process_contributor(contributor, files, contributors, full_mode, existing_in
     for path in source_files:
         try:
             file_births, file_marriages = [], []
+            record_books = []
             state = new_bucket_state()
             count = 0
             for kind, row in read_rows(path):
                 _check_interpreter(contributor, cell_str(row.get("interpreter")), path)
                 count += 1
-                bucket_row(state, kind, row)
+                book = bucket_row(state, kind, row)
                 if kind == "K":
-                    file_births.append(birth_record(row))
+                    record = birth_record(row)
+                    file_births.append(record)
                 else:
-                    file_marriages.append(marriage_record(row))
+                    record = marriage_record(row)
+                    file_marriages.append(record)
+                record_books.append((record, book, cell_str(row.get("parish"))))
+            assign_source_units(path, state["buckets"], record_books)
         except Exception as exc:
             failed_files.append(path)
             print(f"Error: failed to process {path}: {exc}; skipping file",

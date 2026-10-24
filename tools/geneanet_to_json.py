@@ -33,7 +33,9 @@ person plus a partner ("conjoint"); in that case two person records and one
 family record are produced. The source has no person identifiers, no gender,
 and no burial date — sex is guessed from the given name, ids are derived, and
 burial carries only a place ("<place>, <nom_projet>"). The image URL is ignored
-in favour of the cemetery view URL built from depot_id.
+in favour of the cemetery view URL built from depot_id. Persons and families
+carry a "source_unit": the cemetery's place, which the genealogical index
+groups matches by.
 """
 
 import argparse
@@ -202,6 +204,15 @@ def build_burial_place(place, nom_projet):
     return ", ".join(parts)
 
 
+def source_unit(place, nom_projet):
+    """The cemetery's place, which the genealogical index groups matches by:
+    a village's graves belong together even when it has two cemeteries. A
+    leading postcode is dropped so '6330 Piran' and 'Piran' are one place;
+    a cemetery without a place falls back to its own name."""
+    place = re.sub(r"^\d{4,5}\s+", "", (place or "").strip()).strip()
+    return place or (nom_projet or "").strip()
+
+
 def get_bucket(buckets, contributor):
     """Return (creating if needed) the per-contributor accumulator."""
     bucket = buckets.get(contributor)
@@ -218,7 +229,8 @@ def process_row(row_index, row, buckets, handle_to_id, force_contributor=None):
     url_projet = (row.get("url_projet") or "").strip()
     username = (row.get("username") or "").strip()
     burial_place = build_burial_place(place, nom_projet)
-    link = DEPOT_URL.format(depot_id) if depot_id else ""
+    unit = source_unit(place, nom_projet)
+    link =DEPOT_URL.format(depot_id) if depot_id else ""
 
     # Route the row to a contributor: single-file mode forces one bucket;
     # otherwise a mapped username wins, else the generic fallback.
@@ -267,6 +279,8 @@ def process_row(row_index, row, buckets, handle_to_id, force_contributor=None):
         primary["links"] = [link] if link else []
         if rest_note:
             primary["notes"] = rest_note
+        if unit:
+            primary["source_unit"] = unit
 
     partner = None
     if has_partner:
@@ -284,6 +298,8 @@ def process_row(row_index, row, buckets, handle_to_id, force_contributor=None):
             "date": gedcom_date(row.get("date_deces_conjoint")), "place": ""}
         partner["burial"] = {"date": "", "place": burial_place}
         partner["links"] = [link] if link else []
+        if unit:
+            partner["source_unit"] = unit
 
     # Cross-link the two people when both are present.
     if primary is not None and partner is not None:
@@ -301,12 +317,15 @@ def process_row(row_index, row, buckets, handle_to_id, force_contributor=None):
             husband, wife = partner, primary
         else:
             husband, wife = primary, partner
-        families.append({
+        family = {
             "husband": summary_entry(husband),
             "wife": summary_entry(wife),
             "marriage": {"date": "", "place": ""},
             "links": [link] if link else [],
-        })
+        }
+        if unit:
+            family["source_unit"] = unit
+        families.append(family)
 
     # Skip unindexed rows entirely (no person produced -> no grave/stats).
     person_count = (primary is not None) + (partner is not None)
