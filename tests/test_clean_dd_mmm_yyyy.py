@@ -423,6 +423,48 @@ def test_clean_date_success(raw, expected):
 @pytest.mark.parametrize(
     "raw",
     [
+        "1850",
+        "JAN 1850",
+        "5 JAN 1850",
+        "ABT 1850",
+        "ABT 5 JAN 1850",
+        "EST MAR 1850",
+        "CAL 5 JAN 1850",
+        "BEF 1850",
+        "AFT JAN 1850",
+        "BET 1850 AND 1860",
+        "BET 5 JAN 1850 AND 10 FEB 1860",
+        "FROM 5 JAN 1850",
+        "TO 10 FEB 1860",
+        "FROM 1850 TO 1860",
+        "FROM 5 JAN 1850 TO 10 FEB 1860",
+        # Dual years, also after a qualifier
+        "1700/01",
+        "BEF 1700/01",
+        "ABT 1700/01",
+        "BET 1700/01 AND 1710",
+        # Interpreted dates, B.C. years, calendar escapes
+        "INT 5 JAN 1850 (per register)",
+        "INT 1850 ()",
+        "EST 1850 B.C.",
+        "1850 BC",
+        "ABT 0850 BCE",
+        "@#DJULIAN@ 1850",
+        "@#DGREGORIAN@ 5 JAN 1850",
+        "ABT @#DJULIAN@ 5 JAN 1700/01",
+        "FROM @#DJULIAN@ 1700 TO @#DGREGORIAN@ 1710",
+        "@#DHEBREW@ 5 TSH 5600",
+        "@#DFRENCH R@ 1 VEND 0008",
+    ],
+)
+def test_clean_date_standard_gedcom_unchanged(raw):
+    """Values that already follow the GEDCOM date grammar are returned as-is."""
+    assert clean_date_dd_mmm_yyyy(raw) == (raw, None)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
         ".__.____",
         "__.__.____",
         "__.____",

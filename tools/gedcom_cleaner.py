@@ -1844,6 +1844,31 @@ def _parse_range(value: str) -> tuple[str | None, str | None, bool]:
     return None, None, False
 
 
+# Standard GEDCOM 5.5.1 date grammar (plus GEDCOM 7 "BCE"). Values that already
+# match are returned untouched, so the heuristics below never rewrite a valid date.
+# Days with a leading zero and 3-digit years are left out on purpose: the cleaner
+# normalises "05 JAN" → "5 JAN" and treats "994" as a typo for "1994".
+_GEDCOM_CALENDAR = r"(?:@#D(?:GREGORIAN|JULIAN|HEBREW|FRENCH R|ROMAN|UNKNOWN)@ )?"
+_GEDCOM_MONTH = (
+    r"(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC"  # Gregorian / Julian
+    r"|TSH|CSH|KSL|TVT|SHV|ADR|ADS|NSN|IYR|SVN|TMZ|AAV|ELL"  # Hebrew
+    r"|VEND|BRUM|FRIM|NIVO|PLUV|VENT|GERM|FLOR|PRAI|MESS|THER|FRUC|COMP)"  # French
+)
+_GEDCOM_DAY = r"(?:[1-9]|[12]\d|3[01])"
+_GEDCOM_YEAR = r"\d{4}(?:/\d{2})?(?: (?:B\.C\.|BC|BCE))?"
+_GEDCOM_DATE = (
+    rf"{_GEDCOM_CALENDAR}(?:(?:{_GEDCOM_DAY} )?{_GEDCOM_MONTH} )?{_GEDCOM_YEAR}"
+)
+_GEDCOM_DATE_VALUE_RE = re.compile(
+    rf"^(?:"
+    rf"(?:(?:ABT|CAL|EST|BEF|AFT|FROM|TO) )?{_GEDCOM_DATE}"
+    rf"|BET {_GEDCOM_DATE} AND {_GEDCOM_DATE}"
+    rf"|FROM {_GEDCOM_DATE} TO {_GEDCOM_DATE}"
+    rf"|INT {_GEDCOM_DATE} \([^()]*\)"
+    rf")$"
+)
+
+
 def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     """
     Normalise a raw GEDCOM DATE value.
@@ -1853,6 +1878,10 @@ def clean_date_dd_mmm_yyyy(raw: str) -> tuple[str | None, str | None]:
     v = raw.strip()
     if not v:
         return "", None  # silently keep empty date as-is
+
+    # Already a standard GEDCOM date — keep as-is
+    if _GEDCOM_DATE_VALUE_RE.match(v):
+        return v, None
 
     # PRIVATE passthrough
     if v.upper() == "PRIVATE":
