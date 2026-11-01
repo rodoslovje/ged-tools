@@ -1,8 +1,14 @@
 import os
 import tempfile
 import textwrap
+import pytest
 from gedcom.parser import Parser
-from tools.gedcom_to_json import build_sources_dict, get_event_data, _link_from_subelement
+from tools.gedcom_to_json import (
+    build_sources_dict,
+    extract_year,
+    get_event_data,
+    _link_from_subelement,
+)
 
 
 def _roots(gedcom_str: str):
@@ -202,3 +208,36 @@ def test_spouse_marriage_with_date_preferred():
         0 TRLR
     """)
     assert marriage == {"date": "3 FEB 1879", "place": "Ig"}
+
+
+# ---------------------------------------------------------------------------
+# extract_year — GEDCOM date grammar
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "date, year",
+    [
+        ("5 JAN 1850", 1850),
+        ("BEF 1850", 1850),
+        ("ABT 1700/01", 1700),
+        ("BET 1850 AND 1860", 1850),
+        ("FROM 5 JAN 1850 TO 1860", 1850),
+        ("INT 1850 (copied 1902)", 1850),
+        ("@#DJULIAN@ 5 JAN 1850", 1850),
+        ("@#DGREGORIAN@ 1850", 1850),
+        ("ABT 850", 850),
+        ("0850", 850),
+        ("EST 1850 B.C.", -1850),
+        ("850 BC", -850),
+        ("ABT 0850 BCE", -850),
+        ("@#DHEBREW@ 5 TSH 5600", None),
+        ("@#DFRENCH R@ 1 VEND 0008", None),
+        ("@#DUNKNOWN@ 1850", None),
+        ("(died young)", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_extract_year(date, year):
+    assert extract_year(date) == year
+

@@ -807,12 +807,33 @@ def _get_all_event_links(element, event_tags, sources_dict, obje_dict):
     return links
 
 
+_YEAR_RE = re.compile(r"\b(\d{4})\b")
+# 3-digit years only as a whole token, so "013.09.1876" or "-030" don't yield one
+_SHORT_YEAR_RE = re.compile(r"(?:^|(?<=\s))(\d{3})(?=$|\s|/)")
+_CALENDAR_ESCAPE_RE = re.compile(r"@#D([A-Z ]+)@")
+_BC_RE = re.compile(r"\s*(?:/\d{1,2})?\s*(?:B\.C\.|BCE?\b)", re.IGNORECASE)
+
+
 def extract_year(date_str):
-    """Returns the 4-digit year from a GEDCOM date string, or None if not found."""
+    """Returns the (first) Gregorian/Julian year from a GEDCOM date string, or None.
+
+    4-digit years win; a 3-digit year counts only as a whole token. B.C. years
+    come back negative. Hebrew,
+    French Republican, Roman and unknown-calendar dates return None, since their
+    year numbers are not comparable with Gregorian ones.
+    """
     if not date_str:
         return None
-    match = re.search(r"\b(\d{4})\b", date_str)
-    return int(match.group(1)) if match else None
+    match = _YEAR_RE.search(date_str) or _SHORT_YEAR_RE.search(date_str)
+    if not match:
+        return None
+    calendars = _CALENDAR_ESCAPE_RE.findall(date_str[: match.start()])
+    if calendars and calendars[-1] not in ("GREGORIAN", "JULIAN"):
+        return None
+    year = int(match.group(1))
+    if _BC_RE.match(date_str, match.end()):
+        year = -year
+    return year
 
 
 def needs_processing(input_path, *json_paths):
