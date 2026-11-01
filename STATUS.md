@@ -6,8 +6,10 @@ Python GEDCOM tools (see README). Last work: `source_unit` (parish / cemetery pl
 **Next**
 - [ ] Sort out `.todo/` — old scratch scripts (publish.sh, webtrees-update.sh, extract-surnames.py …): move keepers into `tools/`, delete the rest
 - [ ] `.env` stays out of git (check `.gitignore`)
+- [ ] Rebuild index JSON for trees cleaned after 8. 9. (Ivanc, Košir, Mali, Renko, Lutman …) so placeholder-only families drop out (`--mode full` or `--force`)
 
 **Decided**
+- `gedcom_to_json` drops families where every spouse and child is a placeholder (`<private>`, bare NN, missing), the marriage is empty/`<private>` and there are no links. `fam_partner_private` keeps such FAMs redacted for webtrees (since cf400ef), which bloated the index (Kovačič 40 405 → 24 234 families)
 - `gedcom_to_json` passes DATE values through verbatim; `extract_year` (partner order, estimated birth year) prefers a 4-digit year, takes a 3-digit year only as a whole token, B.C. → negative, non-Gregorian/Julian calendars → None. Output sort stays on the raw date text
 - `dd_mmm_yyyy` returns values that already match the GEDCOM date grammar unchanged (ABT/EST/CAL/BEF/AFT, BET…AND, FROM/TO, INT (text), dual years, B.C./BCE, @#D…@ calendars); heuristics only run on everything else
 - `source_unit` comes from the converters: Matricula = the parish of the row's book as `matricula-index.json` names it (else the row's župnija), Geneanet = cemetery place minus postcode (else the cemetery name)

@@ -836,6 +836,29 @@ def extract_year(date_str):
     return year
 
 
+def _is_placeholder_person(entry):
+    """True for a missing person or one reduced to a privacy/NN placeholder name."""
+    if not entry or not entry.get("id"):
+        return True
+    name = (entry.get("name") or "").strip()
+    surname = (entry.get("surname") or "").strip()
+    return name.lower() in ("private", "<private>") or (name == "NN" and not surname)
+
+
+def _is_placeholder_family(record):
+    """True if a family record carries nothing searchable: every spouse and child is
+    a placeholder, the marriage is empty or "<private>" and there are no links.
+    fam_partner_private keeps such families (redacted) for webtrees, but in the
+    index they are empty rows — the same rule that drops placeholder-only persons."""
+    if record.get("links"):
+        return False
+    if any(v not in ("", "<private>") for v in record.get("marriage", {}).values()):
+        return False
+    people = [record.get("husband"), record.get("wife")]
+    people += record.get("children_list", [])
+    return all(_is_placeholder_person(p) for p in people)
+
+
 def needs_processing(input_path, *json_paths):
     """
     Returns True if the GED file should be processed in update mode:
@@ -1313,6 +1336,7 @@ def _process_one_file(filename, full_mode, contributors, input_dir, output_dir):
 
     persons_before = len(persons_data)
     families_before = len(families_data)
+    families_data = [r for r in families_data if not _is_placeholder_family(r)]
 
     filtered_persons = persons_before - len(persons_data)
     filtered_families = families_before - len(families_data)

@@ -7,6 +7,7 @@ from tools.gedcom_to_json import (
     build_sources_dict,
     extract_year,
     get_event_data,
+    _is_placeholder_family,
     _link_from_subelement,
 )
 
@@ -241,3 +242,48 @@ def test_spouse_marriage_with_date_preferred():
 def test_extract_year(date, year):
     assert extract_year(date) == year
 
+
+# ---------------------------------------------------------------------------
+# Placeholder-only families (fam_partner_private keeps them redacted)
+# ---------------------------------------------------------------------------
+
+def _p(ptr, name, surname=""):
+    return {"id": ptr, "name": name, "surname": surname, "sex": "", "date_of_birth": ""}
+
+
+def _family(husband, wife, children=(), marriage=("", ""), **extra):
+    record = {
+        "husband": husband,
+        "wife": wife,
+        "marriage": {"date": marriage[0], "place": marriage[1]},
+    }
+    if children:
+        record["children_list"] = list(children)
+    record.update(extra)
+    return record
+
+
+PRIV_H = _p("@I1@", "<private>")
+PRIV_W = _p("@I2@", "<private>")
+NO_ONE = _p("", "")
+
+
+@pytest.mark.parametrize("record", [
+    _family(PRIV_H, PRIV_W),
+    _family(PRIV_H, PRIV_W, [_p("@I3@", "<private>")], ("<private>", "<private>")),
+    _family(PRIV_H, NO_ONE),
+    _family(_p("@I1@", "NN"), PRIV_W),
+])
+def test_placeholder_family_dropped(record):
+    assert _is_placeholder_family(record)
+
+
+@pytest.mark.parametrize("record", [
+    _family(_p("@I1@", "Janez", "Kovačič"), PRIV_W),
+    _family(PRIV_H, PRIV_W, [_p("@I3@", "Marija", "Kovačič")]),
+    _family(PRIV_H, PRIV_W, marriage=("1890", "")),
+    _family(PRIV_H, PRIV_W, links=["https://data.matricula-online.eu/x"]),
+    _family(_p("@I1@", "NN", "Kovačič"), PRIV_W),
+])
+def test_family_with_searchable_data_kept(record):
+    assert not _is_placeholder_family(record)
