@@ -78,11 +78,12 @@ Available Cleaners:
                          parentheses is left verbatim. Only INDI names are
                          touched — NAME tags on SUBM / SOUR / FAM are unchanged.
     name_lower           Conservative variant of name_capitalization that only
-                         fires on values that are entirely uppercase (ALL CAPS).
-                         Mixed-case and all-lowercase values are left untouched.
-                         When the value IS all caps, it is re-cased using the
-                         same particle/prefix/parens rules as name_capitalization.
-                         Only INDI names are touched.
+                         re-cases ALL-CAPS words, using the same
+                         particle/prefix/parens rules as name_capitalization
+                         ("JOŽE /KOVAČ/" and "Jože /KOVAČ/" -> "Jože /Kovač/").
+                         Words with any lowercase letter, single letters, and
+                         Roman numerals outside the surname ("III") are left
+                         untouched. Only INDI names are touched.
     place_placeholder    Clear empty/placeholder places.
     place_slovenia_rm    Remove "Slovenia" / "Slovenija" suffix from places.
     place_duplicate_rm   Remove adjacent duplicate components in places.
@@ -2431,10 +2432,27 @@ def _cap_word(word: str, is_first: bool) -> str:
     return word.title()
 
 
-def _cap_segment(text: str) -> str:
+# Roman numeral suffixes ("Janez /Novak/ III") — kept uppercase by name_lower.
+_ROMAN_NUMERAL_RE = re.compile(r"^M{0,3}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})[.,;]*$")
+
+
+def _is_caps_word(word: str, in_surname: bool) -> bool:
+    """True iff `word` is an ALL-CAPS name word that name_lower should re-case:
+    at least two letters, no lowercase letter, and (outside the surname) not a
+    Roman numeral."""
+    if sum(ch.isalpha() for ch in word) < 2 or any(ch.islower() for ch in word):
+        return False
+    if not in_surname and _ROMAN_NUMERAL_RE.match(word):
+        return False
+    return True
+
+
+def _cap_segment(text: str, only_caps: bool = False, in_surname: bool = False) -> str:
     """Capitalize words in a free-text segment. Parenthesized groups are
     preserved verbatim. The first non-whitespace, non-parenthesized token
-    is treated as the segment start (matters for particle handling)."""
+    is treated as the segment start (matters for particle handling).
+    With `only_caps`, only ALL-CAPS words (see _is_caps_word) are re-cased;
+    other words are kept verbatim."""
     if not text:
         return text
     # Split on parenthesized groups, keeping them as-is.
@@ -2452,9 +2470,26 @@ def _cap_segment(text: str) -> str:
             if not tok or tok.isspace():
                 new_toks.append(tok)
                 continue
-            new_toks.append(_cap_word(tok, is_first=not saw_word))
+            if only_caps and not _is_caps_word(tok, in_surname):
+                new_toks.append(tok)
+            else:
+                new_toks.append(_cap_word(tok, is_first=not saw_word))
             saw_word = True
         out.append("".join(new_toks))
+    return "".join(out)
+
+
+def _recase_name(raw: str, only_caps: bool = False) -> str:
+    """Apply _cap_segment to each part of a NAME value ('Given /Surname/ Suffix')
+    or to a plain value (GIVN, SURN, NICK, MARNM)."""
+    if "/" not in raw:
+        return _cap_segment(raw, only_caps)
+    out = []
+    for p in re.split(r"(/[^/]*/)", raw):
+        if p.startswith("/") and p.endswith("/"):
+            out.append(f"/{_cap_segment(p[1:-1], only_caps, in_surname=True)}/")
+        else:
+            out.append(_cap_segment(p, only_caps))
     return "".join(out)
 
 
@@ -2475,19 +2510,7 @@ def clean_name_capitalization(raw: str) -> tuple[str, None]:
     if not raw or not raw.strip():
         return raw, None
 
-    if "/" in raw:
-        parts = re.split(r"(/[^/]*/)", raw)
-        out = []
-        for p in parts:
-            if p.startswith("/") and p.endswith("/"):
-                out.append(f"/{_cap_segment(p[1:-1])}/")
-            else:
-                out.append(_cap_segment(p))
-        cleaned = "".join(out)
-    else:
-        cleaned = _cap_segment(raw)
-
-    cleaned = _normalize_name_whitespace(cleaned)
+    cleaned = _normalize_name_whitespace(_recase_name(raw))
 
     if cleaned == raw:
         return raw, None
@@ -2501,33 +2524,35 @@ def clean_name_capitalization(raw: str) -> tuple[str, None]:
 
 def clean_name_lower(raw: str) -> tuple[str, None]:
     """
-    Conservative variant of name_capitalization: only re-cases values that
-    are entirely uppercase (ALL CAPS). Mixed-case and lowercase values are
-    left unchanged. When the value IS all caps, it is converted to title
-    case using the name_capitalization rules (so particles, prefixes, and
-    parenthesized segments behave the same way).
+    Conservative variant of name_capitalization: only re-cases ALL-CAPS
+    words. A value that is entirely uppercase is converted to title case
+    using the name_capitalization rules (so particles, prefixes, and
+    parenthesized segments behave the same way). In a mixed-case value,
+    only words of 2+ letters with no lowercase letter are re-cased (so the
+    common 'Given /SURNAME/' export style is fixed); other words, Roman
+    numerals outside the surname, and parenthesized text are left alone.
 
     Examples:
         'JOŽE /KOVAČ/'      -> 'Jože /Kovač/'
         'DE COLL URŠULA/RANGA/' -> 'De Coll Uršula/Ranga/'
-        'John /SMITH/'      -> 'John /SMITH/'   (mixed case; left alone)
+        'John /SMITH/'      -> 'John /Smith/'
+        'Janez /NOVAK/ III' -> 'Janez /Novak/ III'
+        'JoHn /sMiTh/'      -> 'JoHn /sMiTh/'   (no all-caps word; left alone)
         'jože /kovač/'      -> 'jože /kovač/'   (no upper; left alone)
     Returns (cleaned, None).
     """
     if not raw or not raw.strip():
         return raw, None
-    # Trigger only when the value contains at least one letter and NO
-    # lowercase letter. Punctuation, slashes, and digits don't matter.
     has_letter = any(ch.isalpha() for ch in raw)
     has_lower = any(ch.islower() for ch in raw)
-    if not has_letter or has_lower:
-        # Mixed / all-lower values are not re-cased, but we still tidy up
-        # whitespace so the cleaner's behaviour is consistent across inputs.
-        cleaned = _normalize_name_whitespace(raw)
-        if cleaned == raw:
-            return raw, None
-        return cleaned, None
-    return clean_name_capitalization(raw)
+    if has_letter and not has_lower:
+        return clean_name_capitalization(raw)
+    # Mixed / all-lower values: re-case only the ALL-CAPS words, and tidy
+    # whitespace so the cleaner's behaviour is consistent across inputs.
+    cleaned = _normalize_name_whitespace(_recase_name(raw, only_caps=True))
+    if cleaned == raw:
+        return raw, None
+    return cleaned, None
 
 
 # ---------------------------------------------------------------------------

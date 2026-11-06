@@ -69,9 +69,8 @@ def test_all_caps_is_recased(raw, expected):
         "Franc de Paula /Pižmoht/",
         "De Coll Uršula/Ranga/",
 
-        # Mixed-case values — left alone even if "wrong" (name_lower is
-        # conservative; only ALL CAPS triggers it).
-        "John /SMITH/",
+        # No ALL-CAPS word — left alone even if "wrong" (name_lower is
+        # conservative; only ALL-CAPS words trigger it).
         "JoHn /sMiTh/",
         "jOžE /kOvAč/",
         "MacDonald",
@@ -91,6 +90,38 @@ def test_non_all_caps_unchanged(raw):
     result, warning = clean_name_lower(raw)
     assert warning is None
     assert result == raw
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        # 'Given /SURNAME/' export style — the ALL-CAPS surname is re-cased.
+        ("John /SMITH/",                        "John /Smith/"),
+        ("Terezija /KRAMBERGER/",               "Terezija /Kramberger/"),
+        ("Franciscus (Franc) /KRAMBERGER/",     "Franciscus (Franc) /Kramberger/"),
+        ("JANEZ /Novak/",                       "Janez /Novak/"),
+        ("Maria /VON DER LEYEN/",               "Maria /Von der Leyen/"),
+        ("Mary /SMITH-JONES/",                  "Mary /Smith-Jones/"),
+        ("John NN /SMITH/",                     "John NN /Smith/"),
+        # Plain-value tags with mixed words.
+        ("Ana MARIJA",                          "Ana Marija"),
+        # Mixed-case words in the same value are kept verbatim.
+        ("Ana /MacDONALD KOVAČ/",               "Ana /MacDONALD Kovač/"),
+        # Parenthesized text is kept verbatim.
+        ("Marija /NOVAK/ (rojena KOVAČ)",       "Marija /Novak/ (rojena KOVAČ)"),
+        # Single letters and Roman-numeral suffixes are kept.
+        ("John F /KENNEDY/",                    "John F /Kennedy/"),
+        ("Janez /NOVAK/ III",                   "Janez /Novak/ III"),
+        ("Janez /NOVAK/ IV.",                   "Janez /Novak/ IV."),
+        ("Pharnabazes II., K. /IBERIJSKI/",     "Pharnabazes II., K. /Iberijski/"),
+        # …but a Roman-numeral-looking surname is still re-cased.
+        ("Ana /MIX/",                           "Ana /Mix/"),
+    ],
+)
+def test_mixed_case_caps_words_recased(raw, expected):
+    result, warning = clean_name_lower(raw)
+    assert warning is None
+    assert result == expected
 
 
 @pytest.mark.parametrize(
@@ -121,6 +152,7 @@ def test_idempotent():
         "DE COLL URŠULA/RANGA/",
         "John /Smith/",
         "John /SMITH/",
+        "Janez /NOVAK/ III",
         "jože /kovač/",
     ]
     for raw in samples:
@@ -150,6 +182,9 @@ def test_only_indi_names_touched():
         1 NAME John /Smith/
         0 @I3@ INDI
         1 NAME jože /kovač/
+        0 @I4@ INDI
+        1 NAME Terezija /KRAMBERGER/
+        2 SURN KRAMBERGER
         0 @SUBM1@ SUBM
         1 NAME SOME SUBMITTER NAME
         0 @S1@ SOUR
@@ -173,13 +208,16 @@ def test_only_indi_names_touched():
         assert "1 NAME John /Smith/" in content
         # All-lowercase INDI name: untouched.
         assert "1 NAME jože /kovač/" in content
+        # Mixed-case INDI name with ALL-CAPS surname: surname re-cased.
+        assert "1 NAME Terezija /Kramberger/" in content
+        assert "2 SURN Kramberger" in content
         # SUBM NAME: untouched even though it's all caps.
         assert "1 NAME SOME SUBMITTER NAME" in content
         # SOUR AUTH (not a NAME tag anyway): untouched.
         assert "1 AUTH SOME AUTHOR" in content
 
-        # Only one value was actually changed.
-        assert cleaner_stats["name_lower"].fixed == 1
+        # JOŽE /KOVAČ/, Terezija /KRAMBERGER/ and its SURN were changed.
+        assert cleaner_stats["name_lower"].fixed == 3
     finally:
         os.unlink(inp)
         os.unlink(out)
